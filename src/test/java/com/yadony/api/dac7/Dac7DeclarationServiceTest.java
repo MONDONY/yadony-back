@@ -145,6 +145,31 @@ class Dac7DeclarationServiceTest {
     }
 
     @Test
+    @DisplayName("pages et CSV (verdicts en cache) : voyageur pas encore lu = NOT_CHECKED, IDENTITY_NOT_CHECKED, jamais IDENTITY_UNAVAILABLE")
+    void nonVerifie() {
+        List<TravelerReport> travelers = new java.util.ArrayList<>();
+        List<UserEntity> entities = new java.util.ArrayList<>();
+        for (int i = 0; i < Dac7IdentityResolver.MAX_LOOKUPS_PER_REQUEST + 1; i++) {
+            UUID id = new UUID(0, i + 1);
+            travelers.add(new TravelerReport(id, "FR", true, Dac7IdentityStatus.COMPLETE, quarters("95.00")));
+            entities.add(user(id, true));
+        }
+        when(reports.annualReport(2026)).thenReturn(new Dac7Report(2026, travelers, List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of()));
+        when(users.findAllById(any())).thenReturn(entities);
+        when(port.verifiedIdentity(any())).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
+
+        Declaration d = service(new Dac7Properties(false, null), configured())
+                .declaration(2026, Dac7DeclarationService.IdentityMode.CACHED);
+
+        Dac7DeclarationService.Seller last = d.sellers().get(d.sellers().size() - 1);
+        assertThat(last.identityStatus()).isEqualTo(Dac7IdentityStatus.NOT_CHECKED);
+        assertThat(last.exclusions()).containsExactly(Dac7DeclarationService.IDENTITY_NOT_CHECKED);
+        assertThat(d.sellers().get(0).exclusions()).isEmpty();
+        assertThat(d.blockers()).containsExactly(Dac7DeclarationService.IDENTITY_NOT_CHECKED);
+    }
+
+    @Test
     @DisplayName("année close : 2026 refusée le 20/12/2026 (422 dac7-year-not-closed), acceptée le 05/01/2027")
     void anneeClose() {
         Dac7Properties p = new Dac7Properties(false, null);

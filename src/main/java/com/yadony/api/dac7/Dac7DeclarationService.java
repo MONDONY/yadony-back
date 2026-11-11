@@ -49,6 +49,11 @@ public class Dac7DeclarationService {
     public static final String OPERATOR_CONFIG_MISSING = "OPERATOR_CONFIG_MISSING";
     /** Tour 1 : prestataire de vérification injoignable et profil insuffisant ; réessayable. */
     public static final String IDENTITY_UNAVAILABLE = "IDENTITY_UNAVAILABLE";
+    /**
+     * Relecture n° 3, finding 6 : pages admin et CSV seulement. Identité pas encore lue (voir
+     * {@link Dac7IdentityStatus#NOT_CHECKED}) ; jamais produit par l'export, qui relit chaque pièce.
+     */
+    public static final String IDENTITY_NOT_CHECKED = "IDENTITY_NOT_CHECKED";
     /** Tour 1 : partage admin décidé mais transfert non terminé : le montant déclaré serait sous-évalué. */
     public static final String PENDING_SPLITS = "PENDING_SPLITS";
     /** Exclusion seulement : État de résidence non transmis par la DGFiP cette année (annexe 6.1). */
@@ -216,7 +221,7 @@ public class Dac7DeclarationService {
             identity = identities.resolve(user);
             status = identity.status();
         } else if (mode == IdentityMode.CACHED) {
-            status = cached.getOrDefault(id, Dac7IdentityStatus.UNAVAILABLE);
+            status = cached.getOrDefault(id, Dac7IdentityStatus.NOT_CHECKED);
         } else {
             status = identities.profileStatus(user);
         }
@@ -236,6 +241,7 @@ public class Dac7DeclarationService {
         }
         List<String> exclusions = new ArrayList<>();
         if (status == Dac7IdentityStatus.UNAVAILABLE) exclusions.add(IDENTITY_UNAVAILABLE);
+        else if (status == Dac7IdentityStatus.NOT_CHECKED) exclusions.add(IDENTITY_NOT_CHECKED);
         else if (status != Dac7IdentityStatus.COMPLETE) exclusions.add(IDENTITY_INCOMPLETE);
         if (!traveler.taxInfoProvided()) exclusions.add(TAX_INFO_MISSING);
         if (!eur) exclusions.add(EUR_INCOMPLETE);
@@ -279,6 +285,9 @@ public class Dac7DeclarationService {
         }
         if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_UNAVAILABLE))) {
             blockers.add(IDENTITY_UNAVAILABLE);
+        }
+        if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_NOT_CHECKED))) {
+            blockers.add(IDENTITY_NOT_CHECKED);
         }
         if (sellers.stream().anyMatch(s -> !s.taxInfoProvided())) blockers.add(TAX_INFO_MISSING);
         if (sellers.stream().anyMatch(s -> !s.eurComplete())) blockers.add(EUR_INCOMPLETE);

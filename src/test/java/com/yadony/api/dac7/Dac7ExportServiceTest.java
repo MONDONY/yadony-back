@@ -342,9 +342,9 @@ class Dac7ExportServiceTest {
     @SuppressWarnings("unchecked")
     void csvDeControle() {
         Seller s = seller(List.of("TAX_INFO_MISSING"));
-        Seller evil = new Seller(UUID.randomUUID(), "=HYPERLINK(\"x\")", "FR", false, Dac7IdentityStatus.INCOMPLETE,
-                null, 1, null, s.report(), 3, s.netEur(), s.commissionEur(), true, true, List.of("TAX_INFO_MISSING"),
-                false);
+        Seller evil = new Seller(UUID.randomUUID(), "=HYPERLINK(\"x\")", "FR", false, Dac7IdentityStatus.NOT_CHECKED,
+                null, 1, null, s.report(), 3, s.netEur(), s.commissionEur(), true, true,
+                List.of("IDENTITY_NOT_CHECKED", "TAX_INFO_MISSING"), false);
         when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.CACHED)).thenReturn(new Declaration(2026,
                 new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                         List.of()), List.of(s, evil),
@@ -359,7 +359,10 @@ class Dac7ExportServiceTest {
         assertThat(lines[0]).startsWith("﻿userId;voyageur;pays;residence;nifFourni;identite;t1NetEur");
         assertThat(lines[0]).contains(";dejaExporte;exclusions");
         assertThat(csv).doesNotContain(NIF).contains(";oui;").contains("TAX_INFO_MISSING").contains("NON_DECLARE")
-                .contains("\"'=HYPERLINK(\"\"x\"\")\"");
+                .contains("\"'=HYPERLINK(\"\"x\"\")\"")
+                // Pas encore lu (au-delà de 40 lectures) : « non vérifié », jamais une panne inventée.
+                .contains(";NOT_CHECKED;").contains("IDENTITY_NOT_CHECKED,TAX_INFO_MISSING")
+                .doesNotContain("UNAVAILABLE");
         assertThat(lines[1].split(";", -1)).hasSize(lines[0].split(";", -1).length);
         assertThat(lines[3].split(";", -1)).hasSize(lines[0].split(";", -1).length);
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);

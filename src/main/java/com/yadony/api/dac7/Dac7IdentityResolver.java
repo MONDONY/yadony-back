@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 public class Dac7IdentityResolver implements DisposableBean {
 
     static final int PARALLEL_LOOKUPS = 4;
-    /** Lectures nouvelles au plus par page : au-delà, UNAVAILABLE sans appeler le prestataire (cache au prochain passage). */
+    /** Lectures nouvelles au plus par page : au-delà, NOT_CHECKED sans appeler le prestataire (cache au prochain passage). */
     static final int MAX_LOOKUPS_PER_REQUEST = 40;
     static final Duration DEFAULT_BUDGET = Duration.ofSeconds(8);
 
@@ -84,10 +84,13 @@ public class Dac7IdentityResolver implements DisposableBean {
 
     /**
      * Verdicts de plusieurs voyageurs (pages admin) : cache d'abord, puis au plus {@value #PARALLEL_LOOKUPS} lectures
-     * en parallèle et {@value #MAX_LOOKUPS_PER_REQUEST} par appel, dans un budget TOTAL (8 s par défaut). Ce qui n'a
-     * pas répondu à temps, ou dépasse la file, vaut UNAVAILABLE ; une lecture pas encore commencée à l'échéance
+     * en parallèle et {@value #MAX_LOOKUPS_PER_REQUEST} par appel, dans un budget TOTAL (8 s par défaut). Une lecture pas encore commencée à l'échéance
      * n'appelle jamais le prestataire (annulation coopérative). Une lecture commencée finit dans le délai du client
      * HTTP (10 s) et remplit le cache pour l'affichage suivant.
+     *
+     * <p>Un voyageur qui n'a pas été lu dans cet appel (au-delà de la file, ou sans réponse dans le budget) vaut
+     * {@link Dac7IdentityStatus#NOT_CHECKED}, jamais UNAVAILABLE : seule une lecture terminée sur une panne du
+     * prestataire donne UNAVAILABLE (relecture n° 3, finding 6).
      */
     public Map<UUID, Dac7IdentityStatus> statuses(Collection<UserEntity> users) {
         long deadline = System.nanoTime() + budget.toNanos();
@@ -98,21 +101,24 @@ public class Dac7IdentityResolver implements DisposableBean {
             if (cached != null) {
                 result.put(user.getId(), cached);
             } else if (pending.size() >= MAX_LOOKUPS_PER_REQUEST) {
-                result.put(user.getId(), Dac7IdentityStatus.UNAVAILABLE);
+                result.put(user.getId(), Dac7IdentityStatus.NOT_CHECKED);
             } else {
                 pending.put(user.getId(), CompletableFuture.supplyAsync(() -> System.nanoTime() > deadline
-                        ? Dac7IdentityStatus.UNAVAILABLE : resolve(user).status(), lookups));
+                        ? Dac7IdentityStatus.NOT_CHECKED : resolve(user).status(), lookups));
             }
         }
         pending.forEach((id, future) -> {
             long remaining = deadline - System.nanoTime();
             try {
-                result.put(id, remaining <= 0 && !future.isDone() ? Dac7IdentityStatus.UNAVAILABLE
+                result.put(id, remaining <= 0 && !future.isDone() ? Dac7IdentityStatus.NOT_CHECKED
                         : future.get(Math.max(remaining, 0), TimeUnit.NANOSECONDS));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                result.put(id, Dac7IdentityStatus.UNAVAILABLE);
+                result.put(id, Dac7IdentityStatus.NOT_CHECKED);
+            } catch (java.util.concurrent.TimeoutException e) {
+                result.put(id, Dac7IdentityStatus.NOT_CHECKED);
             } catch (Exception e) {
+                // La lecture a abouti sur une erreur : panne réelle, réessayable.
                 result.put(id, Dac7IdentityStatus.UNAVAILABLE);
             }
         });
