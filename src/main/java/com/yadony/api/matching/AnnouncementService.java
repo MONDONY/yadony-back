@@ -990,7 +990,10 @@ public class AnnouncementService {
                 ));
 
         // Bateau fermé tant que l'interrupteur est éteint : avant toute écriture, brouillon compris.
-        transportModeGuard.assertTripModeAllowed(request.transportMode(), null);
+        // Une occurrence générée par une récurrence déjà enregistrée n'est pas une nouvelle ouverture
+        // du mode : la récurrence a passé la garde à sa création, ses trajets continuent de sortir.
+        transportModeGuard.assertTripModeAllowed(request.transportMode(),
+                recurrenceId != null ? request.transportMode() : null);
 
         // D4 : voyageur suspendu de publication (retour de colis non rendu, décision admin).
         // S'applique aussi bien à un brouillon qu'à une publication directe.

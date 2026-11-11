@@ -40,6 +40,7 @@ class TripRecurrenceServiceTest {
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock TransportModeGuard transportModeGuard;
     @InjectMocks TripRecurrenceService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -399,7 +400,7 @@ class TripRecurrenceServiceTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"monthly-limit-reached", "gp-pro-pending"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"monthly-limit-reached", "gp-pro-pending", "transport-mode-disabled"})
     void generate_limitOrPendingRefusal_doesNotAdvanceLastGeneratedDate(String code) {
         mockUser();
         when(announcementService.createRecurringAnnouncement(anyString(), any(), any()))
@@ -863,6 +864,99 @@ class TripRecurrenceServiceTest {
         upcoming.setEndDate(today.minusDays(1));
         upcoming.setLastPublicationErrorCode("kyc-required");
         assertThat(service.toDto(upcoming, today).status()).isEqualTo(TripRecurrenceStatus.TERMINATED);
+    }
+
+    private TripRecurrenceRequest requestWithMode(String mode) {
+        var base = request("1111111", 0, false);
+        return new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                mode, base.capacityUnit(), base.availableKg(), base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), false, null, 0);
+    }
+
+    private static YadonyBusinessException transportModeDisabled() {
+        return new YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                "transport-mode-disabled", "Mode de transport indisponible",
+                "Le transport par bateau n'est pas encore ouvert.");
+    }
+
+    @Test
+    void create_boatRecurrence_whenGuardRefuses_is422_andNothingIsSaved() {
+        doThrow(transportModeDisabled()).when(transportModeGuard)
+                .assertTripModeAllowed(eq(TransportMode.BOAT), any());
+
+        assertThatThrownBy(() -> service.create(userId, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("transport-mode-disabled");
+                });
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void update_toBoat_passesThePreviousModeToTheGuard() {
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        UUID id = UUID.randomUUID();
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+        doThrow(transportModeDisabled()).when(transportModeGuard)
+                .assertTripModeAllowed(TransportMode.BOAT, TransportMode.PLANE);
+
+        assertThatThrownBy(() -> service.update(userId, id, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("transport-mode-disabled"));
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+    }
+
+    @Test
+    void update_existingBoatRecurrence_keepsBoat_guardSeesItAsPrevious() {
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        existing.setTransportMode("BOAT");
+        UUID id = UUID.randomUUID();
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        service.update(userId, id, requestWithMode("BOAT"));
+
+        verify(transportModeGuard).assertTripModeAllowed(TransportMode.BOAT, TransportMode.BOAT);
+        verify(repository).save(existing);
+    }
+
+    @Test
+    void create_lowercaseMode_isStoredNormalized() {
+        var dto = service.create(userId, requestWithMode(" plane "));
+
+        ArgumentCaptor<TripRecurrenceEntity> captor = ArgumentCaptor.forClass(TripRecurrenceEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getTransportMode()).isEqualTo("PLANE");
+        assertThat(dto.transportMode()).isEqualTo("PLANE");
+        verify(transportModeGuard).assertTripModeAllowed(eq(TransportMode.PLANE), any());
+    }
+
+    @Test
+    void create_unknownMode_is422InvalidTransportMode_andNothingIsSaved() {
+        assertThatThrownBy(() -> service.create(userId, requestWithMode("SHIP")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("invalid-transport-mode");
+                });
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+    }
+
+    @Test
+    void generate_boatRecurrence_stillGenerates_whenBoatSwitchIsOff() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setTransportMode("BOAT");
+
+        int created = service.generateForRecurrence(rec);
+
+        assertThat(created).isEqualTo(1);
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().transportMode()).isEqualTo(TransportMode.BOAT);
     }
 
     private TripRecurrenceRequest request(String weekdays, int horizon, boolean active) {

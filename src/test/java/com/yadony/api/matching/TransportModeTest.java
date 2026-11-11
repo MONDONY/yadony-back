@@ -45,4 +45,28 @@ class TransportModeTest {
     void requestedMode_rejectsOfferWithoutMode() {
         assertThat(TransportMode.accepts(TransportMode.PLANE, null)).isFalse();
     }
+
+    @Test
+    void parse_normalizesCaseAndSpaces() {
+        assertThat(TransportMode.parse(" plane ")).isEqualTo(TransportMode.PLANE);
+        assertThat(TransportMode.parse("Boat")).isEqualTo(TransportMode.BOAT);
+    }
+
+    @Test
+    void parse_rejectsUnknownOrNullWith422() {
+        for (String raw : new String[] {"SHIP", "", null}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> TransportMode.parse(raw))
+                    .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(e.getErrorCode()).isEqualTo("invalid-transport-mode");
+                    });
+        }
+    }
+
+    @Test
+    void parseOrNull_isLenientOnStoredValues() {
+        assertThat(TransportMode.parseOrNull("bus")).isEqualTo(TransportMode.BUS);
+        assertThat(TransportMode.parseOrNull("SHIP")).isNull();
+        assertThat(TransportMode.parseOrNull(null)).isNull();
+    }
 }
