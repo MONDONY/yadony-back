@@ -222,9 +222,7 @@ public class PaymentService {
      */
     private void requireVerifiedIdentity(UserEntity user) {
         if (user.getKycStatus() != KycStatus.VERIFIED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "kyc-required", "Identity Verification Required",
-                    "Vérifiez votre identité avant d'activer les paiements");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "kyc-required", "problem.kyc-required");
         }
     }
 
@@ -234,8 +232,7 @@ public class PaymentService {
 
         // Lock the user row to prevent concurrent Stripe account creation (race condition guard)
         user = userRepository.findByIdForUpdate(user.getId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         // Re-check after acquiring lock — another thread may have created the account already.
         // Also verify the existing account still exists in Stripe (it can be manually deleted in
@@ -249,9 +246,7 @@ public class PaymentService {
                 if (!isStripeAccountMissing(e)) {
                     log.error("Failed to verify Stripe account {} for user {}",
                             user.getStripeAccountId(), user.getId(), e);
-                    throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                            "stripe-account-verification-failed", "Stripe Error",
-                            "Impossible de vérifier le compte de paiement");
+                    throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-account-verification-failed", "problem.stripe-account-verification-failed");
                 }
                 log.warn("Stripe account {} no longer exists for user {} — resetting and recreating",
                         user.getStripeAccountId(), user.getId());
@@ -289,9 +284,7 @@ public class PaymentService {
             throw e;
         } catch (Exception e) {
             log.error("Failed to create Stripe account for user {}", user.getId(), e);
-            throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "stripe-account-creation-failed", "Stripe Error",
-                    "Impossible de créer le compte de paiement");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "stripe-account-creation-failed", "problem.stripe-account-creation-failed");
         }
     }
 
@@ -302,9 +295,7 @@ public class PaymentService {
         requireVerifiedIdentity(user);
 
         if (user.getStripeAccountId() == null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "stripe-account-required", "No Stripe Account",
-                    "Créez d'abord un compte Stripe Connect");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "stripe-account-required", "problem.stripe-account-required");
         }
 
         try {
@@ -324,19 +315,13 @@ public class PaymentService {
                         user.getStripeAccountId(), user.getId());
                 resetStripeAccountState(user);
                 userRepository.save(user);
-                throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "stripe-account-invalid", "Stripe Account Invalid",
-                        "Votre compte de paiement n'est plus valide. Réessayez pour en créer un nouveau.");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "stripe-account-invalid", "problem.stripe-account-invalid");
             }
             log.error("Failed to create onboarding link for user {}", user.getId(), e);
-            throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "stripe-link-creation-failed", "Stripe Error",
-                    "Impossible de générer le lien d'onboarding");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "stripe-link-creation-failed", "problem.stripe-link-creation-failed");
         } catch (Exception e) {
             log.error("Failed to create onboarding link for user {}", user.getId(), e);
-            throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "stripe-link-creation-failed", "Stripe Error",
-                    "Impossible de générer le lien d'onboarding");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "stripe-link-creation-failed", "problem.stripe-link-creation-failed");
         }
     }
 
@@ -375,8 +360,7 @@ public class PaymentService {
     void detachPendingConnectAccountForCountryChange(UUID userId, String pendingAccountId,
                                                      String previousCountry, String newCountry) {
         UserEntity user = userRepository.findByIdForUpdate(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         String currentAccountId = user.getStripeAccountId();
         if (currentAccountId == null || currentAccountId.isBlank()) {
             return;
@@ -385,10 +369,7 @@ public class PaymentService {
                 && user.getStripeAccountStatus() == StripeAccountStatus.PENDING_ONBOARDING
                 && user.getStripeOnboardingCompletedAt() == null;
         if (!stillPending) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "country-locked", "Country Locked",
-                    "Impossible de changer de pays : votre compte de paiement "
-                            + "est déjà activé dans ce pays et ne peut plus en changer.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "country-locked", "problem.country-locked");
         }
         resetStripeAccountState(user);
         userRepository.save(user);
@@ -414,9 +395,7 @@ public class PaymentService {
         UserEntity user = findUser(firebaseUid);
 
         if (user.getStripeAccountId() == null || user.getStripeAccountId().isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "stripe-account-required", "No Stripe Account",
-                    "Aucun compte Stripe à rafraîchir — créez-en un d'abord");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "stripe-account-required", "problem.stripe-account-required.aucun-compte-stripe-rafraichir");
         }
 
         if (user.getStripeAccountStatus() == StripeAccountStatus.ONBOARDING_COMPLETE
@@ -462,9 +441,7 @@ public class PaymentService {
         } catch (StripeException e) {
             log.error("Failed to refresh Stripe account {} for user {}",
                     user.getStripeAccountId(), user.getId(), e);
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "stripe-refresh-failed", "Stripe Error",
-                    "Impossible de récupérer l'état du compte Stripe");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-refresh-failed", "problem.stripe-refresh-failed");
         }
     }
 
@@ -489,9 +466,7 @@ public class PaymentService {
         }
         SupportedCurrency settled = SupportedCurrency.fromCodeOrDefault(announcementCurrency);
         if (!CurrencyPaymentRails.allows(settled, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
-                    "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-unavailable-for-currency", "problem.payment-method-unavailable-for-currency.card-cfa");
         }
         String upper = announcementCurrency.toUpperCase(java.util.Locale.ROOT);
         log.warn("Bid {} en {} sur une annonce en {} : devise réalignée sur l'annonce",
@@ -516,12 +491,10 @@ public class PaymentService {
         // auto-réparation) — ordre unique colis → paiement, PROD_CHECKLIST 9.25.
         lockBidFirst(bidId);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
 
         if (!bid.getSenderId().equals(sender.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Cette demande ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.cette-demande-vous-appartient");
         }
 
         // Le paiement est autorisé dès que le bid est PENDING ou ACCEPTED.
@@ -529,18 +502,14 @@ public class PaymentService {
         if (bid.getStatus() == BidStatus.REJECTED
                 || bid.getStatus() == BidStatus.CANCELLED
                 || bid.getStatus() == BidStatus.COMPLETED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "bid-not-payable", "Bid Not Payable",
-                    "Cette demande ne peut plus être payée (statut : " + bid.getStatus() + ")");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-payable", "problem.bid-not-payable", String.valueOf(bid.getStatus()));
         }
         // Bid matérialisé depuis un fil de demande d'envoi : l'expéditeur a payé sur le fil
         // (paiement keyed sur negotiation_thread_id, jamais sur ce bid), qui crée le bid déjà
         // ACCEPTED. findByBidId ne le trouverait pas : sans cette garde, un second escrow
         // débiterait le brut porté par le bid (fil à grille) ou le barème.
         if (bid.getLinkedNegotiationThreadId() != null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "payment-already-completed", "Payment Already Completed",
-                    "Le paiement pour cette demande a déjà été effectué");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-already-completed", "problem.payment-already-completed");
         }
 
         // Devise figée au bid, pas la préférence courante de l'expéditeur : elle a pu
@@ -554,9 +523,7 @@ public class PaymentService {
         // referme déjà cette porte à la création du bid, mais createEscrow est un
         // endpoint atteignable indépendamment — la garde doit être répétée ici.
         if (!CurrencyPaymentRails.allows(bidCurrency, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
-                    "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-unavailable-for-currency", "problem.payment-method-unavailable-for-currency.card-cfa");
         }
 
         // Currency ownership is checked before idempotency and any persistent/Stripe effect.
@@ -579,15 +546,12 @@ public class PaymentService {
                     promoteBid(bid, payment.getStripePaymentIntentId());
                     throw new BidAlreadyPaidException();
                 }
-                throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "payment-already-completed", "Payment Already Completed",
-                        "Le paiement pour cette demande a déjà été effectué");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-already-completed", "problem.payment-already-completed");
             }
         }
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         // Lot B (revue round 3 — inventaire, trouvaille non pointée explicitement) : garde
         // centralisée ici plutôt que dupliquée chez chaque appelant. createEscrow a TROIS
@@ -599,9 +563,7 @@ public class PaymentService {
         // OUT_OF_MARKET (pas != ACTIVE) : reste compatible avec negotiationCheckout sur un
         // trajet partagé passé FULL entretemps.
         if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "announcement-not-active", "Announcement Not Active",
-                    "Cette annonce n'est plus disponible");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
         // FLUTTER-GA : passé la date limite de dépôt, aucune demande pas encore acceptée ne
         // s'engage plus. Un colis déjà ACCEPTED (ancien parcours « payer après acceptation »)
@@ -643,9 +605,7 @@ public class PaymentService {
             totalNet = gridNet.add(kgNet).setScale(2, RoundingMode.HALF_UP);
         }
         if (totalNet.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "invalid-amount", "Invalid Amount",
-                "Le montant calculé est invalide (≤ 0)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-amount", "problem.invalid-amount");
         }
         BigDecimal rate;
         boolean promoApplied = false;
@@ -659,9 +619,7 @@ public class PaymentService {
             // doit rester exact même si un override ou une promo change entre-temps.
             rate = bid.getCommissionRate();
             if (rate == null) {
-                throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "payment-pricing-context-missing", "Payment Pricing Context Missing",
-                        "Le taux de commission figé de cette négociation est introuvable");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-pricing-context-missing", "problem.payment-pricing-context-missing");
             }
         } else if (bid.getCommissionGridId() != null) {
             Optional<PriceBreakdown> committed = existing.flatMap(p -> committedGridAmounts(p, totalNet, currency));
@@ -701,9 +659,7 @@ public class PaymentService {
             // legitimately have changed since the first PaymentIntent was created.
             rate = bid.getCommissionRate();
             if (rate == null) {
-                throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "payment-pricing-context-missing", "Payment Pricing Context Missing",
-                        "Le taux de commission figé de ce paiement est introuvable");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-pricing-context-missing", "problem.payment-pricing-context-missing.taux-commission-fige-paiement");
             }
         } else {
             // Truly new payment only: promo > overrides > global.
@@ -760,9 +716,7 @@ public class PaymentService {
                         cancelAndConfirmForRecycle(pi);
                     } else if (!"canceled".equals(piStatus)) {
                         // PI déjà autorisé côté Stripe mais pas encore mis à jour en DB → conflict
-                        throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                                "payment-already-completed", "Payment Already Completed",
-                                "Le paiement pour cette demande a déjà été effectué");
+                        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-already-completed", "problem.payment-already-completed");
                     }
                 } catch (StripeException e) {
                     log.error("Could not retrieve or cancel existing PaymentIntent for bid {}", bidId, e);
@@ -777,8 +731,7 @@ public class PaymentService {
         }
 
         UserEntity traveler = userRepository.findById(announcement.getTravelerId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "traveler-not-found", "Traveler Not Found", "Voyageur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "traveler-not-found", "problem.traveler-not-found"));
 
         if (traveler.getStripeAccountStatus() != StripeAccountStatus.ONBOARDING_COMPLETE
                 || traveler.getStripeAccountId() == null
@@ -790,9 +743,7 @@ public class PaymentService {
                 && request.getTotalNetEur().setScale(2, RoundingMode.HALF_UP).compareTo(totalNet) != 0) {
             log.warn("Paiement bid {} rejeté : totalNetEur client {} ≠ montant serveur {}",
                     bidId, request.getTotalNetEur(), totalNet);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "amount-mismatch", "Amount Mismatch",
-                "Le montant fourni ne correspond pas au montant calculé pour cette demande");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "amount-mismatch", "problem.amount-mismatch");
         }
 
         if (existing.isEmpty()) {
@@ -897,9 +848,7 @@ public class PaymentService {
                         traveler.getId(), traveler.getStripeAccountId(), e);
                 resetStripeAccountState(traveler);
                 userRepository.save(traveler);
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "traveler-stripe-invalid", "Traveler Stripe Account Invalid",
-                        "Le voyageur doit reconfigurer son compte de paiement avant de pouvoir recevoir cette demande.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-stripe-invalid", "problem.traveler-stripe-invalid");
             }
             log.error("Stripe PaymentIntent creation failed for bid {}", bidId, e);
             // Exception non vérifiée : la transaction de l'appelant (checkout) est annulée,
@@ -908,9 +857,7 @@ public class PaymentService {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "payment-creation-failed", "Payment Error",
-                    "Impossible de créer le paiement. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "payment-creation-failed", "problem.payment-creation-failed");
         }
     }
 
@@ -972,9 +919,7 @@ public class PaymentService {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "ephemeral-key-creation-failed", "Stripe Error",
-                    "Impossible de préparer la fiche de paiement. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "ephemeral-key-creation-failed", "problem.ephemeral-key-creation-failed");
         }
     }
 
@@ -1019,22 +964,17 @@ public class PaymentService {
         try {
             pi = PaymentIntent.retrieve(paymentIntentId);
         } catch (StripeException e) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                    "payment-intent-not-found", "Payment Intent Not Found",
-                    "Paiement introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-intent-not-found", "problem.payment-intent-not-found");
         }
 
         String senderId = pi.getMetadata() == null ? null : pi.getMetadata().get("sender_id");
         if (senderId == null || !senderId.equals(user.getId().toString())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Ce paiement ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.paiement-vous-appartient-pas");
         }
 
         String status = pi.getStatus();
         if (!"requires_payment_method".equals(status) && !"requires_confirmation".equals(status)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "intent-not-editable", "Payment Intent Not Editable",
-                    "Le paiement est déjà confirmé, l'option d'enregistrement ne peut plus changer");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "intent-not-editable", "problem.intent-not-editable");
         }
 
         try {
@@ -1056,9 +996,7 @@ public class PaymentService {
         } catch (StripeException e) {
             log.error("Failed to update setup_future_usage on {} for user {}",
                     paymentIntentId, user.getId(), e);
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "stripe-update-failed", "Stripe Error",
-                    "Impossible de mettre à jour l'option d'enregistrement de la carte");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-update-failed", "problem.stripe-update-failed");
         }
     }
 
@@ -1464,8 +1402,7 @@ public class PaymentService {
     @Transactional
     public boolean confirmBidPayment(UUID bidId) {
         BidEntity bid = bidRepository.findById(bidId).orElseThrow(() ->
-                new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Bid introuvable"));
+                YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.bid-introuvable"));
 
         if (bid.getStatus() == BidStatus.PAYMENT_ESCROWED) {
             return true;
@@ -1538,8 +1475,7 @@ public class PaymentService {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de vérifier le paiement auprès de Stripe");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error");
         }
     }
 
@@ -1640,8 +1576,7 @@ public class PaymentService {
         boolean isTraveler = announcement != null && announcement.getTravelerId().equals(caller.getId());
 
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "access-denied",
-                    "Access Denied", "Vous n'êtes pas autorisé à accéder à ce paiement");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "access-denied", "problem.access-denied");
         }
 
         return paymentRepository.findByBidId(bidId)
@@ -1663,8 +1598,7 @@ public class PaymentService {
 
     private UserEntity findUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private PaymentResponse toPaymentResponse(PaymentEntity payment, String clientSecret) {
@@ -1770,9 +1704,7 @@ public class PaymentService {
     }
 
     private YadonyBusinessException stripeRecoveryFailed() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "stripe-error", "Stripe Error",
-                "Impossible de vérifier ou d'annuler le paiement existant auprès de Stripe");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error.impossible-verifier-annuler-paiement");
     }
 
     /**
@@ -2147,8 +2079,7 @@ public class PaymentService {
                 threadId, senderId, travelerId, amountEur);
 
         UserEntity sender = userRepository.findById(senderId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Sender introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.sender-introuvable"));
 
         // Même raison que createEscrow : plus de garde contre la préférence courante,
         // la devise du fil de négociation est déjà figée (serverCurrency).
@@ -2156,14 +2087,11 @@ public class PaymentService {
 
         // Même garde que createEscrow : zone CFA = versement Stripe impossible.
         if (!CurrencyPaymentRails.allows(currency, com.yadony.api.payments.cash.PaymentMethod.STRIPE)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "payment-method-unavailable-for-currency", "Payment Method Unavailable For Currency",
-                    "La zone CFA n'accepte pas le paiement par carte pour un colis.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-unavailable-for-currency", "problem.payment-method-unavailable-for-currency.card-cfa");
         }
 
         UserEntity traveler = userRepository.findById(travelerId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "traveler-not-found", "Traveler Not Found", "Voyageur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "traveler-not-found", "problem.traveler-not-found"));
 
         // Taux effectif (override voyageur/expéditeur ; min le plus favorable) — SOURCE UNIQUE.
         // Promo optionnel : résolu strictement (invalide/expiré → repli silencieux sur le
@@ -2184,9 +2112,7 @@ public class PaymentService {
         PriceBreakdown gridAmounts = null;
         if (commissionGridId != null) {
             if (amountEur == null || amountEur.signum() <= 0) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-amount", "Invalid Amount",
-                        "Le montant calculé est invalide (≤ 0)");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-amount", "problem.invalid-amount");
             }
             Optional<PriceBreakdown> committed = existing.flatMap(p -> committedGridAmounts(p, amountEur, currency));
             if (committed.isPresent()) {
@@ -2232,9 +2158,7 @@ public class PaymentService {
             PaymentEntity payment = existing.get();
             if (payment.getStatus() == PaymentStatus.ESCROW
                     || payment.getStatus() == PaymentStatus.RELEASED) {
-                throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "payment-already-completed", "Payment Already Completed",
-                        "Le paiement pour cette négociation a déjà été effectué");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-already-completed", "problem.payment-already-completed.paiement-pour-cette-negociation");
             }
             if (payment.getStatus() == PaymentStatus.PENDING) {
                 try {
@@ -2259,9 +2183,7 @@ public class PaymentService {
                         cancelAndConfirmForRecycle(pi);
                     } else if (!"canceled".equals(piStatus)) {
                         // requires_capture / processing / succeeded → a live or used PI
-                        throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                                "payment-already-completed", "Payment Already Completed",
-                                "Le paiement pour cette négociation a déjà été effectué");
+                        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-already-completed", "problem.payment-already-completed.paiement-pour-cette-negociation");
                     }
                     // canceled (or just-canceled requires_action) → stale; recycle below
                 } catch (StripeException e) {
@@ -2354,9 +2276,7 @@ public class PaymentService {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "stripe-error", "Stripe Error",
-                    "Échec création PaymentIntent : " + e.getMessage());
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error.echec-creation-paymentintent", String.valueOf(e.getMessage()));
         }
     }
 }

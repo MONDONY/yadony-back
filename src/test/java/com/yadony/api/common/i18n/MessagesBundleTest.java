@@ -43,7 +43,9 @@ class MessagesBundleTest {
             // Refus auth repris mot pour mot (paquet i18n serveur n° 3).
             "problem.active-transactions.detail",
             "problem.active-transactions.impossible-utilisateur-transactions-cours.detail",
-            "problem.active-stripe-subscription.detail"
+            "problem.active-stripe-subscription.detail",
+            // Paquet 4a : libellé de paiement repris mot pour mot.
+            "problem.stripe-account-required.aucun-compte-stripe-rafraichir.detail"
     );
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{(\\d+)[,}]?");

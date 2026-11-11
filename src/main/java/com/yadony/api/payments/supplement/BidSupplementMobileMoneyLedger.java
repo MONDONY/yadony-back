@@ -99,8 +99,7 @@ public class BidSupplementMobileMoneyLedger {
         BidSupplementEntity s = supplements.findByIdAndBidIdForUpdate(supplementId, bidId)
                 .orElseThrow(BidSupplementMobileMoneyLedger::notFound);
         if (s.getRail() != BidSupplementRail.PAWAPAY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-mismatch",
-                    "Supplement Rail Mismatch", "Ce supplément ne se paie pas en mobile money");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-mismatch", "problem.supplement-rail-mismatch");
         }
         if (!senderId.equals(s.getSenderId())) {
             throw forbidden();
@@ -113,8 +112,7 @@ public class BidSupplementMobileMoneyLedger {
         }
         BidStatus bidStatus = bids.findById(bidId).map(BidEntity::getStatus).orElse(null);
         if (bidStatus != BidStatus.ACCEPTED && bidStatus != BidStatus.HANDED_OVER) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status",
-                    "Unprocessable", "Ce colis n'attend plus de réponse à un supplément");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status", "problem.invalid-bid-status");
         }
         if (s.getStatus() == BidSupplementStatus.PROPOSED) {
             requireNotExpired(s.getExpiresAt(), window.now());
@@ -126,8 +124,7 @@ public class BidSupplementMobileMoneyLedger {
     /** Une demande échue n'accepte plus de NOUVEAU dépôt (un dépôt en vol se relit toujours). */
     static void requireNotExpired(LocalDateTime expiresAt, LocalDateTime now) {
         if (!expiresAt.isAfter(now)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-expired", "Supplement Expired",
-                    "Le délai de réponse à cette demande de supplément est dépassé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-expired", "problem.supplement-expired");
         }
     }
 
@@ -329,17 +326,14 @@ public class BidSupplementMobileMoneyLedger {
     }
 
     static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "supplement-not-found", "Supplement Not Found",
-                "Demande de supplément introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "supplement-not-found", "problem.supplement-not-found");
     }
 
     static YadonyBusinessException forbidden() {
-        return new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                "Vous n'êtes pas partie à ce colis");
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-etes-pas-partie");
     }
 
     static YadonyBusinessException notPending() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-not-pending", "Supplement Not Pending",
-                "Cette demande de supplément n'attend plus de paiement");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-not-pending", "problem.supplement-not-pending.cette-demande-supplement-attend");
     }
 }

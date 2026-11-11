@@ -105,10 +105,7 @@ public class WalletTopupOrchestrator {
             if (StripeUnavailable.isNetworkFailure(exception)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_GATEWAY,
-                    "wallet-topup-stripe-error", "Stripe Error",
-                    "Impossible de préparer la recharge du wallet. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "wallet-topup-stripe-error", "problem.wallet-topup-stripe-error");
         }
     }
 
@@ -121,11 +118,7 @@ public class WalletTopupOrchestrator {
             case "MOBILE_MONEY" -> mobileMoneyTopupService.initiate(userId, request);
             // Anciens codes de rail, envoyés par les apps déjà déployées : ils désignaient un
             // rail maison retiré, et ne doivent surtout pas retomber sur pawaPay en silence.
-            case "WAVE", "ORANGE_MONEY" -> throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "mobile-money-topup-retired", "Mobile Money Topup Retired",
-                    "Le rechargement par mobile money n'est plus disponible pour le moment. "
-                            + "Choisissez Carte bancaire.");
+            case "WAVE", "ORANGE_MONEY" -> throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-topup-retired", "problem.mobile-money-topup-retired");
             default -> throw new IllegalArgumentException(
                     "Mode de paiement inconnu : " + request.getPaymentMethod());
         };
@@ -169,10 +162,7 @@ public class WalletTopupOrchestrator {
             if (StripeUnavailable.isNetworkFailure(exception)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_GATEWAY,
-                    "wallet-topup-stripe-error", "Stripe Error",
-                    "Impossible de préparer la recharge du wallet. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "wallet-topup-stripe-error", "problem.wallet-topup-stripe-error");
         }
     }
 
@@ -180,11 +170,7 @@ public class WalletTopupOrchestrator {
         String code = amount.currency().code();
         BigDecimal max = exchangeRateService.convert(CARD_TOPUP_MAX_EUR, "EUR", code, RoundingMode.DOWN);
         if (amount.major().compareTo(max) > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-topup-above-max", "Wallet Topup Above Max",
-                    "Une recharge par carte est limitée à " + WalletAmountText.format(max, code)
-                            + ".");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-topup-above-max", "problem.wallet-topup-above-max", String.valueOf(WalletAmountText.format(max, code)));
         }
     }
 

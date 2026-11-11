@@ -51,7 +51,6 @@ public enum BidSupplementRail {
     }
 
     static YadonyBusinessException unsupported() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-unsupported",
-                "Supplement Rail Unsupported", "Un supplément n'est pas encore possible avec ce moyen de paiement");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-unsupported", "problem.supplement-rail-unsupported");
     }
 }

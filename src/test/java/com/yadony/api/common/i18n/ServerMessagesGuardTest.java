@@ -87,7 +87,35 @@ class ServerMessagesGuardTest {
             "matching/TripsSummaryController.java",
             "matching/reception/ReceptionService.java",
             "matching/reception/RecipientChangeService.java",
-            "matching/reception/RecipientReplacementService.java");
+            "matching/reception/RecipientReplacementService.java",
+            // Paquet 4a : paiements côté utilisateur (paiement carte, mobile money, portefeuille, commission
+            // espèces, supplément). Les webhooks, jobs, rapprochement et l'administration restent pour le 4b.
+            "payments/PaymentService.java",
+            "payments/ConnectDashboardLinkService.java",
+            "payments/cash/CashCommissionService.java",
+            "payments/mobilemoney/MobileMoneyAccountController.java",
+            "payments/mobilemoney/MobileMoneyBidPaymentService.java",
+            "payments/mobilemoney/MobileMoneyCountriesController.java",
+            "payments/mobilemoney/MobileMoneyNegotiationPaymentService.java",
+            "payments/mobilemoney/MobileMoneyPayerRefusals.java",
+            "payments/mobilemoney/MobileMoneyPaymentController.java",
+            "payments/mobilemoney/MobileMoneyPayoutAccountsController.java",
+            "payments/mobilemoney/MobileMoneyProvidersController.java",
+            "payments/supplement/BidSupplementCardRail.java",
+            "payments/supplement/BidSupplementCashRail.java",
+            "payments/supplement/BidSupplementMobileMoneyRail.java",
+            "payments/supplement/BidSupplementRail.java",
+            "payments/supplement/BidSupplementController.java",
+            "payments/supplement/BidSupplementMobileMoneyLedger.java",
+            "payments/supplement/BidSupplementService.java",
+            "payments/supplement/BidSupplementWindow.java",
+            "payments/mobilemoney/MobileMoneyAcceptedOperatorsService.java",
+            "payments/mobilemoney/MobileMoneyBidPricing.java",
+            "payments/wallet/WalletRefundRequestService.java",
+            "payments/wallet/WalletSelfRefundService.java",
+            "payments/wallet/WalletService.java",
+            "payments/wallet/WalletTopupOrchestrator.java",
+            "payments/wallet/topupcode/WalletTopupCodeRedemptionService.java");
 
     private static final Pattern HARDCODED_BUSINESS = Pattern.compile(
             "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\("
@@ -97,13 +125,20 @@ class ServerMessagesGuardTest {
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");
     /**
      * Sources migrées qui gardent des {@code IllegalStateException} françaises : elles ne sont jamais rendues
-     * telles quelles (réponse 500 générique, voir l'inventaire), seul le texte du journal est en français.
+     * telles quelles (réponse 500 générique, voir l'inventaire), seul le texte du journal est en français
+     * (paquet 4a : fichiers de paiement dont seules les {@code IllegalState/IllegalArgument} internes restent françaises).
      */
     private static final List<String> INDIRECT_ILLEGAL_STATE_ALLOWED = List.of(
             "cancellation/CancellationService.java",
             "kyc/provider/didit/DiditIdentityProvider.java",
             "auth/GuestClaimService.java",
-            "auth/GuestUserProvisioner.java");
+            "auth/GuestUserProvisioner.java",
+            "payments/cash/CashCommissionService.java",
+            "payments/mobilemoney/MobileMoneyBidPaymentService.java",
+            "payments/mobilemoney/MobileMoneyNegotiationPaymentService.java",
+            "payments/wallet/WalletService.java",
+            "payments/wallet/WalletTopupOrchestrator.java",
+            "payments/wallet/topupcode/WalletTopupCodeRedemptionService.java");
     private static final Pattern FRENCH_IN_BUSINESS_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");

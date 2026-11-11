@@ -118,8 +118,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
                 } else if (pi.canceled()) {
                     ledger.renewAttempt(supplementId, existing);
                 } else {
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-payment-processing",
-                            "Supplement Payment Processing", "Le paiement du supplément est en cours de traitement");
+                    throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-payment-processing", "problem.supplement-payment-processing");
                 }
                 continue;
             }
@@ -143,13 +142,11 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
      * PaymentIntent chez Stripe et enregistre le paiement s'il a réussi. Idempotent.
      */
     public BidSupplementResponse confirmPayment(UUID bidId, UUID supplementId, String firebaseUid) {
-        UserEntity sender = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        UserEntity sender = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
         BidSupplementEntity s = supplements.findByIdAndBidId(supplementId, bidId)
                 .orElseThrow(BidSupplementCardRail::notFound);
         if (!sender.getId().equals(s.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas partie à ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-etes-pas-partie");
         }
         boolean awaitingConfirmation = s.getStatus() == BidSupplementStatus.PAYMENT_PENDING
                 || (BidSupplementCardLedger.CLOSED_UNPAID.contains(s.getStatus()) && s.getPaidAt() == null);
@@ -205,8 +202,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
     }
 
     private PaymentIntentView create(BidSupplementEntity s) {
-        UserEntity sender = users.findById(s.getSenderId()).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Expéditeur introuvable"));
+        UserEntity sender = users.findById(s.getSenderId()).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.expediteur-introuvable"));
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(s.getCurrency());
         CurrencyAmount gross = CurrencyAmount.of(s.getGrossAmount(), currency);
         try {
@@ -236,8 +232,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "supplement-payment-creation-failed",
-                    "Payment Error", "Impossible de créer le paiement du supplément. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "supplement-payment-creation-failed", "problem.supplement-payment-creation-failed");
         }
     }
 
@@ -252,8 +247,7 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de vérifier le paiement auprès de Stripe");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error");
         }
     }
 
@@ -270,12 +264,10 @@ public class BidSupplementCardRail implements BidSupplementRailHandler {
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "supplement-not-found", "Supplement Not Found",
-                "Demande de supplément introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "supplement-not-found", "problem.supplement-not-found");
     }
 
     private static YadonyBusinessException notPending() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-not-pending", "Supplement Not Pending",
-                "Cette demande de supplément n'attend plus de paiement");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-not-pending", "problem.supplement-not-pending.cette-demande-supplement-attend");
     }
 }

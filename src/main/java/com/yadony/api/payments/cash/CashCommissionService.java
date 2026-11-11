@@ -355,9 +355,7 @@ public class CashCommissionService {
     /** Net strictement positif à l'unité mineure de la devise, sinon 422 {@code invalid-amount}. */
     private static BigDecimal requirePositive(BigDecimal net, SupportedCurrency currency) {
         if (net.setScale(currency.minorUnit(), RoundingMode.HALF_UP).signum() <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-amount", "Invalid Amount",
-                    "Le montant calculé est invalide (≤ 0)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-amount", "problem.invalid-amount");
         }
         return net;
     }
@@ -373,18 +371,14 @@ public class CashCommissionService {
                 SetupIntent si = stripeCashGateway.retrieveSetupIntent(paymentMethodOrSetupIntentId);
                 paymentMethodId = si.getPaymentMethod();
                 if (paymentMethodId == null) {
-                    throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "setup-not-confirmed", "Setup Not Confirmed",
-                            "Le setup intent n'a pas encore de méthode de paiement attachée");
+                    throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "setup-not-confirmed", "problem.setup-not-confirmed");
                 }
             } else {
                 paymentMethodId = paymentMethodOrSetupIntentId;
             }
             PaymentMethod pm = stripeCashGateway.retrievePaymentMethod(paymentMethodId);
             if (pm.getCard() == null) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-payment-method", "Invalid Payment Method",
-                        "La méthode de paiement fournie n'est pas une carte");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-payment-method", "problem.invalid-payment-method.methode-paiement-fournie-est");
             }
             user.setCommissionPaymentMethodId(paymentMethodId);
             user.setCommissionCardBrand(pm.getCard().getBrand());
@@ -878,8 +872,7 @@ public class CashCommissionService {
         com.yadony.api.requests.entity.NegotiationThreadEntity thread =
                 negotiationThreadRepository.findById(threadId).orElseThrow();
         if (!thread.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Ce fil de négociation ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.fil-negociation-vous-appartient");
         }
         if (NEGO_COMMISSION_CHARGED.equals(thread.getCommissionStatus())) {
             return ConfirmAcceptanceResponse.ok();
@@ -1211,9 +1204,7 @@ public class CashCommissionService {
         }
         String code = normalizeCurrency(fundingCurrency);
         if (SupportedCurrency.fromCode(code) == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "funding-currency-invalid", "Invalid Funding Currency",
-                    "Devise de prélèvement inconnue");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "funding-currency-invalid", "problem.funding-currency-invalid");
         }
         return code;
     }
@@ -1240,22 +1231,17 @@ public class CashCommissionService {
         // Propriété vérifiée AVANT les verrous : sinon tout voyageur pouvait verrouiller le colis
         // et le trajet d'un autre le temps de sa requête. Revérifiée sous verrou plus bas.
         BidRepository.BidParties parties = bidRepo.findPartiesById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
         if (!travelerId.equals(parties.getTravelerId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.trajet-vous-appartient-pas");
         }
         BidEntity bid = bidRepo.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
         AnnouncementEntity announcement = announcementRepo.findByIdForUpdate(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         if (!announcement.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.trajet-vous-appartient-pas");
         }
         if (!announcement.getAcceptedPaymentMethods().contains(com.yadony.api.payments.cash.PaymentMethod.CASH)) {
             throw new InvalidPaymentMethodForAnnouncementException(
@@ -1275,9 +1261,7 @@ public class CashCommissionService {
         // encore en négociation, et récupérait le téléphone de l'expéditeur. Posée avant tout
         // débit, comme les gardes suivantes.
         if (bid.getStatus() != BidStatus.PENDING) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "bid-not-pending", "Bid Not Pending",
-                    "Cette demande n'attend plus de réponse");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "bid-not-pending", "problem.bid-not-pending");
         }
         // Lot B (correction 2, round 2) : garde posée AVANT tout débit (wallet ou carte) —
         // une annonce retirée par la modération ne doit plus jamais transformer un bid en
@@ -1291,9 +1275,7 @@ public class CashCommissionService {
         // son voyageur ou déjà livré n'accepte pas davantage un nouvel engagement d'argent
         // — c'est déjà la garde employée par BidCheckoutService et PaymentService.
         if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "announcement-not-accepting", "Announcement Not Accepting",
-                    "Ce trajet n'accepte plus de colis");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-accepting", "problem.announcement-not-accepting.no-parcels");
         }
         // FLUTTER-GA : même garde avant tout débit — une demande acceptée après la date
         // limite de dépôt deviendrait un colis que le voyageur ne peut plus recevoir.
@@ -1304,9 +1286,7 @@ public class CashCommissionService {
         if (announcement.getCapacityUnit() != CapacityUnit.KG_FREE
                 && bid.getWeightKg() != null
                 && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "capacity-insufficient", "Insufficient Capacity",
-                    "Capacité insuffisante pour accepter cette demande");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
         }
 
         BidCommissionQuote quote = quoteBidCommission(bid, announcement);
@@ -1421,8 +1401,7 @@ public class CashCommissionService {
         } catch (StripeException e) {
             log.error("PaymentIntent de commission {} illisible avant un débit portefeuille : {}",
                     paymentIntentId, e.getMessage());
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de vérifier le paiement par carte en cours de cette commission");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error.impossible-verifier-paiement-par");
         }
     }
 
@@ -1441,9 +1420,7 @@ public class CashCommissionService {
     }
 
     private static YadonyBusinessException cardAttemptPending() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "commission-card-attempt-pending",
-                "Card Commission Pending",
-                "Un paiement par carte de cette commission est encore en cours. Réessayez dans un instant.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "commission-card-attempt-pending", "problem.commission-card-attempt-pending");
     }
 
     /**
@@ -1455,18 +1432,14 @@ public class CashCommissionService {
     @Transactional(readOnly = true)
     public CommissionAllocationPreviewDto previewWalletAllocation(UUID bidId, UUID travelerId, String fundingCurrency) {
         BidEntity bid = bidRepo.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "bid-not-found", "Bid Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found"));
         AnnouncementEntity announcement = announcementRepo.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         if (!announcement.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.trajet-vous-appartient-pas");
         }
         if (bid.getStatus() != BidStatus.PENDING) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "bid-not-pending", "Bid Not Pending",
-                    "Cette demande n'est plus en attente de réponse");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "bid-not-pending", "problem.bid-not-pending.cette-demande-est-plus");
         }
         BigDecimal commission = quoteBidCommission(bid, announcement).commission();
         String bidCurrency = normalizeCurrency(bid.getCurrency());
@@ -1489,8 +1462,7 @@ public class CashCommissionService {
         // l'acceptation d'un bid d'autrui (flip commissionStatus=FAILED = griefing).
         AnnouncementEntity announcement = announcementRepo.findByIdForUpdate(bid.getAnnouncementId()).orElseThrow();
         if (!announcement.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.trajet-vous-appartient-pas");
         }
         if (bid.getStatus() != BidStatus.PENDING) {
             return refuseNoLongerPending(bid);
