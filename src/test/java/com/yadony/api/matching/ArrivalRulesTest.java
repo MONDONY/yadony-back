@@ -51,6 +51,72 @@ class ArrivalRulesTest {
     }
 
     @Test
+    @DisplayName("durée maximale par mode : avion/train/autre 3, voiture/bus 14, bateau 120, null 3")
+    void maxDays_perMode() {
+        assertThat(ArrivalRules.maxDaysAfterDeparture(TransportMode.PLANE)).isEqualTo(3);
+        assertThat(ArrivalRules.maxDaysAfterDeparture(TransportMode.TRAIN)).isEqualTo(3);
+        assertThat(ArrivalRules.maxDaysAfterDeparture(TransportMode.OTHER)).isEqualTo(3);
+        assertThat(ArrivalRules.maxDaysAfterDeparture(TransportMode.CAR)).isEqualTo(14);
+        assertThat(ArrivalRules.maxDaysAfterDeparture(TransportMode.BUS)).isEqualTo(14);
+        assertThat(ArrivalRules.maxDaysAfterDeparture(TransportMode.BOAT)).isEqualTo(120);
+        assertThat(ArrivalRules.maxDaysAfterDeparture(null)).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("avion : arrivée à J+4 → 422 arrival-too-far")
+    void plane_arrivalAtDay4_rejected() {
+        assertTooFar(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(4), null, TransportMode.PLANE));
+    }
+
+    @Test
+    @DisplayName("voiture : arrivée à J+14 → accepté")
+    void car_arrivalAtDay14_accepted() {
+        assertThatCode(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(14), null, TransportMode.CAR))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("voiture : arrivée à J+15 → 422 arrival-too-far")
+    void car_arrivalAtDay15_rejected() {
+        assertTooFar(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(15), null, TransportMode.CAR));
+    }
+
+    @Test
+    @DisplayName("bateau : arrivée à J+120 → accepté")
+    void boat_arrivalAtDay120_accepted() {
+        assertThatCode(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(120), null, TransportMode.BOAT))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("bateau : arrivée à J+121 → 422 arrival-too-far")
+    void boat_arrivalAtDay121_rejected() {
+        assertTooFar(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(121), null, TransportMode.BOAT));
+    }
+
+    @Test
+    @DisplayName("ancienne signature à 4 arguments : se comporte comme l'avion (J+4 rejeté)")
+    void legacyFourArgValidate_behavesAsPlane() {
+        assertTooFar(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(4), null));
+        assertThatCode(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(3), null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("le message d'erreur cite la durée du mode, pas 3 jours en dur")
+    void tooFarMessage_citesModeLimit() {
+        assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP.plusDays(15), null, TransportMode.CAR))
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getMessage()).contains("14"));
+    }
+
+    private static void assertTooFar(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call)
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("arrival-too-far"));
+    }
+
+    @Test
     @DisplayName("même jour, heure d'arrivée avant le départ → 422")
     void sameDayArrivalTimeBeforeDeparture_rejected() {
         assertThatThrownBy(() -> ArrivalRules.validate(DEP, T22, DEP, T0630))

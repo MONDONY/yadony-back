@@ -1104,7 +1104,7 @@ public class AnnouncementService {
                 request.handoverDeadline(), TripTimezones.zoneOf(announcement.getTimezone()),
                 Instant.now());
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
-                request.arrivalDate(), request.arrivalTime());
+                request.arrivalDate(), request.arrivalTime(), request.transportMode());
         announcement.setHandoverDeadline(request.handoverDeadline());
         // Absent = prix ferme : un client pas encore à jour ne doit jamais ouvrir
         // un trajet à la négociation sans que le voyageur l'ait demandé.
@@ -1600,7 +1600,7 @@ public class AnnouncementService {
         }
 
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
-                request.arrivalDate(), request.arrivalTime());
+                request.arrivalDate(), request.arrivalTime(), request.transportMode());
 
         // Calculés AVANT d'écraser les villes : une modification qui omet le code pays
         // (l'édition ne le recevait pas du détail) le conserve si la ville n'a pas changé,

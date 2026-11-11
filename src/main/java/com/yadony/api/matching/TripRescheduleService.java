@@ -179,7 +179,7 @@ public class TripRescheduleService {
                     "Handover Deadline Past", "La date limite de remise doit être dans le futur");
         }
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
-                request.arrivalDate(), request.arrivalTime());
+                request.arrivalDate(), request.arrivalTime(), announcement.getTransportMode());
     }
 
     /**

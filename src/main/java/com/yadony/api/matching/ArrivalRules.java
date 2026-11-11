@@ -16,13 +16,39 @@ import java.time.LocalTime;
  */
 public final class ArrivalRules {
 
-    /** Au-delà, ce n'est plus un trajet mais un séjour. Aligné sur le CHECK de V276. */
-    public static final int MAX_DAYS_AFTER_DEPARTURE = 3;
+    /**
+     * Plafond absolu de la base : le CHECK {@code chk_announcements_arrival_date} (V379) accepte
+     * jusqu'à 120 jours, ce qu'il faut à un bateau. Chaque mode a sa propre limite dessous.
+     */
+    private static final int BOAT_MAX_DAYS = 120;
 
     private ArrivalRules() {}
 
+    /**
+     * Durée maximale entre le départ et l'arrivée selon le mode : au-delà, ce n'est plus un
+     * trajet mais un séjour. Avion, train et autre : 3 jours (vols de nuit, escales) ; voiture
+     * et bus : 14 jours (routes longues, frontières) ; bateau : 120 jours (cargos, traversées
+     * avec escales). Mode absent : 3 jours, comme avant les modes.
+     */
+    public static int maxDaysAfterDeparture(TransportMode mode) {
+        if (mode == null) {
+            return 3;
+        }
+        return switch (mode) {
+            case PLANE, TRAIN, OTHER -> 3;
+            case CAR, BUS -> 14;
+            case BOAT -> BOAT_MAX_DAYS;
+        };
+    }
+
+    /** Ancienne signature : se comporte comme l'avion. */
     public static void validate(LocalDate departureDate, LocalTime departureTime,
                                 LocalDate arrivalDate, LocalTime arrivalTime) {
+        validate(departureDate, departureTime, arrivalDate, arrivalTime, TransportMode.PLANE);
+    }
+
+    public static void validate(LocalDate departureDate, LocalTime departureTime,
+                                LocalDate arrivalDate, LocalTime arrivalTime, TransportMode mode) {
         if (arrivalDate == null || departureDate == null) {
             return;
         }
@@ -31,10 +57,11 @@ public final class ArrivalRules {
                     "arrival-before-departure", "Arrivée avant le départ",
                     "La date d'arrivée ne peut pas précéder la date de départ");
         }
-        if (arrivalDate.isAfter(departureDate.plusDays(MAX_DAYS_AFTER_DEPARTURE))) {
+        int maxDays = maxDaysAfterDeparture(mode);
+        if (arrivalDate.isAfter(departureDate.plusDays(maxDays))) {
             throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "arrival-too-far", "Arrivée trop tardive",
-                    "La date d'arrivée doit être au plus " + MAX_DAYS_AFTER_DEPARTURE
+                    "La date d'arrivée doit être au plus " + maxDays
                             + " jours après le départ");
         }
         if (arrivalDate.isEqual(departureDate) && arrivalTime != null && departureTime != null

@@ -1016,8 +1016,9 @@ public class NegotiationService {
         ann.setDepartureAt(com.yadony.api.matching.AnnouncementService.deriveDepartureAt(
                 req.departureDate(), req.departureTime(), ann.getTimezone()));
         ann.setArrivalTime(req.arrivalTime());
+        // Mode du colis pour l'instant (null = 3 jours) ; la Task 5 passera le mode résolu du trajet dédié.
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
-                req.arrivalDate(), req.arrivalTime());
+                req.arrivalDate(), req.arrivalTime(), request.getTransportMode());
         ann.setArrivalDate(req.arrivalDate());
         ann.setHandoverDeadline(dedicatedHandoverDeadline(
                 req.departureDate(), req.departureTime(), ann.getTimezone()));
