@@ -69,8 +69,11 @@ import java.util.Arrays;
  *
  * <p>{@code TRANSPORT_ROAD_ENABLED} et {@code TRANSPORT_BOAT_ENABLED} sont les interrupteurs des
  * modes de transport route et bateau (l'avion reste le mode historique, toujours ouvert).
- * Faux par défaut : tant qu'un mode est éteint, l'application le masque et le back refuse de
- * créer un trajet de ce mode. Amorcés une seule fois depuis
+ * Faux par défaut : tant qu'un mode est éteint, l'application le masque. Route éteinte : les
+ * trajets voiture et bus restent acceptés (dony-pro et l'assistant les publient déjà), seules les
+ * demandes d'envoi de ce mode sont refusées. Bateau éteint : la création d'un trajet bateau et
+ * les demandes d'envoi bateau sont refusées (un trajet bateau déjà en base reste modifiable).
+ * Tant que les deux sont éteints, la correspondance demandes-trajets ignore le mode. Amorcés une seule fois depuis
  * {@code YADONY_TRANSPORT_ROAD_ENABLED} / {@code YADONY_TRANSPORT_BOAT_ENABLED}, puis pilotés
  * depuis le back-office sans redéploiement. Exposés à l'application par
  * {@code GET /config/transport-modes}.
