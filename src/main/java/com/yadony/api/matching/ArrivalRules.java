@@ -27,21 +27,14 @@ public final class ArrivalRules {
             return;
         }
         if (arrivalDate.isBefore(departureDate)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "arrival-before-departure", "Arrivée avant le départ",
-                    "La date d'arrivée ne peut pas précéder la date de départ");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-before-departure", "problem.arrival-before-departure");
         }
         if (arrivalDate.isAfter(departureDate.plusDays(MAX_DAYS_AFTER_DEPARTURE))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "arrival-too-far", "Arrivée trop tardive",
-                    "La date d'arrivée doit être au plus " + MAX_DAYS_AFTER_DEPARTURE
-                            + " jours après le départ");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-too-far", "problem.arrival-too-far", MAX_DAYS_AFTER_DEPARTURE);
         }
         if (arrivalDate.isEqual(departureDate) && arrivalTime != null && departureTime != null
                 && !arrivalTime.isAfter(departureTime)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "arrival-time-before-departure", "Heure d'arrivée avant le départ",
-                    "Le même jour, l'heure d'arrivée doit suivre l'heure de départ");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-time-before-departure", "problem.arrival-time-before-departure");
         }
     }
 

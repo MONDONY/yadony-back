@@ -87,36 +87,27 @@ public class RecipientReplacementService {
     @Transactional
     public BidResponse requestReplacement(UUID bidId, String firebaseUid) {
         UserEntity caller = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.introuvable"));
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
                 .map(AnnouncementEntity::getTravelerId)
                 .orElse(null);
         if (travelerId == null || !travelerId.equals(caller.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul le voyageur du colis peut demander un autre destinataire");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-voyageur-colis-demander");
         }
         if (!RecipientChangeService.CHANGEABLE.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "recipient-replacement-not-allowed",
-                    "Recipient Replacement Not Allowed",
-                    "Le colis a déjà été remis ou n'est plus en cours : le destinataire ne peut plus changer");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-replacement-not-allowed", "problem.recipient-replacement-not-allowed");
         }
         BidRecipientLinkEntity link = linkRepository.findByBidId(bidId)
                 .filter(l -> l.getStatus() == ReceptionLinkStatus.DECLINED)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.CONFLICT, "recipient-not-declined",
-                        "Recipient Not Declined", "Le destinataire n'a pas refusé ce colis"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-not-declined", "problem.recipient-not-declined"));
 
         LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
         Optional<LocalDateTime> last = linkRepository.lastReplacementRequestAt(link);
         if (last.isPresent() && last.get().plus(COOLDOWN).isAfter(now)) {
             OffsetDateTime nextAllowedAt = last.get().plus(COOLDOWN).atOffset(ZoneOffset.UTC);
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "recipient-replacement-too-soon",
-                    "Recipient Replacement Too Soon",
-                    "Vous avez déjà prévenu l'expéditeur. Nouvelle demande possible 12 h après la précédente.",
-                    Map.of("nextRequestAllowedAt", nextAllowedAt.toString()));
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "recipient-replacement-too-soon", "problem.recipient-replacement-too-soon", Map.of("nextRequestAllowedAt", nextAllowedAt.toString()));
         }
 
         auditService.log("BID", bidId, AUDIT_ACTION, caller.getId(),

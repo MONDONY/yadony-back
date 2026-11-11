@@ -65,14 +65,11 @@ public class TripRescheduleService {
     @CacheEvict(value = "announcements-search", allEntries = true)
     public TripRescheduleResponse reschedule(UUID announcementId, String firebaseUid, TripRescheduleRequest request) {
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à reporter ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.autorise-reporter-trajet");
         }
         assertReschedulable(announcement);
         assertNewSchedule(announcement, request);
@@ -140,43 +137,33 @@ public class TripRescheduleService {
 
     private void assertReschedulable(AnnouncementEntity announcement) {
         if (!RESCHEDULABLE.contains(announcement.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reschedule-invalid-status",
-                    "Reschedule Impossible",
-                    "Seul un trajet publié et pas encore terminé peut être reporté");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reschedule-invalid-status", "problem.reschedule-invalid-status");
         }
         if (bidRepository.existsByAnnouncementIdAndStatusIn(announcement.getId(),
                 List.copyOf(TripRescheduleRules.BLOCKING_STATUSES))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reschedule-in-transit",
-                    "Reschedule Impossible",
-                    "Un colis est déjà en route : le trajet ne peut plus être reporté");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reschedule-in-transit", "problem.reschedule-in-transit");
         }
         if (announcement.getRescheduleCount() >= TripRescheduleRules.MAX_RESCHEDULES) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "reschedule-limit-reached",
-                    "Reschedule Limit Reached",
-                    "Ce trajet a déjà été reporté " + TripRescheduleRules.MAX_RESCHEDULES
-                            + " fois. Annulez-le et publiez un nouveau trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reschedule-limit-reached", "problem.reschedule-limit-reached", TripRescheduleRules.MAX_RESCHEDULES);
         }
     }
 
     private void assertNewSchedule(AnnouncementEntity announcement, TripRescheduleRequest request) {
         if (request.departureDate().equals(announcement.getDepartureDate())
                 && Objects.equals(request.departureTime(), announcement.getDepartureTime())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "reschedule-same-date",
-                    "Same Date", "Choisissez une date ou une heure de départ différente de l'actuelle");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "reschedule-same-date", "problem.reschedule-same-date");
         }
         OffsetDateTime departureAt = AnnouncementService.deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone());
         if (departureAt != null && !departureAt.isAfter(OffsetDateTime.now())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-departure-date",
-                    "Invalid Departure Date", "La nouvelle date de départ doit être dans le futur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-departure-date", "problem.invalid-departure-date.nouvelle-date-depart-futur");
         }
         AnnouncementService.validateHandoverDeadline(request.handoverDeadline(),
                 request.departureDate(), request.departureTime(), announcement.getTimezone());
         // Une limite déjà passée ouvrirait le signalement d'absence dès le report. Limite en
         // UTC, comparée à l'instant présent (YADONY-FLUTTER-PROD-1R).
         if (!HandoverDeadlineRules.deadlineInstant(request.handoverDeadline()).isAfter(Instant.now())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "handover-deadline-past",
-                    "Handover Deadline Past", "La date limite de remise doit être dans le futur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "handover-deadline-past", "problem.handover-deadline-past");
         }
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime());

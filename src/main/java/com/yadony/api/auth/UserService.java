@@ -218,8 +218,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public DeletionEligibilityResponse checkDeletionEligibility(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         if (hasActiveEscrow(user.getId())) {
             return new DeletionEligibilityResponse(false, "active-transactions", false, List.of());
@@ -291,16 +290,14 @@ public class UserService {
     @Transactional
     public void requestDeletion(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         if (user.getStatus() == UserStatus.PENDING_DELETION) {
             return;
         }
 
         if (hasActiveEscrow(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
-                    "Unprocessable", "Impossible — vous avez des transactions en cours");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions", "problem.active-transactions");
         }
         settleWalletsForDeletion(user.getId());
 
@@ -316,12 +313,10 @@ public class UserService {
     @Transactional
     public void reactivateAccount(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         if (user.getStatus() != UserStatus.PENDING_DELETION) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "not-pending-deletion",
-                    "Conflict", "Ce compte n'est pas en cours de suppression");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "not-pending-deletion", "problem.not-pending-deletion");
         }
 
         clearPendingDeletion(user);
@@ -348,12 +343,9 @@ public class UserService {
     @Transactional
     public UserEntity cancelDeletionByAdmin(UUID userId, UUID adminId, String reason) {
         UserEntity user = userRepository.findByIdIncludingDeleted(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         if (user.getDeletedAt() != null || user.getStatus() != UserStatus.PENDING_DELETION) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "user-deletion-not-cancellable",
-                    "Conflict",
-                    "Ce compte n'a pas de demande de suppression en cours, ou sa suppression est déjà finalisée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "user-deletion-not-cancellable", "problem.user-deletion-not-cancellable");
         }
 
         UserStatus previousStatus = user.getStatus();
@@ -376,12 +368,10 @@ public class UserService {
     @Transactional
     public UserEntity setCommissionRateOverride(UUID userId, java.math.BigDecimal rate, UUID adminId) {
         if (rate != null && (rate.signum() < 0 || rate.compareTo(java.math.BigDecimal.ONE) >= 0)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-commission-rate",
-                    "Invalid Commission Rate", "Le taux doit être dans [0, 1[ ou null (taux global)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-commission-rate", "problem.invalid-commission-rate");
         }
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         user.setCommissionRateOverride(rate);
         userRepository.save(user);
         auditService.log("USER", user.getId(), "USER_COMMISSION_RATE_OVERRIDE_SET", adminId,
@@ -393,12 +383,10 @@ public class UserService {
     @Transactional
     public UserEntity setMonthlyTripLimit(UUID userId, Integer limit, UUID adminId) {
         if (limit != null && (limit < 1 || limit > 100)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-monthly-trip-limit",
-                    "Invalid Monthly Trip Limit", "La limite doit être comprise entre 1 et 100, ou vide (aucune limite)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-monthly-trip-limit", "problem.invalid-monthly-trip-limit");
         }
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         Integer previous = user.getMonthlyTripLimit();
         user.setMonthlyTripLimit(limit);
         userRepository.save(user);
@@ -434,12 +422,7 @@ public class UserService {
 
         if (request.siret() != null && !request.siret().isBlank()) {
             if (!request.siret().matches("\\d{14}")) {
-                throw new YadonyBusinessException(
-                        HttpStatus.UNPROCESSABLE_ENTITY,
-                        "invalid-siret",
-                        "Invalid SIRET",
-                        "Le numéro SIRET doit contenir exactement 14 chiffres"
-                );
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-siret", "problem.invalid-siret");
             }
         }
 
@@ -476,12 +459,7 @@ public class UserService {
 
         proSubscriptionRepository.findByUserId(userId).ifPresent(subscription -> {
             if (subscription.isStripeManaged()) {
-                throw new YadonyBusinessException(
-                        HttpStatus.CONFLICT,
-                        "active-stripe-subscription",
-                        "Active Stripe Subscription",
-                        "Vous avez un abonnement PRO payant en cours — gérez sa résiliation "
-                                + "depuis la gestion de votre abonnement (portail Stripe), pas depuis cette action");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "active-stripe-subscription", "problem.active-stripe-subscription");
             }
         });
 
@@ -498,8 +476,7 @@ public class UserService {
     @Transactional
     public UserEntity suspendUser(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         user.setStatus(UserStatus.SUSPENDED);
         UserEntity saved = userRepository.save(user);
         auditService.log("USER", userId, "USER_SUSPENDED_BY_ADMIN", adminId,
@@ -512,8 +489,7 @@ public class UserService {
     @Transactional
     public UserEntity banUser(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         user.setStatus(UserStatus.BANNED);
         UserEntity saved = userRepository.save(user);
         auditService.log("USER", userId, "USER_BANNED_BY_ADMIN", adminId,
@@ -536,14 +512,11 @@ public class UserService {
     @Transactional
     public UserEntity unsuspendUser(UUID userId, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         UserStatus previousStatus = user.getStatus();
         if (previousStatus != UserStatus.SUSPENDED && previousStatus != UserStatus.BANNED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "user-not-suspended",
-                    "User Not Suspended",
-                    "Ce compte n'est ni suspendu ni banni : il n'y a rien à lever");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "user-not-suspended", "problem.user-not-suspended");
         }
 
         user.setStatus(UserStatus.ACTIVE);
@@ -566,8 +539,7 @@ public class UserService {
     @Transactional
     public void suspendPublishing(UUID userId, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         user.setPublishingSuspended(true);
         user.setPublishingSuspendedAt(java.time.Instant.now());
@@ -583,8 +555,7 @@ public class UserService {
     @Transactional
     public void liftPublishingSuspension(UUID userId, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         user.setPublishingSuspended(false);
         user.setPublishingSuspendedAt(null);
@@ -608,8 +579,7 @@ public class UserService {
     @Transactional
     public UserEntity muteMessaging(UUID userId, Integer durationHours, String reason, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         Instant until = durationHours != null
                 ? Instant.now().plusSeconds(durationHours * 3600L)
@@ -640,8 +610,7 @@ public class UserService {
     @Transactional
     public UserEntity unmuteMessaging(UUID userId, UUID adminId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         user.setMessagingMutedUntil(null);
         UserEntity saved = userRepository.save(user);

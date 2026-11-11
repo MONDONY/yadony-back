@@ -115,8 +115,7 @@ public class PhoneOwnershipService {
             return ReleaseMethod.PHONE_CLEARED;
         }
         log.error("Compte Firebase fantôme {} : ni suppression ni retrait du numéro", phantomUid);
-        throw unavailable("phone-release-failed",
-                "Ce numéro n'a pas pu être libéré pour le moment. Réessayez dans un instant.");
+        throw unavailable("phone-release-failed", "problem.phone-release-failed");
     }
 
     /**
@@ -136,31 +135,23 @@ public class PhoneOwnershipService {
             try {
                 firebaseContact.updatePhone(selfUid, phoneNumber);
             } catch (YadonyBusinessException second) {
-                throw unavailable("phone-attach-failed",
-                        "Ce numéro a été libéré mais n'a pas pu être ajouté à votre compte. "
-                                + "Réessayez dans un instant avec le même code.");
+                throw unavailable("phone-attach-failed", "problem.phone-attach-failed");
             }
         }
     }
 
     private static YadonyBusinessException pendingDeletion() {
-        return new YadonyBusinessException(
-                HttpStatus.CONFLICT, "phone-pending-deletion",
-                "Phone Number Belongs To An Account Being Deleted",
-                "Ce numéro appartient à un compte en cours de suppression. "
-                        + "Connectez-vous avec ce numéro pour annuler la suppression.");
+        return YadonyBusinessException.localized(
+                HttpStatus.CONFLICT, "phone-pending-deletion", "problem.phone-pending-deletion");
     }
 
     private static YadonyBusinessException alreadyExists() {
-        return new YadonyBusinessException(
-                HttpStatus.CONFLICT, "phone-already-exists",
-                "Phone Number Already Registered",
-                "Ce numéro a déjà son propre compte Yadony : connectez-vous avec ce numéro, "
-                        + "ou contactez le support pour regrouper vos comptes.");
+        return YadonyBusinessException.localized(
+                HttpStatus.CONFLICT, "phone-already-exists", "problem.phone-already-exists");
     }
 
-    private static YadonyBusinessException unavailable(String code, String detail) {
-        return new YadonyBusinessException(
-                HttpStatus.SERVICE_UNAVAILABLE, code, "Phone Number Not Attached", detail);
+    private static YadonyBusinessException unavailable(String code, String messageKey) {
+        return YadonyBusinessException.localized(
+                HttpStatus.SERVICE_UNAVAILABLE, code, messageKey);
     }
 }

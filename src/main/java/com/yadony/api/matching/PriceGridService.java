@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.LocalizedResponseStatusException;
 import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.matching.dto.PriceGridItemRequest;
@@ -12,7 +13,6 @@ import com.yadony.api.payments.currency.SupportedCurrency;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -59,8 +59,8 @@ public class PriceGridService {
     public PriceGridItemResponse addItem(UUID travelerId, PriceGridItemRequest req, UUID actorId) {
         long currentCount = gridRepo.countByTravelerId(travelerId);
         if (currentCount >= MAX_GRID_ITEMS) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "price-grid-limit: maximum 20 articles autorisés");
+            throw new LocalizedResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "problem.price-grid.limit");
         }
         assertItemPrice(travelerId, req);
         int position = (int) currentCount;
@@ -85,8 +85,8 @@ public class PriceGridService {
                                             PriceGridItemRequest req, UUID actorId) {
         PriceGridItemEntity entity = gridRepo.findById(itemId)
                 .filter(e -> e.getTravelerId().equals(travelerId))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "price-grid-item-not-found"));
+                .orElseThrow(() -> new LocalizedResponseStatusException(HttpStatus.NOT_FOUND,
+                        "problem.price-grid.item-not-found"));
         assertItemPrice(travelerId, req);
         entity.setLabel(req.label());
         entity.setUnitPriceNet(req.unitPriceNet());
@@ -105,8 +105,8 @@ public class PriceGridService {
     public void deleteItem(UUID travelerId, UUID itemId, UUID actorId) {
         PriceGridItemEntity entity = gridRepo.findById(itemId)
                 .filter(e -> e.getTravelerId().equals(travelerId))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "price-grid-item-not-found"));
+                .orElseThrow(() -> new LocalizedResponseStatusException(HttpStatus.NOT_FOUND,
+                        "problem.price-grid.item-not-found"));
         entity.softDelete();
         gridRepo.save(entity);
         auditService.log(
@@ -136,8 +136,8 @@ public class PriceGridService {
     public void snapshotToAnnouncement(UUID travelerId, UUID announcementId, String announcementCurrency) {
         List<PriceGridItemEntity> items = gridRepo.findByTravelerIdOrderByPositionAsc(travelerId);
         if (items.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "price-grid-empty: au moins 1 article requis pour le mode MIXED");
+            throw new LocalizedResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                "problem.price-grid.empty");
         }
         String gridCurrency = activeCurrencyResolver.resolve(travelerId);
         String targetCurrency = announcementCurrency == null || announcementCurrency.isBlank()

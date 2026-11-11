@@ -26,7 +26,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
+import com.yadony.api.common.LocalizedResponseStatusException;
 
 import java.time.Instant;
 import java.util.HashSet;
@@ -100,9 +100,7 @@ public class AuthService {
         // — l'app promeut d'abord la session par linkWithCredential (le provider devient alors
         // `phone`), ou bascule sur le compte existant si le numéro est déjà pris.
         if (FirebaseSignInProvider.isAnonymous(decodedToken)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "invalid-provider",
-                    "Invalid Provider", "Mode d'authentification non supporté");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-provider", "problem.invalid-provider");
         }
 
         // Active user → return as-is, sauf s'il s'agit d'une ligne invitée à promouvoir
@@ -125,11 +123,7 @@ public class AuthService {
             if (!deleted.get().getRoles().isEmpty() || deleted.get().getStatus() == UserStatus.BANNED) {
                 auditService.log("USER", deleted.get().getId(), "USER_REACTIVATION_DENIED", deleted.get().getId(),
                         Map.of("firebaseUid", firebaseUid));
-                throw new YadonyBusinessException(
-                        HttpStatus.FORBIDDEN,
-                        "account-reactivation-denied",
-                        "Compte supprimé",
-                        "Ce compte a été supprimé ou banni et ne peut pas être réactivé.");
+                throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "account-reactivation-denied", "problem.account-reactivation-denied");
             }
             userRepository.reactivateByFirebaseUid(firebaseUid, UserStatus.ACTIVE.name());
             UserEntity reactivated = userRepository.findByFirebaseUid(firebaseUid).orElseThrow();
@@ -200,12 +194,7 @@ public class AuthService {
     // lues par toResponse (rôles, langues) sont EAGER.
     public UserResponse getProfile(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         // L'app lit son profil à l'ouverture : c'est la « dernière connexion » du
         // profil public (FLUTTER-4H), écrite hors de cette transaction en lecture.
         eventPublisher.publishEvent(new com.yadony.api.auth.events.UserSeenEvent(user.getId()));
@@ -215,12 +204,7 @@ public class AuthService {
     @Transactional
     public UserResponse updateProfile(String firebaseUid, UpdateProfileRequest request) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         if (request.firstName() != null) {
             String v = request.firstName().trim();
@@ -259,12 +243,7 @@ public class AuthService {
     public void updateFcmToken(String firebaseUid, String fcmToken,
                                 String deviceId, String deviceName, String platform) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         // Un jeton = un appareil = un seul compte à la fois (voir ConnectedDevicesService).
         connectedDevicesService.releaseTokenFromOtherUsers(user.getId(), fcmToken);
         user.setFcmToken(fcmToken);
@@ -280,24 +259,14 @@ public class AuthService {
     @Transactional
     public void forgetFcmToken(String firebaseUid, String deviceId) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         connectedDevicesService.forgetDevice(user, deviceId);
     }
 
     @Transactional(readOnly = true)
     public com.yadony.api.auth.dto.PrivacySettingsResponse getPrivacySettings(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         return new com.yadony.api.auth.dto.PrivacySettingsResponse(
                 user.isContactKycOnly(), user.isHidePhoneNumber(), user.isShowResidenceCountry(),
                 user.isShowLastSeen());
@@ -330,12 +299,7 @@ public class AuthService {
                                       Boolean hidePhoneNumber, Boolean showResidenceCountry,
                                       Boolean showLastSeen) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         user.setContactKycOnly(contactKycOnly);
         boolean hideChanged = hidePhoneNumber != null
                 && hidePhoneNumber != user.isHidePhoneNumber();
@@ -373,12 +337,7 @@ public class AuthService {
     @Transactional(readOnly = true)
     public com.yadony.api.auth.dto.AnalyticsConsentResponse getAnalyticsConsent(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         Instant consentAt = user.getAnalyticsConsentAt();
         return new com.yadony.api.auth.dto.AnalyticsConsentResponse(
                 user.getAnalyticsConsent(),
@@ -390,12 +349,7 @@ public class AuthService {
     public void updateAnalyticsConsent(String firebaseUid, boolean granted,
                                        String policyVersion, String source) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         user.setAnalyticsConsent(granted);
         user.setAnalyticsConsentAt(Instant.now());
         user.setAnalyticsConsentVersion(policyVersion);
@@ -422,12 +376,7 @@ public class AuthService {
     @Transactional
     public void updateResidenceAddress(String firebaseUid, com.yadony.api.auth.dto.ResidenceAddressRequest request) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         user.setResidenceStreet(request.street());
         user.setResidenceLine2(request.line2());
         user.setResidencePostalCode(request.postalCode());
@@ -448,12 +397,7 @@ public class AuthService {
     @Transactional
     public void markOnboardingSeen(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (user.getOnboardingSeenAt() != null) {
             return;
         }
@@ -469,8 +413,8 @@ public class AuthService {
         String firebaseUid = (String) SecurityContextHolder.getContext()
                 .getAuthentication().getPrincipal();
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "Utilisateur introuvable"))
+                .orElseThrow(() -> new LocalizedResponseStatusException(
+                        HttpStatus.NOT_FOUND, "problem.kyc.user-not-found"))
                 .getId();
     }
 
@@ -493,13 +437,11 @@ public class AuthService {
      *  manuel seulement si le rejeu du ledger est incohérent. */
     public List<WalletRefundRequestResponse> requestWalletRefund(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         List<com.yadony.api.payments.wallet.WalletRefundRequestEntity> opened =
                 userService.settleWalletsForDeletion(user.getId());
         if (opened.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-empty",
-                    "Unprocessable", "Aucun montant remboursable");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-empty", "problem.wallet-balance-empty");
         }
         return opened.stream().map(WalletRefundRequestResponse::from).collect(Collectors.toList());
     }
@@ -512,17 +454,14 @@ public class AuthService {
     @Transactional
     public void deleteImmediately(String firebaseUid, DeleteImmediatelyRequest request) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         if (user.getStatus() == UserStatus.BANNED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "account-banned",
-                    "Conflict", "Ce compte est banni et ne peut pas être supprimé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "account-banned", "problem.account-banned");
         }
 
         if (userService.hasActiveEscrow(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions",
-                    "Unprocessable", "Impossible — vous avez des transactions en cours");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "active-transactions", "problem.active-transactions");
         }
 
         // Un solde wallet réel (rechargé par carte) ouvre un ticket de remboursement
@@ -555,12 +494,7 @@ public class AuthService {
     @Transactional
     public UserResponse upgradeToPro(String firebaseUid, UpgradeToProRequest request) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"
-                ));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         UserEntity updated = userService.upgradeToPro(user, request);
         return toResponse(updated);
     }
@@ -568,11 +502,9 @@ public class AuthService {
     @Transactional
     public UserResponse downgradePro(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "not-pro-account", "Not a PRO account", "Ce compte n'est pas un compte PRO");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "not-pro-account", "problem.not-pro-account");
         }
         UserEntity updated = userService.downgradePro(user);
         return toResponse(updated);
@@ -608,22 +540,16 @@ public class AuthService {
                 // Le numéro vient du token, jamais du corps de requête : ce dernier
                 // n'est pas authentifié et permettrait d'usurper un autre numéro.
                 if (extractPhoneClaim(decodedToken) == null) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.UNPROCESSABLE_ENTITY, "phone-required",
-                            "Phone Required", "Le numéro de téléphone est requis");
+                    throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "phone-required", "problem.phone-required");
                 }
             }
             case "google.com", "apple.com" -> {
                 if (decodedToken == null) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.UNPROCESSABLE_ENTITY, "token-required",
-                            "Token Required", "Token Firebase manquant");
+                    throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "token-required", "problem.token-required");
                 }
                 String email = decodedToken.getEmail();
                 if (email == null) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.UNPROCESSABLE_ENTITY, "email-required",
-                            "Email Required", "L'email est introuvable dans le token Firebase");
+                    throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "email-required", "problem.email-required");
                 }
                 Optional<UserResponse> existing = findLocalAccountByEmail(email, firebaseUid);
                 if (existing.isPresent()) {
@@ -638,9 +564,7 @@ public class AuthService {
                     // sur le UserRecord Firebase — rien à comparer à request.email(), ce
                     // champ est d'ailleurs naturellement absent du body pour ce flow.
                     if (firebaseContact.getContact(firebaseUid).phoneNumber() == null) {
-                        throw new YadonyBusinessException(
-                                HttpStatus.UNPROCESSABLE_ENTITY, "phone-required",
-                                "Phone Required", "Le numéro de téléphone est introuvable");
+                        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "phone-required", "problem.phone-required.numero-telephone-introuvable");
                     }
                 } else if ("email".equals(extractOtpChannelClaim(decodedToken))) {
                     // Custom token issu de EmailOtpService.verifyOtp() : l'UID a été résolu
@@ -652,9 +576,7 @@ public class AuthService {
                     // L'identité ne vient plus du corps de la requête mais de Firebase, ce
                     // qui retire au client toute prise sur l'UID auquel il s'inscrit.
                     if (firebaseContact.getContact(firebaseUid).email() == null) {
-                        throw new YadonyBusinessException(
-                                HttpStatus.UNPROCESSABLE_ENTITY, "email-required",
-                                "Email Required", "L'adresse email est introuvable");
+                        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "email-required", "problem.email-required.adresse-email-introuvable");
                     }
                     Optional<UserResponse> existing =
                             findLocalAccountByEmail(firebaseContact.getContact(firebaseUid).email(), firebaseUid);
@@ -667,14 +589,10 @@ public class AuthService {
                     // circulation expirent (1 h), les comptes déjà créés ainsi restant
                     // valides puisque leur UID porte désormais l'adresse.
                     if (request.email() == null) {
-                        throw new YadonyBusinessException(
-                                HttpStatus.UNPROCESSABLE_ENTITY, "email-required",
-                                "Email Required", "L'adresse email est requise");
+                        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "email-required", "problem.email-required.adresse-email-requise");
                     }
                     if (!firebaseUid.equalsIgnoreCase(request.email())) {
-                        throw new YadonyBusinessException(
-                                HttpStatus.UNPROCESSABLE_ENTITY, "email-mismatch",
-                                "Email Mismatch", "L'email fourni ne correspond pas au token Firebase");
+                        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "email-mismatch", "problem.email-mismatch");
                     }
                     Optional<UserResponse> existing = findLocalAccountByEmail(request.email(), firebaseUid);
                     if (existing.isPresent()) {
@@ -685,9 +603,7 @@ public class AuthService {
                     firebaseContact.updateEmail(firebaseUid, request.email());
                 }
             }
-            default -> throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "invalid-provider",
-                    "Invalid Provider", "Mode d'authentification non supporté");
+            default -> throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-provider", "problem.invalid-provider");
         }
 
         UserEntity saved = userRepository.save(user);
@@ -745,24 +661,12 @@ public class AuthService {
      */
     public UserResponse updateAvatar(String firebaseUid, MultipartFile file) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "user-not-found",
-                        "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (file == null || file.isEmpty()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST,
-                    "file-missing",
-                    "File Missing",
-                    "Fichier manquant");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "file-missing", "problem.file-missing");
         }
         if (file.getSize() > 5L * 1024 * 1024) {
-            throw new YadonyBusinessException(
-                    HttpStatus.PAYLOAD_TOO_LARGE,
-                    "file-too-large",
-                    "File Too Large",
-                    "Image trop volumineuse (max 5 Mo)");
+            throw YadonyBusinessException.localized(HttpStatus.PAYLOAD_TOO_LARGE, "file-too-large", "problem.file-too-large.upload");
         }
         String previous = user.getAvatarUrl();
         String key = storageService.storeImage(file, StorageService.MediaUpload.of(
