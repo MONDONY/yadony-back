@@ -12,4 +12,4 @@ All linked senders are refunded automatically.
 If a parcel has already been handed to you, you must return it to its sender within 3 days, against the return code they give you.
 Only a published (active) trip can be canceled. A full trip can be neither canceled nor deleted from the app: contact support. A sender who accepted your offer and is paying also blocks the cancellation during their payment window.
 On a full trip, or one removed by the team, the status card of the trip screen offers a "Contact support" link.
-A trip with an accepted parcel cannot be deleted: cancel it first. For a simple date change, use "Reschedule" instead (reason "Transport canceled or breakdown" if your transport is canceled or broken down and you leave later).
+A trip with an accepted parcel cannot be deleted: cancel it first. For a simple date change, use "Reschedule" instead (reason "Trip postponed" or "Other reason" if your transport is canceled or breaks down and you leave later).
