@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,8 +32,9 @@ class Dac7CollectionPolicyTest {
             null);
 
     private final Dac7VerifiedIdentityPort port = mock(Dac7VerifiedIdentityPort.class);
+    private final Dac7IdentityResolver resolver = new Dac7IdentityResolver(port);
     private final Dac7CollectionPolicy policy = new Dac7CollectionPolicy(
-            new Dac7ResidencyPolicy(new Dac7Properties(true, null)), port, CLOCK);
+            new Dac7ResidencyPolicy(new Dac7Properties(true, null)), resolver, CLOCK);
     private UserEntity user;
 
     @BeforeEach
@@ -43,6 +45,8 @@ class Dac7CollectionPolicyTest {
     }
 
     private void didit(String first, String last, LocalDate birth, Dac7Address address) {
+        // La pièce est mise en cache par voyageur : chaque nouveau scénario l'oublie d'abord.
+        resolver.forget(user.getId());
         when(port.verifiedIdentity(user.getId())).thenReturn(Dac7VerifiedIdentityPort.Lookup.found(
                 new Dac7VerifiedIdentity(first, last, birth, address, "session-42")));
     }
@@ -55,7 +59,7 @@ class Dac7CollectionPolicyTest {
         Dac7Collection c = policy.evaluate(user);
 
         assertThat(c.status()).isEqualTo(Dac7CollectionStatus.NE_PAS_SOLLICITER);
-        assertThat(c.status().actionRequired()).isFalse();
+        assertThat(c.actionRequired()).isFalse();
         assertThat(c.missing()).isEmpty();
         assertThat(c.identityKnown()).isFalse();
         verify(port, never()).verifiedIdentity(any());
@@ -99,7 +103,7 @@ class Dac7CollectionPolicyTest {
         Dac7Collection c = policy.evaluate(user);
 
         assertThat(c.status()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
-        assertThat(c.status().actionRequired()).isTrue();
+        assertThat(c.actionRequired()).isTrue();
         assertThat(c.missing()).containsExactly(Dac7CollectionField.NAME, Dac7CollectionField.BIRTH_DATE,
                 Dac7CollectionField.ADDRESS, Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
         assertThat(c.readOnlyFields()).isEmpty();
@@ -218,13 +222,14 @@ class Dac7CollectionPolicyTest {
         assertThat(c.identityUnavailable()).isTrue();
         assertThat(c.nameSource()).isEqualTo(Dac7FieldSource.PROFILE);
         assertThat(c.missing()).contains(Dac7CollectionField.BIRTH_DATE);
+        resolver.forget(user.getId());
         when(port.verifiedIdentity(user.getId())).thenReturn(null);
         assertThat(policy.evaluate(user).identityUnavailable()).isTrue();
     }
 
     @Test
-    @DisplayName("professionnel : seul le NIF est collecté ici (modèle entité séparé, spec § 2.3)")
-    void professionnel_seulLeNif() {
+    @DisplayName("professionnel : jamais COMPLETE (identité d'entreprise non saisissable), seul le NIF est demandé")
+    void professionnel_jamaisComplet() {
         user.setCountry("FR");
         user.setTravelerStatus(TravelerStatus.PROFESSIONAL);
         user.setBusinessCountry("FR");
@@ -232,13 +237,82 @@ class Dac7CollectionPolicyTest {
         Dac7Collection c = policy.evaluate(user);
 
         assertThat(c.status()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
-        assertThat(c.missing()).containsExactly(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
+        assertThat(c.missing()).containsExactly(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER,
+                Dac7CollectionField.BUSINESS_IDENTITY);
+        assertThat(c.actionRequired()).isTrue();
         assertThat(c.identityKnown()).isFalse();
         verify(port, never()).verifiedIdentity(any());
 
+        // NIF fourni : rien qu'il puisse faire de plus, mais jamais « rien à faire » ni COMPLETE (l'admin voit
+        // l'anomalie : la déclaration le voit toujours incomplet).
         user.setTaxIdentificationNumber("1234567890123");
         user.setTaxCountry("FR");
-        assertThat(policy.evaluate(user).status()).isEqualTo(Dac7CollectionStatus.COMPLETE);
+        Dac7Collection withTin = policy.evaluate(user);
+        assertThat(withTin.status()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
+        assertThat(withTin.missing()).containsExactly(Dac7CollectionField.BUSINESS_IDENTITY);
+        assertThat(withTin.actionRequired()).isFalse();
+        assertThat(resolver.identityFrom(user, Dac7VerifiedIdentityPort.Lookup.none()).status())
+                .isEqualTo(Dac7IdentityStatus.INCOMPLETE);
+    }
+
+    @Test
+    @DisplayName("invariant : jamais COMPLETE si la déclaration voit l'identité incomplète")
+    void invariant_jamaisCompletSiDeclarationIncomplete() {
+        Dac7IdentityResolver strict = org.mockito.Mockito.mock(Dac7IdentityResolver.class);
+        when(strict.cachedLookup(any())).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
+        Dac7CollectionPolicy guarded = new Dac7CollectionPolicy(
+                new Dac7ResidencyPolicy(new Dac7Properties(true, null)), strict, CLOCK);
+        user.setCountry("FR");
+        user.setFirstName("Jan");
+        user.setLastName("Muller");
+        user.setBirthDate(BIRTH);
+        user.setResidenceStreet("2 rue Neuve");
+        user.setResidencePostalCode("75002");
+        user.setCity("Paris");
+        user.setTaxIdentificationNumber("1234567890123");
+        user.setTaxCountry("FR");
+
+        when(strict.identityFrom(any(), any())).thenReturn(new Dac7SellerIdentity(user.getId(),
+                Dac7SellerIdentity.SellerType.INDIVIDUAL, Dac7IdentityStatus.INCOMPLETE, List.of("ADDRESS"),
+                null, null, null, null, null, null));
+        Dac7Collection c = guarded.evaluate(user);
+        assertThat(c.status()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
+        assertThat(c.missing()).containsExactly(Dac7CollectionField.ADDRESS);
+
+        when(strict.identityFrom(any(), any())).thenReturn(new Dac7SellerIdentity(user.getId(),
+                Dac7SellerIdentity.SellerType.INDIVIDUAL, Dac7IdentityStatus.UNAVAILABLE,
+                List.of("IDENTITY_SOURCE_UNREADABLE"), null, null, null, null, null, null));
+        Dac7Collection review = guarded.evaluate(user);
+        assertThat(review.status()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
+        assertThat(review.missing()).containsExactly(Dac7CollectionField.IDENTITY_REVIEW);
+        assertThat(review.actionRequired()).isFalse();
+
+        when(strict.identityFrom(any(), any())).thenReturn(new Dac7SellerIdentity(user.getId(),
+                Dac7SellerIdentity.SellerType.INDIVIDUAL, Dac7IdentityStatus.COMPLETE, List.of(),
+                null, null, null, null, null, null));
+        assertThat(guarded.evaluate(user).status()).isEqualTo(Dac7CollectionStatus.COMPLETE);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"BG", "CZ", "DK", "HU", "PL", "RO", "SE"})
+    @DisplayName("pays déclaré pour DAC7 (hors catalogue de paiement) : RESIDENCE_INCONNUE → INFO_REQUIRED")
+    void paysDeclare_etatsHorsCatalogue(String country) {
+        user.setCountry(null);
+        assertThat(policy.evaluate(user).status()).isEqualTo(Dac7CollectionStatus.RESIDENCE_INCONNUE);
+        user.setTaxDeclaredResidenceCountry(country);
+        Dac7Collection c = policy.evaluate(user);
+        assertThat(c.status()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
+        assertThat(c.residenceCountry()).isEqualTo(country);
+        assertThat(Dac7ResidenceCountries.CHOICES).contains(country);
+    }
+
+    @Test
+    @DisplayName("le pays du profil l'emporte toujours sur le pays déclaré pour DAC7")
+    void paysDuProfil_lEmporte() {
+        user.setTaxDeclaredResidenceCountry("SE");
+        user.setCountry("CI");
+        assertThat(policy.evaluate(user).status()).isEqualTo(Dac7CollectionStatus.NE_PAS_SOLLICITER);
+        assertThat(Dac7ResidencyPolicy.residenceCountryOf(user)).isEqualTo("CI");
     }
 
     @Test

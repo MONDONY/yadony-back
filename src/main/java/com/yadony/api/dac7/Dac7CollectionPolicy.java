@@ -15,7 +15,13 @@ import java.util.regex.Pattern;
 /**
  * Statut de collecte DAC7 (spec du 11/11/2026, § 2.2 et 2.3), calculé au-dessus des règles existantes sans les
  * dupliquer : pays de résidence par {@link Dac7ResidencyPolicy}, périmètre transmis par {@link Dac7DgfipRules}
- * (UE27 et territoires rattachés en 2026), pièce vérifiée par {@link Dac7VerifiedIdentityPort}.
+ * (UE27 et territoires rattachés en 2026), pièce vérifiée lue par {@link Dac7IdentityResolver#cachedLookup} (cache court,
+ * pool dédié, délai maximal : jamais d'appel direct au prestataire ici).
+ *
+ * <p>Source unique de « complet » (relecture I4) : {@link Dac7CollectionStatus#COMPLETE} n'est renvoyé que si
+ * {@link Dac7IdentityResolver#identityFrom} (règles de la déclaration) voit aussi l'identité complète. La collecte est
+ * plus exigeante sur deux points (adresse : code postal obligatoire, spec § 2.3 ; nom : prénom et nom de la même
+ * source) ; jamais moins.
  * <ul>
  *   <li>pays inconnu : {@link Dac7CollectionStatus#RESIDENCE_INCONNUE}, seul le pays est demandé ;</li>
  *   <li>pays connu hors périmètre : {@link Dac7CollectionStatus#NE_PAS_SOLLICITER}, la pièce n'est même pas lue ;</li>
@@ -24,10 +30,16 @@ import java.util.regex.Pattern;
  *       vérifiée si elle y figure (lecture seule), sinon du profil. Adresse : celle du profil si elle est complète
  *       (le voyageur l'a saisie, éventuellement pour remplacer celle de la pièce), sinon celle de la pièce si elle est
  *       complète ET dans le pays de résidence ; même ordre que {@link Dac7IdentityResolver} ;</li>
- *   <li>professionnel : seul le NIF est collecté ici, le modèle entité (raison sociale, siège...) est séparé.</li>
+ *   <li>professionnel : le modèle entité (raison sociale, adresse du siège, immatriculation) n'existe pas encore dans
+ *       l'app, et la déclaration le voit toujours incomplet. Il n'est donc JAMAIS {@code COMPLETE} :
+ *       {@code INFO_REQUIRED} avec le NIF s'il manque (seul champ qu'il peut saisir) et toujours
+ *       {@link Dac7CollectionField#BUSINESS_IDENTITY}, non saisissable (l'équipe s'en charge ; l'anomalie reste visible
+ *       à l'admin). Sans NIF manquant, rien d'actionnable : aucune invite, aucun formulaire.</li>
  * </ul>
  * Pas de valeur « NOTIN » : sans NIF le voyageur reste {@link Dac7CollectionStatus#INFO_REQUIRED}, même avec un lieu
- * de naissance (question fiscale ouverte, voir le rapport de la tâche 1). Rien n'est persisté ni journalisé.
+ * de naissance. Lecture stricte retenue par le contrôleur le 11/11/2026 (arbitrage I5) : le lieu de naissance ne
+ * remplace PAS le NIF. QUESTION OUVERTE pour la tâche 4 (rappels et fermeture), à trancher par le propriétaire ou
+ * l'expert-comptable (BOI-INT-AEA-30-20-20 § 110). Rien n'est persisté ni journalisé.
  */
 @Component
 public class Dac7CollectionPolicy {
@@ -35,13 +47,13 @@ public class Dac7CollectionPolicy {
     private static final Pattern FRENCH_TIN = Pattern.compile("\\d{13}");
 
     private final Dac7ResidencyPolicy residency;
-    private final Dac7VerifiedIdentityPort verified;
+    private final Dac7IdentityResolver identities;
     private final Clock clock;
 
     @Autowired
-    public Dac7CollectionPolicy(Dac7ResidencyPolicy residency, Dac7VerifiedIdentityPort verified, Clock clock) {
+    public Dac7CollectionPolicy(Dac7ResidencyPolicy residency, Dac7IdentityResolver identities, Clock clock) {
         this.residency = residency;
-        this.verified = verified;
+        this.identities = identities;
         this.clock = clock;
     }
 
@@ -55,8 +67,13 @@ public class Dac7CollectionPolicy {
      * au prestataire. Pour évaluer deux fois (avant et après une saisie) sans relire la pièce deux fois.
      */
     public Dac7VerifiedIdentityPort.Lookup lookup(UserEntity user) {
-        return needsVerifiedIdentity(user) ? verified.verifiedIdentity(user.getId())
+        return needsVerifiedIdentity(user) ? identities.cachedLookup(user.getId())
                 : Dac7VerifiedIdentityPort.Lookup.none();
+    }
+
+    /** Lecture de la pièce même si le pays n'est pas encore connu (le voyageur est en train de le déclarer). */
+    public Dac7VerifiedIdentityPort.Lookup lookupAnyway(UserEntity user) {
+        return identities.cachedLookup(user.getId());
     }
 
     /**
@@ -80,9 +97,10 @@ public class Dac7CollectionPolicy {
         }
         boolean tinMissing = !validTaxIdentifier(user.getTaxIdentificationNumber(), user.getTaxCountry());
         if (scope == Scope.ENTITY) {
-            List<Dac7CollectionField> missing = tinMissing
-                    ? List.of(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER) : List.of();
-            return Dac7Collection.withoutIdentity(status(missing), missing, residence);
+            List<Dac7CollectionField> missing = new ArrayList<>();
+            if (tinMissing) missing.add(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
+            missing.add(Dac7CollectionField.BUSINESS_IDENTITY);
+            return Dac7Collection.withoutIdentity(Dac7CollectionStatus.INFO_REQUIRED, missing, residence);
         }
 
         boolean unavailable = lookup == null || lookup.status() == Dac7VerifiedIdentityPort.Status.UNAVAILABLE;
@@ -131,6 +149,25 @@ public class Dac7CollectionPolicy {
         }
         if (address == null) {
             missing.add(Dac7CollectionField.ADDRESS);
+        }
+        if (missing.isEmpty()) {
+            // Invariant : jamais COMPLETE si la déclaration voit l'identité incomplète.
+            Dac7SellerIdentity declared = identities.identityFrom(user, lookup);
+            if (declared.status() != Dac7IdentityStatus.COMPLETE) {
+                for (String code : declared.missing()) {
+                    Dac7CollectionField field = switch (code) {
+                        case "NAME" -> Dac7CollectionField.NAME;
+                        case "BIRTH_DATE" -> Dac7CollectionField.BIRTH_DATE;
+                        case "ADDRESS" -> Dac7CollectionField.ADDRESS;
+                        default -> null;
+                    };
+                    if (field != null && !missing.contains(field)) missing.add(field);
+                }
+                if (missing.isEmpty()) {
+                    // Cas non prévu par les règles (aucun code traduisible) : l'équipe vérifie, jamais « complet ».
+                    missing.add(Dac7CollectionField.IDENTITY_REVIEW);
+                }
+            }
         }
         if (tinMissing) {
             missing.add(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);

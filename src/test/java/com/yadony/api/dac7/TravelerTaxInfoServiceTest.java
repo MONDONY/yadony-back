@@ -45,7 +45,7 @@ class TravelerTaxInfoServiceTest {
     private final Dac7VerifiedIdentityPort port = mock(Dac7VerifiedIdentityPort.class);
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     private final TravelerTaxInfoService service = new TravelerTaxInfoService(users, audit, diligence, policy,
-            new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, port, clock), clock,
+            new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, new Dac7IdentityResolver(port), clock), clock,
             org.springframework.transaction.support.TransactionOperations.withoutTransaction());
     private UserEntity user;
 
@@ -461,8 +461,60 @@ class TravelerTaxInfoServiceTest {
         user.setTravelerStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL);
         user.setBusinessCountry("FR");
         TaxInfoResponse r = service.get(UID);
-        assertThat(r.missingFields()).containsExactly(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER);
+        assertThat(r.missingFields()).containsExactly(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER,
+                Dac7CollectionField.BUSINESS_IDENTITY);
+        assertThat(r.actionRequired()).isTrue();
         assertThat(r.identity()).isNull();
+
+        TaxInfoResponse withTin = service.set(UID, new TaxInfoRequest("1234567890123", "FR", null));
+        assertThat(withTin.collectionStatus()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
+        assertThat(withTin.missingFields()).containsExactly(Dac7CollectionField.BUSINESS_IDENTITY);
+        assertThat(withTin.actionRequired()).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"BG", "CZ", "DK", "HU", "PL", "RO", "SE"})
+    void paysDeResidence_etatsHorsCatalogueDePaiement(String country) {
+        user.setCountry(null);
+        TaxInfoResponse unknown = service.get(UID);
+        assertThat(unknown.collectionStatus()).isEqualTo(Dac7CollectionStatus.RESIDENCE_INCONNUE);
+        assertThat(unknown.residenceCountryChoices()).contains(country, "FR", "CI");
+
+        TaxInfoResponse r = service.set(UID, new TaxInfoRequest(null, null, null, null, null, null, null, null,
+                country.toLowerCase(java.util.Locale.ROOT)));
+
+        assertThat(r.collectionStatus()).isEqualTo(Dac7CollectionStatus.INFO_REQUIRED);
+        assertThat(r.residenceCountry()).isEqualTo(country);
+        assertThat(r.residenceCountryChoices()).isNull();
+        // Pays de DAC7 seulement : le pays du profil (paiements, devises) n'est pas touché.
+        assertThat(user.getCountry()).isNull();
+        assertThat(user.getTaxDeclaredResidenceCountry()).isEqualTo(country);
+        verify(diligence).recordProvidedByUser(user.getId(), "RESIDENCE_COUNTRY");
+    }
+
+    @Test
+    void paysDeResidence_refusSiProfilRenseigneOuPaysHorsListe() {
+        user.setCountry(null);
+        assert422(() -> service.set(UID, new TaxInfoRequest(null, null, null, null, null, null, null, null, "ZZ")),
+                "tax-info-invalid", "residenceCountry");
+        assert422(() -> service.set(UID, new TaxInfoRequest(null, null, null, null, null, null, null, null, "US2")),
+                "tax-info-invalid", "residenceCountry");
+        user.setCountry("FR");
+        assert422(() -> service.set(UID, new TaxInfoRequest(null, null, null, null, null, null, null, null, "SE")),
+                "tax-info-invalid", "residenceCountry");
+        verify(users, never()).save(any());
+    }
+
+    @Test
+    void paysDeResidence_etIdentiteDansLaMemeRequete() {
+        user.setCountry(null);
+        TaxInfoResponse r = service.set(UID, new TaxInfoRequest(null, null, null, null, null, "1990-04-12", null,
+                null, "PL"));
+        assertThat(r.identity().birthDate()).isEqualTo(BIRTH);
+        assertThat(r.missingFields()).doesNotContain(Dac7CollectionField.BIRTH_DATE);
+        // Même valeur une deuxième fois : rien.
+        service.set(UID, new TaxInfoRequest(null, null, null, null, null, null, null, null, "PL"));
+        verify(users, times(1)).save(any());
     }
 
     @Test
@@ -497,12 +549,15 @@ class TravelerTaxInfoServiceTest {
                     }
                 };
         TravelerTaxInfoService tracked = new TravelerTaxInfoService(users, audit, diligence, policy,
-                new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, port, clock), clock,
+                new Dac7SolicitationPolicy(policy, readModel), new Dac7CollectionPolicy(policy, new Dac7IdentityResolver(port), clock), clock,
                 tracking);
 
         tracked.set(UID, new TaxInfoRequest("1234567890123", "FR", null));
         tracked.get(UID);
+        tracked.set(UID, new TaxInfoRequest("1234567890123", "FR", "FR12345678901"));
+        tracked.get(UID);
 
-        assertThat(lookupsInTransaction).containsExactly(false, false);
+        // Une seule lecture (cache court par voyageur), jamais dans la transaction d'écriture.
+        assertThat(lookupsInTransaction).containsExactly(false);
     }
 }

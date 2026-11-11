@@ -21,10 +21,13 @@ import java.util.List;
  * @param collectionStatus collecte ciblée (tâche 1) : quoi demander, quel que soit le paiement
  * @param missingFields    champs à demander, dans l'ordre d'affichage ; vide si rien à demander
  * @param readOnlyFields   champs repris de la pièce vérifiée (lecture seule ; l'adresse peut être remplacée)
- * @param actionRequired   vrai pour {@code RESIDENCE_INCONNUE} et {@code INFO_REQUIRED} : invite non bloquante
+ * @param actionRequired   vrai pour {@code RESIDENCE_INCONNUE}, et pour {@code INFO_REQUIRED} quand au moins un champ
+ *                         manquant est saisissable par le voyageur (pas {@code BUSINESS_IDENTITY} ni
+ *                         {@code IDENTITY_REVIEW}) : invite non bloquante
  * @param requestedAt      première demande faite au voyageur (à sa première acceptation de réservation ou par les
  *                         rappels), nulle s'il n'a encore rien reçu
  * @param identity         valeurs déjà connues avec leur source, seulement pour un particulier résident de l'Union
+ * @param residenceCountryChoices pays proposables (codes ISO triés), seulement pour {@code RESIDENCE_INCONNUE}
  */
 public record TaxInfoResponse(
         boolean provided,
@@ -41,7 +44,8 @@ public record TaxInfoResponse(
         List<Dac7CollectionField> readOnlyFields,
         Boolean actionRequired,
         Instant requestedAt,
-        TaxIdentity identity
+        TaxIdentity identity,
+        List<String> residenceCountryChoices
 ) {
 
     /**

@@ -56,13 +56,14 @@ class TravelerTaxInfoIT {
     @Autowired java.time.Clock clock;
 
     /**
-     * Écouteur d'acceptation tel qu'en production (invite allumée) : le profil de test l'éteint dans le contexte
-     * partagé ({@code acceptance-prompt-enabled: false}), on en construit donc un ici autour des vrais beans.
+     * Écouteur d'acceptation avec les messages DAC7 allumés (le profil de test laisse
+     * {@code yadony.dac7.reminders.enabled} éteint, donc l'écouteur du contexte partagé ne fait rien), construit autour
+     * des vrais beans, exécuté sur le fil du test.
      */
     private void accepted(UUID travelerId) {
-        new Dac7AcceptanceListener(dac7Properties, reminders, clock, true).onBidAccepted(
-                new com.yadony.api.matching.events.BidAcceptedEvent(UUID.randomUUID(), UUID.randomUUID(), travelerId,
-                        UUID.randomUUID()));
+        new Dac7AcceptanceListener(dac7Properties, Dac7ReminderProperties.defaults(true), reminders, clock,
+                Runnable::run).onBidAccepted(new com.yadony.api.matching.events.BidAcceptedEvent(UUID.randomUUID(),
+                UUID.randomUUID(), travelerId, UUID.randomUUID()));
     }
 
     private UserEntity me;
@@ -336,23 +337,11 @@ class TravelerTaxInfoIT {
         assertThat(output.getAll()).doesNotContain("14/07/1988");
     }
 
-    /** Lignes du registre (l'appel direct de l'écouteur est synchrone ; attente gardée par prudence, 10 s au plus). */
-    private List<Dac7DueDiligenceLogEntity> awaitDiligence(UUID userId) throws InterruptedException {
-        for (int i = 0; i < 100; i++) {
-            List<Dac7DueDiligenceLogEntity> rows = diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(userId);
-            if (!rows.isEmpty()) {
-                return rows;
-            }
-            Thread.sleep(100);
-        }
-        return diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(userId);
-    }
-
     @Test
     void acceptation_premiereDemandeNonBloquante_puisVisibleDansLeGet() throws Exception {
         accepted(me.getId());
 
-        List<Dac7DueDiligenceLogEntity> rows = awaitDiligence(me.getId());
+        List<Dac7DueDiligenceLogEntity> rows = diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(me.getId());
         assertThat(rows).extracting(Dac7DueDiligenceLogEntity::getAction, Dac7DueDiligenceLogEntity::getNote)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple(Dac7DueDiligenceAction.REQUEST,
                         "ACCEPTANCE:NAME,BIRTH_DATE,ADDRESS,TAX_IDENTIFICATION_NUMBER"));
@@ -366,7 +355,7 @@ class TravelerTaxInfoIT {
         UserEntity unknown = traveler(null);
         accepted(unknown.getId());
 
-        assertThat(awaitDiligence(unknown.getId()))
+        assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(unknown.getId()))
                 .extracting(Dac7DueDiligenceLogEntity::getAction, Dac7DueDiligenceLogEntity::getNote)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple(Dac7DueDiligenceAction.REQUEST,
                         "ACCEPTANCE:RESIDENCE_COUNTRY"));
@@ -382,5 +371,28 @@ class TravelerTaxInfoIT {
         accepted(ivorian.getId());
         assertThat(diligenceLog.findByUserIdOrderByCreatedAtAscIdAsc(ivorian.getId())).isEmpty();
         assertThat(users.findById(ivorian.getId()).orElseThrow().getTaxInfoRequestedAt()).isNull();
+    }
+
+    @Test
+    void paysDeResidence_sueDeclareSansToucherAuProfil() throws Exception {
+        UserEntity unknown = traveler(null);
+        mockMvc.perform(get(URL).with(as(unknown, "ROLE_TRAVELER")))
+                .andExpect(jsonPath("$.collectionStatus").value("RESIDENCE_INCONNUE"))
+                .andExpect(jsonPath("$.residenceCountryChoices").value(org.hamcrest.Matchers.hasItems("SE", "FR", "CI")));
+        mockMvc.perform(put(URL).with(as(unknown, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"residenceCountry\":\"SE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.residenceCountry").value("SE"))
+                .andExpect(jsonPath("$.collectionStatus").value("INFO_REQUIRED"))
+                .andExpect(jsonPath("$.residenceCountryChoices").doesNotExist())
+                .andExpect(jsonPath("$.identity").exists());
+        UserEntity reloaded = users.findById(unknown.getId()).orElseThrow();
+        assertThat(reloaded.getCountry()).isNull();
+        assertThat(reloaded.getTaxDeclaredResidenceCountry()).isEqualTo("SE");
+        // Profil renseigné : le pays se change dans le profil, pas ici.
+        mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"residenceCountry\":\"SE\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.field").value("residenceCountry"));
     }
 }

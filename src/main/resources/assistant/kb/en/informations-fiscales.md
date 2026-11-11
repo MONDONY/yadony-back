@@ -11,8 +11,7 @@ Who is concerned: only a traveler who lives in France or in another European Uni
 What is reported, per quarter: the amount received after Yadony fees, the number of parcels and the Yadony fees, with your name, date of birth, address and tax number.
 What Yadony may ask you, only what is missing: name, date of birth, full main address (street, postcode, city), tax identification number (TIN) and the country that issued it (a French TIN has 13 digits), VAT number if you have one. Your place of birth is asked only if you have no tax number. What comes from your verified ID document is already filled in and cannot be changed, except the address ("This is no longer my address").
 Where to find your French tax number: at the top of your income tax return or tax notice, and in your personal space on impots.gouv.fr.
-The request comes after you first accept a booking.
-If this feature is available in your version of the app, the "Tax information" screen is in your profile. Your number stays masked and encrypted there.
+If this feature is available in your version of the app, the request comes after you first accept a booking and the "Tax information" screen is in your profile. Your number stays masked and encrypted there.
 Nothing is blocked: publishing a trip, accepting a parcel, getting paid or withdrawing your money never depends on this information. You can answer "Later".
 You receive at most two reminders, and they follow your notification settings.
 After the annual declaration, the team may send you a summary of the amounts reported.

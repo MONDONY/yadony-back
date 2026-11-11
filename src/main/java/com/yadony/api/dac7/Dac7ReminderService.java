@@ -99,7 +99,9 @@ public class Dac7ReminderService {
     }
 
     private Outcome recordAtAcceptance(UUID userId, Dac7Collection evaluated, Instant now) {
-        UserEntity user = users.findById(userId).orElse(null);
+        // Ligne verrouillée : deux acceptations simultanées ne demandent jamais deux fois (la branche « pays inconnu »
+        // n'écrit pas dans users, le verrou optimiste ne la protégerait pas).
+        UserEntity user = users.findByIdForUpdate(userId).orElse(null);
         if (user == null) {
             return Outcome.NOT_FOUND;
         }
@@ -119,7 +121,8 @@ public class Dac7ReminderService {
                 return Outcome.SENT;
             }
             case INFO_REQUIRED -> {
-                if (user.getTaxInfoRequestedAt() != null) {
+                // Rien que le voyageur puisse fournir (professionnel : identité d'entreprise seule) : pas d'invite.
+                if (!evaluated.actionRequired() || user.getTaxInfoRequestedAt() != null) {
                     return Outcome.NOT_DUE;
                 }
                 if (sentWithin(userId, now, ONE_PER_DAY)) {

@@ -16,7 +16,8 @@ import java.util.Set;
 /**
  * Le voyageur est-il déclarable au titre de DAC7 ? Règle unique, calculée sur le pays de résidence fiscale déjà tenu
  * par le profil (jamais recopié) : {@code users.country}, ou le pays d'immatriculation de l'entreprise pour un
- * professionnel (DAC7 retient le siège d'une entité).
+ * professionnel (DAC7 retient le siège d'une entité). Sans pays au profil : le pays déclaré pour DAC7
+ * ({@code users.tax_declared_residence_country}, collecte ciblée), en repli seulement.
  *
  * <p>Déclarable : les 27 États membres de l'Union (France comprise), leurs territoires à code ISO propre et les États ou territoires partenaires listés
  * dans {@code yadony.dac7.partner-jurisdictions} (vide par défaut, voir {@link Dac7Properties}). Un code absent ou qui
@@ -97,8 +98,18 @@ public class Dac7ResidencyPolicy {
      * compte supprimé dont le NIF est gardé, le pays figé à la suppression ({@code tax_residence_country}) l'emporte.
      */
     public static String residenceCountryOf(UserEntity user) {
-        return residenceCountryOf(user.getTaxResidenceCountry(), user.getCountry(), user.getTravelerStatus(),
+        return residenceCountryOf(user.getTaxResidenceCountry(),
+                profileOrDeclared(user.getCountry(), user.getTaxDeclaredResidenceCountry()), user.getTravelerStatus(),
                 user.getBusinessCountry());
+    }
+
+    /**
+     * Pays du profil s'il est valide, sinon le pays déclaré pour DAC7 ({@code tax_declared_residence_country}, collecte
+     * ciblée) : simple repli, le profil l'emporte toujours. Même règle que {@code COALESCE(u.country,
+     * u.tax_declared_residence_country)} dans les lectures SQL.
+     */
+    public static String profileOrDeclared(String profileCountry, String declaredCountry) {
+        return profileCountry != null ? profileCountry : declaredCountry;
     }
 
     public static String residenceCountryOf(String frozenResidenceCountry, String profileCountry, TravelerStatus status,

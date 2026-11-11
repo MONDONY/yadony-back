@@ -667,6 +667,26 @@ class Dac7ReportPostgresIT {
     }
 
     @Test
+    @DisplayName("pays déclaré pour DAC7 (profil sans pays) : repli dans le calcul et les rappels, profil prioritaire")
+    void paysDeclare_repliSql() {
+        UUID swede = UUID.randomUUID();
+        user(swede, null);
+        jdbc.update("UPDATE users SET tax_declared_residence_country = 'SE' WHERE id = ?", swede);
+        UUID both = UUID.randomUUID();
+        user(both, "CI");
+        jdbc.update("UPDATE users SET tax_declared_residence_country = 'SE' WHERE id = ?", both);
+
+        assertThat(readModel.travelers(List.of(swede, both)))
+                .extracting(Dac7ReportReadModel.TravelerRow::travelerId, Dac7ReportReadModel.TravelerRow::country)
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple(swede, "SE"),
+                        org.assertj.core.groups.Tuple.tuple(both, "CI"));
+        assertThat(new Dac7AdminReadModel(new NamedParameterJdbcTemplate(jdbc.getDataSource()))
+                .reminderCandidates(Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:00:00Z")))
+                .filteredOn(c -> c.userId().equals(swede))
+                .extracting(Dac7AdminReadModel.ReminderCandidate::country).containsExactly("SE");
+    }
+
+    @Test
     @DisplayName("registre des diligences : une ligne ajoutée ne se modifie ni ne se supprime")
     void registreImmuable() {
         Long id = jdbc.queryForObject("INSERT INTO dac7_due_diligence_log (user_id, action, channel) "

@@ -61,10 +61,6 @@ public class KycDac7IdentityAdapter implements Dac7VerifiedIdentityPort {
         }
     }
 
-    static Dac7VerifiedIdentity toDac7(VerifiedIdentityDetails details) {
-        return toDac7(details, null);
-    }
-
     /** {@code sessionId} : identifiant de la session de vérification, preuve de fiabilité au registre DAC7. */
     static Dac7VerifiedIdentity toDac7(VerifiedIdentityDetails details, String sessionId) {
         Dac7Address address = details.city() == null && details.freeAddress() == null ? null

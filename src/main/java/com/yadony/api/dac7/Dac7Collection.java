@@ -27,6 +27,16 @@ public record Dac7Collection(Dac7CollectionStatus status, List<Dac7CollectionFie
                 false, null);
     }
 
+    /**
+     * Invite utile : pays inconnu, ou au moins un champ manquant que le voyageur peut fournir lui-même. Un professionnel
+     * dont seule l'identité d'entreprise manque ({@link Dac7CollectionField#BUSINESS_IDENTITY}) n'a rien à faire.
+     */
+    public boolean actionRequired() {
+        return status == Dac7CollectionStatus.RESIDENCE_INCONNUE
+                || status == Dac7CollectionStatus.INFO_REQUIRED
+                && missing.stream().anyMatch(Dac7CollectionField::fillableByTraveler);
+    }
+
     /** Champs repris de la pièce vérifiée, en lecture seule pour le voyageur. */
     public List<Dac7CollectionField> readOnlyFields() {
         List<Dac7CollectionField> fields = new ArrayList<>();

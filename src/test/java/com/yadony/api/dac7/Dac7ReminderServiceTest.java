@@ -45,6 +45,7 @@ class Dac7ReminderServiceTest {
         user = new UserEntity();
         ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
         when(users.findById(user.getId())).thenReturn(Optional.of(user));
+        when(users.findByIdForUpdate(user.getId())).thenReturn(Optional.of(user));
         when(solicitation.statusOf(user)).thenReturn(Dac7SolicitationStatus.SOLLICITER);
         when(reads.lastOutgoing(any())).thenReturn(Optional.empty());
     }
@@ -278,8 +279,25 @@ class Dac7ReminderServiceTest {
     void acceptation_compteDisparuAvantEcriture() {
         when(collection.evaluate(user)).thenReturn(Dac7Collection.withoutIdentity(Dac7CollectionStatus.INFO_REQUIRED,
                 java.util.List.of(Dac7CollectionField.TAX_IDENTIFICATION_NUMBER), "FR"));
-        when(users.findById(user.getId())).thenReturn(Optional.of(user), Optional.empty());
+        when(users.findByIdForUpdate(user.getId())).thenReturn(Optional.empty());
         assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_FOUND);
         verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("acceptation : professionnel dont seule l'identité d'entreprise manque, aucune invite")
+    void acceptation_rienDeSaisissable() {
+        collection(Dac7CollectionStatus.INFO_REQUIRED, Dac7CollectionField.BUSINESS_IDENTITY);
+        assertThat(service.requestAtAcceptance(user.getId(), NOW)).isEqualTo(Dac7ReminderService.Outcome.NOT_DUE);
+        verify(events, never()).publishEvent(any());
+        assertThat(user.getTaxInfoRequestedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("acceptation : la ligne du voyageur est verrouillée avant d'écrire (pas de double demande)")
+    void acceptation_ligneVerrouillee() {
+        collection(Dac7CollectionStatus.RESIDENCE_INCONNUE, Dac7CollectionField.RESIDENCE_COUNTRY);
+        service.requestAtAcceptance(user.getId(), NOW);
+        verify(users).findByIdForUpdate(user.getId());
     }
 }

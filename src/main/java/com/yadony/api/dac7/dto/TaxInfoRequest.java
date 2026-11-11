@@ -19,13 +19,24 @@ package com.yadony.api.dac7.dto;
  *                                enregistré
  * @param address                 adresse principale complète ; remplace aussi une adresse reprise de la pièce
  *                                (« Ce n'est plus mon adresse »). Le pays est celui de résidence
+ * @param residenceCountry        pays de résidence, seulement quand le profil n'en a pas (statut
+ *                                {@code RESIDENCE_INCONNUE}) ; un code de {@code residenceCountryChoices}. Enregistré
+ *                                pour DAC7 seulement, sans toucher au pays du profil ni aux paiements
  */
 public record TaxInfoRequest(String taxIdentificationNumber, String taxCountry, String vatNumber, String firstName,
-                             String lastName, String birthDate, String birthPlace, AddressInput address) {
+                             String lastName, String birthDate, String birthPlace, AddressInput address,
+                             String residenceCountry) {
 
     /** Ancien contrat (lot 3a) : NIF, pays d'émission et TVA. */
     public TaxInfoRequest(String taxIdentificationNumber, String taxCountry, String vatNumber) {
-        this(taxIdentificationNumber, taxCountry, vatNumber, null, null, null, null, null);
+        this(taxIdentificationNumber, taxCountry, vatNumber, null, null, null, null, null, null);
+    }
+
+    /** Sans pays de résidence. */
+    public TaxInfoRequest(String taxIdentificationNumber, String taxCountry, String vatNumber, String firstName,
+                          String lastName, String birthDate, String birthPlace, AddressInput address) {
+        this(taxIdentificationNumber, taxCountry, vatNumber, firstName, lastName, birthDate, birthPlace, address,
+                null);
     }
 
     /** Au moins un champ d'identité (nom, naissance, adresse) est envoyé. */

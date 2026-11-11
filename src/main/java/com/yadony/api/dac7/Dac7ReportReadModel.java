@@ -267,7 +267,8 @@ public class Dac7ReportReadModel {
      * adresse. Comptes supprimés compris (ils sortent incomplets, avec leur résidence figée à la suppression).
      */
     private static final String TRAVELERS_SQL = """
-            SELECT u.id, u.country, u.traveler_status, u.business_country, u.tax_residence_country,
+            SELECT u.id, COALESCE(u.country, u.tax_declared_residence_country) AS country, u.traveler_status,
+                   u.business_country, u.tax_residence_country,
                    u.tax_identification_number IS NOT NULL AS tax_provided,
                    (u.deleted_at IS NULL AND CASE
                         WHEN u.traveler_status = 'PROFESSIONAL'

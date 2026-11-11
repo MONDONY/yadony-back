@@ -13,10 +13,5 @@ public enum Dac7CollectionStatus {
     /** Résident de l'Union, informations incomplètes : la liste exacte des champs manquants accompagne ce statut. */
     INFO_REQUIRED,
     /** Résident de l'Union, tout est présent : rien à demander. */
-    COMPLETE;
-
-    /** Faut-il inviter le voyageur à compléter quelque chose ? */
-    public boolean actionRequired() {
-        return this == RESIDENCE_INCONNUE || this == INFO_REQUIRED;
-    }
+    COMPLETE
 }

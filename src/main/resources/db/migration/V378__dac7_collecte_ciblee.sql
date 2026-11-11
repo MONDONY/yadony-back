@@ -8,6 +8,12 @@
 -- residence_street, residence_line2, residence_postal_code, city), déjà lues par Dac7IdentityResolver.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_birth_place VARCHAR(512);
 
+-- users.tax_declared_residence_country : pays de résidence déclaré par le voyageur pour DAC7 quand son profil n'en a
+-- pas (users.country nul). Séparé de users.country, qui pilote devises, rails de paiement et verrou Stripe : il couvre
+-- aussi les États de l'Union absents du catalogue de paiement (BG, CZ, DK, HU, PL, RO, SE) sans rien changer aux
+-- paiements. Sert seulement de repli : le pays du profil, quand il existe, l'emporte toujours. Effacé à la suppression.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tax_declared_residence_country VARCHAR(2);
+
 -- Registre des diligences : d'où vient une information fournie. USER = saisie du voyageur ; DIDIT = reprise de la
 -- pièce d'identité vérifiée, avec l'identifiant de la session de vérification comme preuve de fiabilité (CGI 1649 ter
 -- D). Nuls pour les lignes antérieures et pour les démarches (demande, rappels, décision). Ajout de colonnes nullables

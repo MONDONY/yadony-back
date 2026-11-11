@@ -113,7 +113,10 @@ public class TravelerTaxInfoService {
         if (request == null) {
             throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
         }
-        Dac7VerifiedIdentityPort.Lookup lookup = collection.lookup(load(firebaseUid));
+        UserEntity current = load(firebaseUid);
+        // Pays en cours de déclaration : la pièce est utile dès cette réponse (lecture en cache, délai borné).
+        Dac7VerifiedIdentityPort.Lookup lookup = request.residenceCountry() != null
+                ? collection.lookupAnyway(current) : collection.lookup(current);
         return writes.execute(status -> write(firebaseUid, request, lookup));
     }
 
@@ -121,7 +124,8 @@ public class TravelerTaxInfoService {
         UserEntity user = load(firebaseUid);
         // Les contrôles passent avant toute écriture : une saisie refusée ne laisse rien (la transaction est annulée).
         boolean tinGiven = !blank(request.taxIdentificationNumber());
-        boolean nothingElse = !request.hasIdentityFields() && request.vatNumber() == null;
+        boolean nothingElse = !request.hasIdentityFields() && request.vatNumber() == null
+                && request.residenceCountry() == null;
         if (!tinGiven && (nothingElse || !blank(request.taxCountry()))) {
             // Ancien contrat : sans NIF ni autre champ, le NIF est obligatoire ; un pays d'émission seul aussi.
             throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
@@ -137,13 +141,22 @@ public class TravelerTaxInfoService {
             vat = identifier(request.vatNumber(), "vatNumber", false);
         }
 
+        Set<String> changed = new LinkedHashSet<>();
+        if (request.residenceCountry() != null) {
+            String declared = residenceCountry(user, request.residenceCountry());
+            if (!declared.equals(user.getTaxDeclaredResidenceCountry())) {
+                // Écrit avant l'évaluation : les champs d'identité de la même requête sont jugés avec ce pays. Une
+                // erreur plus loin annule la transaction entière.
+                changed.add(Dac7CollectionField.RESIDENCE_COUNTRY.name());
+                user.setTaxDeclaredResidenceCountry(declared);
+            }
+        }
         Dac7Collection before = collection.evaluate(user, lookup);
         Identity identity = request.hasIdentityFields() ? identity(request, before, nif) : null;
 
         // Double envoi : le second, s'il arrive après le premier, relit les mêmes valeurs et ne réécrit rien ; s'il
         // est strictement simultané, le verrou optimiste de users (@Version) le rejette en 409 concurrent-update et
         // sa transaction (audit et registre compris) est annulée. Jamais deux écritures.
-        Set<String> changed = new LinkedHashSet<>();
         boolean firstTime = user.getTaxIdentificationNumber() == null && nif != null;
         if (!Objects.equals(nif, user.getTaxIdentificationNumber())
                 || !Objects.equals(country, user.getTaxCountry())) {
@@ -193,8 +206,24 @@ public class TravelerTaxInfoService {
         String vat = user.getVatNumber();
         return new TaxInfoResponse(nif != null, mask(nif), user.getTaxCountry(), vat != null, mask(vat),
                 user.getTaxInfoProvidedAt(), Dac7ResidencyPolicy.residenceCountryOf(user), residency.statusOf(user),
-                solicitation.statusOf(user), c.status(), c.missing(), c.readOnlyFields(), c.status().actionRequired(),
-                user.getTaxInfoRequestedAt(), identityView(user, c));
+                solicitation.statusOf(user), c.status(), c.missing(), c.readOnlyFields(), c.actionRequired(),
+                user.getTaxInfoRequestedAt(), identityView(user, c),
+                c.status() == Dac7CollectionStatus.RESIDENCE_INCONNUE ? Dac7ResidenceCountries.CHOICES : null);
+    }
+
+    /**
+     * Pays de résidence déclaré pour DAC7 : seulement quand le profil n'a pas de pays (le pays du profil, qui pilote
+     * aussi les paiements, se change dans le profil) et parmi {@link Dac7ResidenceCountries#CHOICES}.
+     */
+    private static String residenceCountry(UserEntity user, String raw) {
+        String code = Dac7ResidenceCountries.normalize(raw);
+        if (code == null) {
+            throw invalid("residenceCountry", "Ce pays n'est pas proposé.");
+        }
+        if (user.getCountry() != null) {
+            throw invalid("residenceCountry", "Votre pays de résidence se change dans votre profil.");
+        }
+        return code;
     }
 
     private static TaxInfoResponse.TaxIdentity identityView(UserEntity user, Dac7Collection c) {
