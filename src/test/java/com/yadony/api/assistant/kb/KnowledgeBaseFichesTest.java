@@ -229,9 +229,15 @@ class KnowledgeBaseFichesTest {
     void lesQuestionsSurLaLimiteEtLaSortieGpProTrouventLaFicheStatutVoyageur() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "Comment redevenir particulier ?")).isEqualTo("statut-voyageur");
-        assertThat(firstHit(kb, "fr", "Pourquoi j'ai une limite de trajets par mois ?")).isEqualTo("statut-voyageur");
+        // La fiche dédiée « limite-mensuelle-trajets » (retest R2) peut passer en tête sur cette question ;
+        // statut-voyageur, qui explique le statut et la sortie vers GP Pro, reste juste derrière.
+        assertThat(kb.search("fr", "Pourquoi j'ai une limite de trajets par mois ?", null, 2))
+                .extracting(h -> h.article().id())
+                .containsExactlyInAnyOrder("statut-voyageur", "limite-mensuelle-trajets");
         assertThat(firstHit(kb, "en", "How do I become an individual again?")).isEqualTo("statut-voyageur");
-        assertThat(firstHit(kb, "en", "Why is there a monthly trip limit?")).isEqualTo("statut-voyageur");
+        assertThat(kb.search("en", "Why is there a monthly trip limit?", null, 2))
+                .extracting(h -> h.article().id())
+                .containsExactlyInAnyOrder("statut-voyageur", "limite-mensuelle-trajets");
     }
 
     @Test

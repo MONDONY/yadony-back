@@ -54,7 +54,7 @@ class PublishingLimitGateTest {
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
                     assertThat(e.getErrorCode()).isEqualTo("monthly-limit-reached");
-                    assertThat(e.getMessage()).contains("2 trajets").contains("2026-12-01");
+                    assertThat(e.getMessage()).contains("2 trajets").contains("1er décembre 2026").doesNotContain("2026-12-01");
                 });
     }
 

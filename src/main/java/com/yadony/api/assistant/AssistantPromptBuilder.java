@@ -42,6 +42,8 @@ public class AssistantPromptBuilder {
             "id" is the id of the chosen feature, "question" is about that feature; null when there is no \
             <discover> block. Each question: written as the user would ask it, in the reply language of rule 4, \
             at most 80 characters, never a question already asked in <history> or <question>.
+            10. When the question is about being unable to publish a trip or about a publication limit, and an \
+            article says that a draft can still be saved, keep that mention in your answer.
             Reply with a single JSON object and nothing else:
             {"answer": string, "answered": boolean, "routes": [string], "about_my_parcel": boolean, \
             "follow_ups": [string], "discovery": {"id": string, "question": string} or null}
