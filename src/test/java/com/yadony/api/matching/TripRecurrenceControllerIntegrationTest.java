@@ -373,4 +373,108 @@ class TripRecurrenceControllerIntegrationTest {
         mockMvc.perform(get("/trip-recurrences"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // ── Lot 2 route : durée, poids, taille et poids max par mode ────────────────────────────
+
+    private ObjectNode roadRecurrence(int availableKg, int arrivalDayOffset) throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000100", false));
+        payload.put("transportMode", "CAR");
+        payload.put("capacityUnit", "KG_EXACT");
+        payload.put("availableKg", availableKg);
+        payload.put("arrivalDayOffset", arrivalDayOffset);
+        return payload;
+    }
+
+    private org.springframework.test.web.servlet.ResultActions postRecurrence(ObjectNode payload) throws Exception {
+        return mockMvc.perform(post("/trip-recurrences")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)));
+    }
+
+    @Test
+    void create_roadRecurrence_tonnesSizeAndMaxWeight_roundTrip() throws Exception {
+        ObjectNode payload = roadRecurrence(1200, 10);
+        payload.put("maxItemSize", "L");
+        payload.put("maxParcelWeightKg", 20.5);
+
+        postRecurrence(payload)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.availableKg").value(1200.0))
+                .andExpect(jsonPath("$.arrivalDayOffset").value(10))
+                .andExpect(jsonPath("$.maxItemSize").value("L"))
+                .andExpect(jsonPath("$.maxParcelWeightKg").value(20.5));
+
+        mockMvc.perform(get("/trip-recurrences").with(authentication(asTraveler(TRAVELER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].maxItemSize").value("L"))
+                .andExpect(jsonPath("$[0].maxParcelWeightKg").value(20.5));
+    }
+
+    @Test
+    void create_legacyPlaneRecurrence_hasNoLimits() throws Exception {
+        postRecurrence((ObjectNode) objectMapper.readTree(recurrenceJson("1000100", false)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.maxItemSize").doesNotExist())
+                .andExpect(jsonPath("$.maxParcelWeightKg").doesNotExist());
+    }
+
+    @Test
+    void create_roadRecurrenceOffset15_returns422ArrivalTooFar() throws Exception {
+        postRecurrence(roadRecurrence(500, 14)).andExpect(status().isCreated());
+        postRecurrence(roadRecurrence(500, 15))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("arrival-too-far"));
+    }
+
+    @Test
+    void create_planeRecurrenceOffset4_returns422ArrivalTooFar() throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000100", false));
+        payload.put("arrivalDayOffset", 3);
+        postRecurrence(payload).andExpect(status().isCreated());
+        payload.put("arrivalDayOffset", 4);
+        postRecurrence(payload)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("arrival-too-far"));
+    }
+
+    @Test
+    void create_offsetAbove120_isRejectedByValidation422() throws Exception {
+        ObjectNode payload = roadRecurrence(500, 121);
+        postRecurrence(payload)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.arrivalDayOffset").exists());
+    }
+
+    @Test
+    void create_planeRecurrenceAbove40kg_returns422TripCapacityTooHigh() throws Exception {
+        ObjectNode payload = (ObjectNode) objectMapper.readTree(recurrenceJson("1000100", false));
+        payload.put("availableKg", 40.5);
+        postRecurrence(payload)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("trip-capacity-too-high"));
+        payload.put("availableKg", 40.0);
+        postRecurrence(payload).andExpect(status().isCreated());
+    }
+
+    @Test
+    void create_invalidSizeOrWeight_returns422WithViolations() throws Exception {
+        ObjectNode badSize = roadRecurrence(500, 1);
+        badSize.put("maxItemSize", "XXL");
+        postRecurrence(badSize)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.maxItemSize").exists());
+
+        ObjectNode badWeight = roadRecurrence(500, 1);
+        badWeight.put("maxParcelWeightKg", 0.2);
+        postRecurrence(badWeight)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+
+        ObjectNode tooHeavy = roadRecurrence(500, 1);
+        tooHeavy.put("maxParcelWeightKg", 1000000);
+        postRecurrence(tooHeavy)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+    }
 }

@@ -580,4 +580,182 @@ class TripTemplateServiceTest {
 
         verify(mocked).pinLegacyTemplatesCurrency(userId, "EUR");
     }
+
+    // ── Lot 2 route : durée, poids, taille et poids max par mode ────────────────────────────
+
+    /** Modèle complet : seuls le mode, la capacité, le décalage d'arrivée et les limites varient. */
+    private CreateTripTemplateRequest modelWith(String mode, int availableKg, Integer arrivalDayOffset,
+                                                String maxItemSize, Double maxParcelWeightKg) {
+        return new CreateTripTemplateRequest(
+                "Abidjan->Ouaga", null, "Abidjan", null, null, "Ouagadougou", null, null,
+                mode, "KG_EXACT", availableKg, 8.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                arrivalDayOffset, maxItemSize, maxParcelWeightKg);
+    }
+
+    private static void assertBusiness(Throwable thrown, String code, String messagePart) {
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+            assertThat(e.getErrorCode()).isEqualTo(code);
+            assertThat(e.getMessage()).contains(messagePart);
+        });
+    }
+
+    @Test
+    void template_road_offset14_accepted_15_refused() {
+        assertThat(service.create(userId, modelWith("CAR", 100, 14, null, null)).arrivalDayOffset())
+                .isEqualTo(14);
+        assertThat(service.create(userId, modelWith("BUS", 100, 14, null, null)).arrivalDayOffset())
+                .isEqualTo(14);
+
+        assertThatThrownBy(() -> service.create(userId, modelWith("CAR", 100, 15, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "14"));
+        verify(repository, times(2)).save(any(TripTemplateEntity.class));
+    }
+
+    @Test
+    void template_boat_offset120_accepted_121_refused() {
+        assertThat(service.create(userId, modelWith("BOAT", 100, 120, null, null)).arrivalDayOffset())
+                .isEqualTo(120);
+
+        assertThatThrownBy(() -> service.create(userId, modelWith("BOAT", 100, 121, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "120"));
+    }
+
+    // Review Focus 3 : l'avion garde sa limite de 3 jours, la limite de la route ne déborde pas.
+    @Test
+    void template_plane_offset3_accepted_4_refused() {
+        assertThat(service.create(userId, modelWith("PLANE", 23, 3, null, null)).arrivalDayOffset())
+                .isEqualTo(3);
+
+        assertThatThrownBy(() -> service.create(userId, modelWith("PLANE", 23, 4, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "3"));
+        // Mêmes règles à la modification.
+        UUID id = UUID.randomUUID();
+        TripTemplateEntity existing = new TripTemplateEntity();
+        existing.setUserId(userId);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+        var tooFar = new UpdateTripTemplateRequest(
+                "x", null, "Paris", null, null, "Dakar", null, null, "PLANE", "SUITCASE_23KG", 23, 8.0,
+                List.of(), false, null, null, null, null, null, null, null, null, null, null, null, null,
+                null, 4, null, null);
+        assertThatThrownBy(() -> service.update(userId, id, tooFar))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "3"));
+    }
+
+    @Test
+    void template_refusedOffset_isNeverSaved() {
+        assertThatThrownBy(() -> service.create(userId, modelWith("PLANE", 23, 4, null, null)));
+
+        verify(repository, never()).save(any(TripTemplateEntity.class));
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void template_road_2000kg_accepted_plane_1000kg_refused() {
+        assertThat(service.create(userId, modelWith("CAR", 2000, null, null, null)).availableKg())
+                .isEqualTo(2000);
+        assertThat(service.create(userId, modelWith("BOAT", 20000, null, null, null)).availableKg())
+                .isEqualTo(20000);
+        // Plafond de l'avion : 999,99 kg accepté (989 en entier), 1 000 refusé.
+        assertThat(service.create(userId, modelWith("PLANE", 999, null, null, null)).availableKg())
+                .isEqualTo(999);
+
+        assertThatThrownBy(() -> service.create(userId, modelWith("PLANE", 1000, null, null, null)))
+                .satisfies(e -> assertBusiness(e, "trip-capacity-too-high", "999.99"));
+        assertThatThrownBy(() -> service.create(userId, modelWith("TRAIN", 1000, null, null, null)))
+                .satisfies(e -> assertBusiness(e, "trip-capacity-too-high", "999.99"));
+    }
+
+    @Test
+    void template_road_keepsSizeAndMaxWeight_roundTrippedInDto() {
+        var dto = service.create(userId, modelWith("CAR", 100, null, "L", 20.5));
+
+        ArgumentCaptor<TripTemplateEntity> captor = ArgumentCaptor.forClass(TripTemplateEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getMaxItemSize()).isEqualTo("L");
+        assertThat(captor.getValue().getMaxParcelWeightKg()).isEqualTo(20.5);
+        assertThat(dto.maxItemSize()).isEqualTo("L");
+        assertThat(dto.maxParcelWeightKg()).isEqualTo(20.5);
+    }
+
+    @Test
+    void template_lowercaseSize_isNormalized() {
+        assertThat(service.create(userId, modelWith("BUS", 100, null, "xl", null)).maxItemSize())
+                .isEqualTo("XL");
+    }
+
+    @Test
+    void template_boat_dropsSizeButKeepsMaxWeight() {
+        var dto = service.create(userId, modelWith("BOAT", 5000, null, "M", 1500.0));
+
+        assertThat(dto.maxItemSize()).isNull();
+        assertThat(dto.maxParcelWeightKg()).isEqualTo(1500.0);
+    }
+
+    @Test
+    void template_planeDropsSize() {
+        var dto = service.create(userId, modelWith("PLANE", 23, null, "M", 12.0));
+
+        assertThat(dto.maxItemSize()).isNull();
+        assertThat(dto.maxParcelWeightKg()).isNull();
+    }
+
+    @Test
+    void template_withoutLimits_hasNoLimit() {
+        var dto = service.create(userId, modelWith("CAR", 100, null, null, null));
+
+        assertThat(dto.maxItemSize()).isNull();
+        assertThat(dto.maxParcelWeightKg()).isNull();
+    }
+
+    @Test
+    void template_update_absentLimits_areKept_noneAndZeroClear() {
+        UUID id = UUID.randomUUID();
+        TripTemplateEntity existing = new TripTemplateEntity();
+        existing.setUserId(userId);
+        existing.setTransportMode("CAR");
+        existing.setMaxItemSize("L");
+        existing.setMaxParcelWeightKg(30.0);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        // Client du lot 1 : ne sait rien de la taille ni du poids max, ne doit pas les effacer.
+        var kept = service.update(userId, id, asUpdate(modelWith("CAR", 100, null, null, null)));
+        assertThat(kept.maxItemSize()).isEqualTo("L");
+        assertThat(kept.maxParcelWeightKg()).isEqualTo(30.0);
+
+        var changed = service.update(userId, id, asUpdate(modelWith("CAR", 100, null, "S", 12.0)));
+        assertThat(changed.maxItemSize()).isEqualTo("S");
+        assertThat(changed.maxParcelWeightKg()).isEqualTo(12.0);
+
+        var cleared = service.update(userId, id, asUpdate(modelWith("CAR", 100, null, "NONE", 0.0)));
+        assertThat(cleared.maxItemSize()).isNull();
+        assertThat(cleared.maxParcelWeightKg()).isNull();
+    }
+
+    @Test
+    void template_update_toPlane_clearsLimits() {
+        UUID id = UUID.randomUUID();
+        TripTemplateEntity existing = new TripTemplateEntity();
+        existing.setUserId(userId);
+        existing.setTransportMode("CAR");
+        existing.setMaxItemSize("L");
+        existing.setMaxParcelWeightKg(30.0);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        var dto = service.update(userId, id, asUpdate(modelWith("PLANE", 23, null, null, null)));
+
+        assertThat(dto.maxItemSize()).isNull();
+        assertThat(dto.maxParcelWeightKg()).isNull();
+    }
+
+    private static UpdateTripTemplateRequest asUpdate(CreateTripTemplateRequest c) {
+        return new UpdateTripTemplateRequest(c.label(), c.emoji(), c.departureCity(), c.departureLat(),
+                c.departureLng(), c.arrivalCity(), c.arrivalLat(), c.arrivalLng(), c.transportMode(),
+                c.capacityUnit(), c.availableKg(), c.pricePerKg(), c.acceptedCategories(), c.cashAccepted(),
+                c.arrivalTime(), c.currency(), c.pricingMode(), c.acceptedPaymentMethods(), c.negotiable(),
+                c.refusedTypes(), c.description(), c.pickupAddress(), c.deliveryAddress(), c.departureTime(),
+                c.handoverLeadDays(), c.departureCountryCode(), c.arrivalCountryCode(), c.arrivalDayOffset(),
+                c.maxItemSize(), c.maxParcelWeightKg());
+    }
 }

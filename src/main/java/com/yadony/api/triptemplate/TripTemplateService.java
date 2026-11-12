@@ -4,8 +4,11 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.matching.ArrivalRules;
+import com.yadony.api.matching.ParcelFitRules;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.TransportModeGuard;
+import com.yadony.api.matching.WeightLimits;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
@@ -131,6 +134,10 @@ public class TripTemplateService {
         TransportMode mode = TransportMode.parse(r.transportMode());
         transportModeGuard.assertTripModeAllowed(mode,
                 TransportMode.parseOrNull(entity.getTransportMode()));
+        // Durée et capacité du mode, refusées avant toute écriture : une durée au-delà du mode
+        // ferait échouer en silence chaque trajet publié depuis ce modèle.
+        ArrivalRules.assertOffsetWithinMode(r.arrivalDayOffset(), mode);
+        WeightLimits.assertTripCapacity(r.availableKg() == null ? null : BigDecimal.valueOf(r.availableKg()), mode);
         SupportedCurrency currency = resolveCurrency(userId, r.currency());
         String pricingMode = r.pricingMode() == null ? "KG" : r.pricingMode();
         Set<PaymentMethod> methods = resolvePaymentMethods(r.acceptedPaymentMethods(), r.cashAccepted(), currency);
@@ -161,6 +168,12 @@ public class TripTemplateService {
         entity.setRefusedTypes(joinCategories(ContentCategoryNormalizer.normalizeList(r.refusedTypes())));
         entity.setArrivalTime(r.arrivalTime());
         entity.setArrivalDayOffset(r.arrivalDayOffset() == null ? 0 : r.arrivalDayOffset());
+        // Taille et poids maximaux par colis : absents = conservés à la modification, « NONE »/0 =
+        // effacés, effacés aussi hors route (taille) et hors route et bateau (poids).
+        entity.setMaxItemSize(ParcelFitRules.resolveStoredMaxItemSize(
+                r.maxItemSize(), entity.getMaxItemSize(), mode));
+        entity.setMaxParcelWeightKg(ParcelFitRules.resolveStoredMaxParcelWeight(
+                r.maxParcelWeightKg(), entity.getMaxParcelWeightKg(), mode));
         entity.setCurrency(r.currency() == null || r.currency().isBlank()
                 ? null : r.currency().trim().toUpperCase(Locale.ROOT));
         entity.setPricingMode(pricingMode);
@@ -330,6 +343,7 @@ public class TripTemplateService {
                 addressOrNull(e.getDeliveryAddressLabel(), e.getDeliveryLat(), e.getDeliveryLng()),
                 e.getDepartureTime(), e.getHandoverLeadDays(),
                 e.getDepartureCountryCode(), e.getArrivalCountryCode(), e.getArrivalDayOffset(),
+                e.getMaxItemSize(), e.getMaxParcelWeightKg(),
                 e.getCreatedAt(), e.getUpdatedAt());
     }
 }

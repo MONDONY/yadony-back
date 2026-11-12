@@ -71,6 +71,28 @@ public final class ParcelFitRules {
         return normalizeMaxParcelWeight(requested == null ? current : requested, mode);
     }
 
+    /**
+     * Taille maximale d'un modèle ou d'une série (enregistrée en texte) : mêmes règles que
+     * {@link #resolveMaxItemSizeOnUpdate}. À la création, {@code current} est nul.
+     */
+    public static String resolveStoredMaxItemSize(String requested, String current, TransportMode mode) {
+        ItemSize size = resolveMaxItemSizeOnUpdate(requested, ItemSize.parseOrNull(current), mode);
+        return size == null ? null : size.name();
+    }
+
+    /**
+     * Poids maximal d'un modèle ou d'une série (enregistré en {@code Double}) : mêmes règles que
+     * {@link #resolveMaxParcelWeightOnUpdate}. À la création, {@code current} est nul.
+     */
+    public static Double resolveStoredMaxParcelWeight(Double requested, Double current, TransportMode mode) {
+        BigDecimal kg = resolveMaxParcelWeightOnUpdate(toDecimal(requested), toDecimal(current), mode);
+        return kg == null ? null : kg.doubleValue();
+    }
+
+    private static BigDecimal toDecimal(Double value) {
+        return value == null ? null : BigDecimal.valueOf(value);
+    }
+
     /** Route : kilo exact (le voyageur donne un nombre de kilos) ; sinon valise de 23 kg. */
     public static CapacityUnit defaultCapacityUnit(TransportMode mode) {
         return mode == TransportMode.CAR || mode == TransportMode.BUS

@@ -89,6 +89,23 @@ class ParcelFitRulesTest {
     }
 
     @Test
+    @DisplayName("modèle et série (taille texte, poids Double) : absent = conservé, NONE/0 = effacé, hors mode = effacé")
+    void resolveStoredLimits_rules() {
+        assertThat(ParcelFitRules.resolveStoredMaxItemSize(null, "L", TransportMode.CAR)).isEqualTo("L");
+        assertThat(ParcelFitRules.resolveStoredMaxItemSize("NONE", "L", TransportMode.CAR)).isNull();
+        assertThat(ParcelFitRules.resolveStoredMaxItemSize("s", "L", TransportMode.BUS)).isEqualTo("S");
+        assertThat(ParcelFitRules.resolveStoredMaxItemSize(null, "L", TransportMode.BOAT)).isNull();
+        assertThat(ParcelFitRules.resolveStoredMaxItemSize("M", null, TransportMode.PLANE)).isNull();
+        assertThat(ParcelFitRules.resolveStoredMaxItemSize(null, "n'importe quoi", TransportMode.CAR)).isNull();
+
+        assertThat(ParcelFitRules.resolveStoredMaxParcelWeight(null, 30.0, TransportMode.CAR)).isEqualTo(30.0);
+        assertThat(ParcelFitRules.resolveStoredMaxParcelWeight(0.0, 30.0, TransportMode.CAR)).isNull();
+        assertThat(ParcelFitRules.resolveStoredMaxParcelWeight(20.5, 30.0, TransportMode.BOAT)).isEqualTo(20.5);
+        assertThat(ParcelFitRules.resolveStoredMaxParcelWeight(12.0, null, TransportMode.TRAIN)).isNull();
+        assertThat(ParcelFitRules.resolveStoredMaxParcelWeight(null, null, TransportMode.CAR)).isNull();
+    }
+
+    @Test
     @DisplayName("unité de capacité par défaut : kilo exact en route, valise 23 kg sinon")
     void defaultCapacityUnit_perMode() {
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.CAR)).isEqualTo(CapacityUnit.KG_EXACT);

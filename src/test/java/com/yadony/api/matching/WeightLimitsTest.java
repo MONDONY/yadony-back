@@ -110,4 +110,19 @@ class WeightLimitsTest {
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo("trip-capacity-too-high"));
     }
+
+    @Test
+    @DisplayName("assertRecurrenceCapacity : 40 kg accepté en avion, 40,5 refusé ; 1 200 accepté en route")
+    void assertRecurrenceCapacity_bounds() {
+        assertThatCode(() -> WeightLimits.assertRecurrenceCapacity(new BigDecimal("40"), PLANE)).doesNotThrowAnyException();
+        assertThatCode(() -> WeightLimits.assertRecurrenceCapacity(new BigDecimal("1200"), CAR)).doesNotThrowAnyException();
+        assertThatCode(() -> WeightLimits.assertRecurrenceCapacity(null, PLANE)).doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> WeightLimits.assertRecurrenceCapacity(new BigDecimal("40.5"), PLANE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("trip-capacity-too-high");
+                    assertThat(ex.getMessage()).contains("40");
+                });
+    }
 }

@@ -66,6 +66,15 @@ public final class WeightLimits {
         }
     }
 
+    /** Capacité d'une série hebdomadaire (kilos proposés) ; même 422 qu'un trajet, plafond de la série. */
+    public static void assertRecurrenceCapacity(BigDecimal kg, TransportMode mode) {
+        BigDecimal max = maxRecurrenceCapacity(mode);
+        if (kg != null && kg.compareTo(max) > 0) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-capacity-too-high",
+                    "problem.trip-capacity-too-high", format(max));
+        }
+    }
+
     /** Plafond sans décimale inutile : « 32 », « 999.99 ». */
     private static String format(BigDecimal max) {
         return max.stripTrailingZeros().toPlainString();

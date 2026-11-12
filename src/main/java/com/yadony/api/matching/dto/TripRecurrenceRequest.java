@@ -18,7 +18,9 @@ public record TripRecurrenceRequest(
         @NotBlank @Size(max = 20)  String transportMode,
         @NotBlank @Size(max = 20)  String capacityUnit,
 
-        @NotNull @DecimalMin("1.0") @DecimalMax("40.0") Double availableKg,
+        // Plafond technique des colonnes (NUMERIC(8,2)) ; le plafond du mode (40 kg en avion) est
+        // WeightLimits.maxRecurrenceCapacity, contrôlé par le service (422 trip-capacity-too-high).
+        @NotNull @DecimalMin("1.0") @DecimalMax("999999.99") Double availableKg,
         // Garde-fou large : le plafond réel dépend de la devise (CurrencyBounds, côté service).
         @NotNull @Positive @DecimalMax("1000000.0") Double pricePerKg,
 
@@ -53,15 +55,44 @@ public record TripRecurrenceRequest(
 
         boolean active,
 
-        // Jour d'arrivée relatif au départ (FLUTTER-4E). Absent = même jour.
-        @Min(0) @Max(3) Integer arrivalDayOffset,
+        // Jour d'arrivée relatif au départ (FLUTTER-4E). Absent = même jour. Plafond du mode (3 en
+        // avion, 14 en route, 120 en bateau) contrôlé par le service à l'enregistrement (422
+        // arrival-too-far), jamais perdu en silence à la génération.
+        @Min(0) @Max(120) Integer arrivalDayOffset,
 
         // Escales d'un trajet en avion (FLUTTER-GE) : 0, 1, 2 = deux ou plus. Absent = non renseigné.
         @Min(0) @Max(2) Integer stopsCount,
 
         // Carte proposée sur chaque occurrence (FLUTTER-FT). Absent (client antérieur) = acceptée.
-        Boolean cardAccepted
+        Boolean cardAccepted,
+
+        // Taille maximale d'un colis (route : voiture, bus) et poids maximal par colis (route et
+        // bateau), facultatifs, recopiés sur chaque occurrence. Création : absent ou « NONE »/0 =
+        // aucune limite. Modification : ABSENT = valeur conservée ; « NONE »/0 = effacée.
+        @Pattern(regexp = "NONE|S|M|L|XL", message = "{validation.trip.max-item-size.pattern}")
+        String maxItemSize,
+        @ClearableMaxParcelWeight
+        @DecimalMax(value = "999999.99", message = "{validation.trip.max-parcel-weight.max}")
+        Double maxParcelWeightKg
 ) {
+    /** Arité d'avant la taille et le poids maximaux, conservée pour les appels existants. */
+    public TripRecurrenceRequest(
+            UUID sourceTemplateId, String departureCity, String arrivalCity, String transportMode,
+            String capacityUnit, Double availableKg, Double pricePerKg, List<String> acceptedCategories,
+            List<String> refusedCategories, String description, AddressDto pickupAddress,
+            AddressDto deliveryAddress, LocalTime departureTime, LocalTime arrivalTime,
+            boolean cashAccepted, String weekdays, Integer horizonDays, LocalDate startDate,
+            LocalDate endDate, Integer weekInterval, Integer publicationLeadDays,
+            Integer handoverLeadDays, PricingMode pricingMode, Boolean negotiable, String currency,
+            boolean active, Integer arrivalDayOffset, Integer stopsCount, Boolean cardAccepted
+    ) {
+        this(sourceTemplateId, departureCity, arrivalCity, transportMode, capacityUnit, availableKg,
+                pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
+                deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
+                startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
+                negotiable, currency, active, arrivalDayOffset, stopsCount, cardAccepted, null, null);
+    }
+
     /** Arité sans choix de la carte, conservée pour les appels existants. */
     public TripRecurrenceRequest(
             UUID sourceTemplateId, String departureCity, String arrivalCity, String transportMode,
@@ -77,7 +108,7 @@ public record TripRecurrenceRequest(
                 pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
                 deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
                 startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
-                negotiable, currency, active, arrivalDayOffset, stopsCount, null);
+                negotiable, currency, active, arrivalDayOffset, stopsCount, null, null, null);
     }
 
     /** Arité sans escales, conservée pour les appels existants. */
@@ -95,7 +126,7 @@ public record TripRecurrenceRequest(
                 pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
                 deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
                 startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
-                negotiable, currency, active, arrivalDayOffset, null, null);
+                negotiable, currency, active, arrivalDayOffset, null, null, null, null);
     }
 
     /** Arité sans jour d'arrivée, conservée pour les appels existants. */
@@ -113,7 +144,7 @@ public record TripRecurrenceRequest(
                 pricePerKg, acceptedCategories, refusedCategories, description, pickupAddress,
                 deliveryAddress, departureTime, arrivalTime, cashAccepted, weekdays, horizonDays,
                 startDate, endDate, weekInterval, publicationLeadDays, handoverLeadDays, pricingMode,
-                negotiable, currency, active, null, null, null);
+                negotiable, currency, active, null, null, null, null, null);
     }
 
     public TripRecurrenceRequest(
@@ -138,7 +169,7 @@ public record TripRecurrenceRequest(
                 availableKg, pricePerKg, acceptedCategories, null, null,
                 pickupAddress, deliveryAddress, departureTime, arrivalTime, cashAccepted,
                 weekdays, horizonDays, null, null, null, null, null,
-                null, null, null, active, null, null, null);
+                null, null, null, active, null, null, null, null, null);
     }
 
     /** Carte refusée explicitement ; absente, elle reste acceptée (contrat antérieur). */

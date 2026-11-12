@@ -358,6 +358,11 @@ public class TripRecurrenceService {
         TransportMode mode = TransportMode.parse(r.transportMode());
         transportModeGuard.assertTripModeAllowed(mode,
                 TransportMode.parseOrNull(e.getTransportMode()));
+        // Durée et capacité du mode, refusées à l'enregistrement et avant toute écriture : jamais
+        // perdues en silence à la génération (une occurrence trop longue serait refusée chaque fois).
+        ArrivalRules.assertOffsetWithinMode(r.arrivalDayOffset(), mode);
+        WeightLimits.assertRecurrenceCapacity(
+                r.availableKg() == null ? null : BigDecimal.valueOf(r.availableKg()), mode);
         e.setSourceTemplateId(r.sourceTemplateId());
         e.setDepartureCity(r.departureCity());
         e.setArrivalCity(r.arrivalCity());
@@ -381,6 +386,11 @@ public class TripRecurrenceService {
         e.setArrivalTime(r.arrivalTime());
         e.setArrivalDayOffset(r.arrivalDayOffset() == null ? 0 : r.arrivalDayOffset());
         e.setStopsCount(TripStops.normalize(r.stopsCount(), mode));
+        // Taille et poids maximaux par colis, recopiés sur chaque occurrence : absents = conservés à la
+        // modification, « NONE »/0 = effacés, effacés aussi hors route (taille) et hors route et bateau (poids).
+        e.setMaxItemSize(ParcelFitRules.resolveStoredMaxItemSize(r.maxItemSize(), e.getMaxItemSize(), mode));
+        e.setMaxParcelWeightKg(ParcelFitRules.resolveStoredMaxParcelWeight(
+                r.maxParcelWeightKg(), e.getMaxParcelWeightKg(), mode));
         e.setCashAccepted(r.cashAccepted());
         e.setWeekdays(r.weekdays());
         int publicationLeadDays = r.publicationLeadDays() != null
@@ -451,6 +461,8 @@ public class TripRecurrenceService {
                 e.getArrivalDayOffset(),
                 e.getStopsCount(),
                 !e.isCardDeclined(),
+                e.getMaxItemSize(),
+                e.getMaxParcelWeightKg(),
                 e.getLastGeneratedDate(), e.getLastPublicationErrorCode(),
                 e.getLastPublicationErrorMessage(), e.getLastPublicationErrorAt(), status,
                 nextOccurrence.map(TripRecurrenceCalendar.OccurrenceDate::departureDate).orElse(null),

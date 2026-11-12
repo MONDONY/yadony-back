@@ -41,6 +41,10 @@ public record TripRecurrenceDto(
         Integer stopsCount,
         /** Carte proposée sur les occurrences (FLUTTER-FT) ; false = refusée par le voyageur. */
         boolean cardAccepted,
+        /** Taille maximale d'un colis (S, M, L, XL) ; null = aucune limite. */
+        String maxItemSize,
+        /** Poids maximal par colis en kg ; null = aucune limite. */
+        Double maxParcelWeightKg,
         LocalDate lastGeneratedDate,
         String lastPublicationErrorCode,
         String lastPublicationErrorMessage,

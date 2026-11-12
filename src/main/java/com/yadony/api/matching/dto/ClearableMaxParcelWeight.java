@@ -13,7 +13,7 @@ import java.lang.annotation.Target;
 import java.math.BigDecimal;
 
 /**
- * Poids maximal par colis d'un trajet : absent ({@code null}), {@code 0} (sentinelle d'effacement)
+ * Poids maximal par colis d'un trajet, d'un modèle ou d'une série (BigDecimal ou Double) : absent ({@code null}), {@code 0} (sentinelle d'effacement)
  * ou au moins 0,5 kg (le minimum d'une demande de colis). Entre 0 exclu et 0,5 exclu : refusé.
  */
 @Documented
@@ -30,10 +30,15 @@ public @interface ClearableMaxParcelWeight {
 
     Class<? extends Payload>[] payload() default {};
 
-    class Validator implements ConstraintValidator<ClearableMaxParcelWeight, BigDecimal> {
+    class Validator implements ConstraintValidator<ClearableMaxParcelWeight, Number> {
         @Override
-        public boolean isValid(BigDecimal value, ConstraintValidatorContext context) {
-            return value == null || value.signum() == 0 || value.compareTo(MIN_KG) >= 0;
+        public boolean isValid(Number value, ConstraintValidatorContext context) {
+            if (value == null) {
+                return true;
+            }
+            // BigDecimal (trajet) ou Double (modèle, série) : comparé en décimal exact.
+            BigDecimal kg = value instanceof BigDecimal exact ? exact : new BigDecimal(value.toString());
+            return kg.signum() == 0 || kg.compareTo(MIN_KG) >= 0;
         }
     }
 }
