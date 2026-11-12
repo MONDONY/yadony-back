@@ -48,6 +48,11 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(name = "transport_mode", length = 20)
     private com.yadony.api.matching.TransportMode transportMode;
 
+    /** Taille du colis S à XL (V381). Null = non renseignée (anciennes apps, avion, bateau). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "item_size", length = 2)
+    private com.yadony.api.matching.ItemSize itemSize;
+
     // Colonne élargie en TEXT par V171 (multi-sélection canonique jointe par virgule
     // peut dépasser 255) — columnDefinition reflète le vrai type DB (length est
     // trompeur : Hibernate ne le valide pas au runtime, mais un DDL futur s'y fierait).
@@ -245,6 +250,8 @@ public class PackageRequestEntity extends BaseEntity {
     public void setParcelSize(ParcelSize parcelSize) { this.parcelSize = parcelSize; }
 
     public void setTransportMode(com.yadony.api.matching.TransportMode transportMode) { this.transportMode = transportMode; }
+    public com.yadony.api.matching.ItemSize getItemSize() { return itemSize; }
+    public void setItemSize(com.yadony.api.matching.ItemSize itemSize) { this.itemSize = itemSize; }
 
     public void setContentCategory(String contentCategory) { this.contentCategory = contentCategory; }
 

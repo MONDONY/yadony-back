@@ -129,6 +129,15 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "transport_mode", nullable = false, length = 20)
     private TransportMode transportMode;
 
+    /** Taille maximale acceptée par colis (V381, route). Null = non renseignée : aucun contrôle. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "max_item_size", length = 2)
+    private ItemSize maxItemSize;
+
+    /** Poids maximal par colis en kg (V381, route). Null = non renseigné : aucun contrôle. */
+    @Column(name = "max_parcel_weight_kg", precision = 8, scale = 2)
+    private BigDecimal maxParcelWeightKg;
+
     /**
      * Nombre d'escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1 une escale, 2 deux ou
      * plus. Null = non renseigné, et toujours null hors avion ({@link TripStops#normalize}).
@@ -471,6 +480,10 @@ public class AnnouncementEntity extends BaseEntity {
 
     public TransportMode getTransportMode() { return transportMode; }
     public void setTransportMode(TransportMode transportMode) { this.transportMode = transportMode; }
+    public ItemSize getMaxItemSize() { return maxItemSize; }
+    public void setMaxItemSize(ItemSize maxItemSize) { this.maxItemSize = maxItemSize; }
+    public BigDecimal getMaxParcelWeightKg() { return maxParcelWeightKg; }
+    public void setMaxParcelWeightKg(BigDecimal maxParcelWeightKg) { this.maxParcelWeightKg = maxParcelWeightKg; }
 
     public Integer getStopsCount() { return stopsCount == null ? null : stopsCount.intValue(); }
     public void setStopsCount(Integer stopsCount) {

@@ -66,6 +66,14 @@ public class TripTemplateEntity extends BaseEntity {
     @Column(name = "arrival_day_offset", nullable = false)
     private int arrivalDayOffset = 0;
 
+    /** Taille maximale acceptée par colis (V381, route) : S, M, L ou XL. Null = non renseignée. */
+    @Column(name = "max_item_size", length = 2)
+    private String maxItemSize;
+
+    /** Poids maximal par colis en kg (V381, route). Null = non renseigné. */
+    @Column(name = "max_parcel_weight_kg")
+    private Double maxParcelWeightKg;
+
     /** Devise du modèle (ISO 4217). Nul pour un modèle antérieur à V257 : devise active à l'application. */
     @Column(name = "currency", length = 3)
     private String currency;
@@ -180,6 +188,10 @@ public class TripTemplateEntity extends BaseEntity {
     public void setHandoverLeadDays(Integer handoverLeadDays) { this.handoverLeadDays = handoverLeadDays; }
     public int getArrivalDayOffset() { return arrivalDayOffset; }
     public void setArrivalDayOffset(int arrivalDayOffset) { this.arrivalDayOffset = arrivalDayOffset; }
+    public String getMaxItemSize() { return maxItemSize; }
+    public void setMaxItemSize(String maxItemSize) { this.maxItemSize = maxItemSize; }
+    public Double getMaxParcelWeightKg() { return maxParcelWeightKg; }
+    public void setMaxParcelWeightKg(Double maxParcelWeightKg) { this.maxParcelWeightKg = maxParcelWeightKg; }
     public String getDepartureCountryCode() { return departureCountryCode; }
     public void setDepartureCountryCode(String departureCountryCode) { this.departureCountryCode = departureCountryCode; }
     public String getArrivalCountryCode() { return arrivalCountryCode; }
