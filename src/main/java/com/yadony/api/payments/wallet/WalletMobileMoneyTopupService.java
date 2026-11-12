@@ -164,8 +164,7 @@ public class WalletMobileMoneyTopupService {
         PawapayOperationEntity op = operations.findByIdAndUserId(topupId, userId)
                 .filter(o -> o.getPurpose() == PawapayOperationPurpose.WALLET_TOPUP
                         && o.getKind() == PawapayOperationKind.DEPOSIT)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "topup-not-found",
-                        "Not Found", "Recharge introuvable."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "topup-not-found", "problem.topup-not-found"));
         return toStatusResponse(op);
     }
 
@@ -232,15 +231,13 @@ public class WalletMobileMoneyTopupService {
      */
     private static String normalizedPhone(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-phone-required",
-                    "Phone Required", "Indiquez le numéro mobile money qui paie la recharge.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "topup-phone-required", "problem.topup-phone-required");
         }
         try {
             return Msisdn.normalize(raw);
         } catch (IllegalArgumentException e) {
             // Le numéro n'est jamais reflété dans le détail ni dans un journal.
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone",
-                    "Mobile Money Invalid Phone", "Numéro de téléphone invalide pour la recharge.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone", "problem.mobile-money-invalid-phone.numero-telephone-invalide-pour");
         }
     }
 

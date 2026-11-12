@@ -44,7 +44,6 @@ public class WalletTopupCodeRedemptionService {
     static final String GLOBAL_ALERTED_KEY = "global-alerted";
     static final String BRUTEFORCE_ALERT = "wallet-topup-code-bruteforce";
     static final Pattern CODE_FORMAT = Pattern.compile("^[A-Z0-9-]{4,32}$");
-    private static final String UNPROCESSABLE = "Unprocessable";
     static final String REDEMPTION_UNIQUE_CONSTRAINT = "uq_topup_code_redemption_user";
 
     private final WalletTopupCodeRepository codes;
@@ -109,19 +108,19 @@ public class WalletTopupCodeRedemptionService {
                 : null;
         if (topupCode == null) {
             // Les unités réservées restent comptées : c'est un échec.
-            throw unprocessable("topup-code-not-found", "Ce code de recharge n'existe pas");
+            throw unprocessable("topup-code-not-found", "problem.topup-code.not-found");
         }
         // Code trouvé : les unités réservées sont libérées, les autres issues ne comptent pas comme échec.
         reserved.forEach(AtomicInteger::decrementAndGet);
 
         switch (topupCode.displayStatus(LocalDateTime.now(ZoneOffset.UTC))) {
-            case REVOKED -> throw unprocessable("topup-code-revoked", "Ce code de recharge a été désactivé");
-            case EXPIRED -> throw unprocessable("topup-code-expired", "Ce code de recharge a expiré");
-            case EXHAUSTED -> throw unprocessable("topup-code-exhausted", "Ce code de recharge a déjà été entièrement utilisé");
+            case REVOKED -> throw unprocessable("topup-code-revoked", "problem.topup-code.revoked");
+            case EXPIRED -> throw unprocessable("topup-code-expired", "problem.topup-code.expired");
+            case EXHAUSTED -> throw unprocessable("topup-code-exhausted", "problem.topup-code.exhausted");
             case ACTIVE -> { }
         }
         if (redemptions.existsByCodeIdAndUserId(topupCode.getId(), userId)) {
-            throw unprocessable("topup-code-already-redeemed", "Tu as déjà utilisé ce code");
+            throw unprocessable("topup-code-already-redeemed", "problem.topup-code.already-redeemed");
         }
         if (walletService.isDisputeHeld(userId, topupCode.getCurrency())) {
             throw WalletService.disputeHeld();
@@ -130,8 +129,7 @@ public class WalletTopupCodeRedemptionService {
             throw WalletService.externalRefundHeld();
         }
         if (walletService.isFrozen(userId, topupCode.getCurrency())) {
-            throw unprocessable("wallet-refund-pending",
-                    "Solde gelé : une demande de remboursement est en cours sur cette devise");
+            throw unprocessable("wallet-refund-pending", "problem.topup-code.balance-frozen");
         }
 
         String key = "topup-code:" + topupCode.getId() + ":" + userId;
@@ -152,7 +150,7 @@ public class WalletTopupCodeRedemptionService {
             // Filet de UNIQUE (code_id, user_id) : la transaction entière (crédit compris) est annulée.
             // Toute autre violation (FK, CHECK) n'est pas un doublon : elle remonte telle quelle.
             if (!violates(e, REDEMPTION_UNIQUE_CONSTRAINT)) throw e;
-            throw unprocessable("topup-code-already-redeemed", "Tu as déjà utilisé ce code");
+            throw unprocessable("topup-code-already-redeemed", "problem.topup-code.already-redeemed");
         }
         topupCode.setRedeemedCount(topupCode.getRedeemedCount() + 1);
         codes.save(topupCode);
@@ -172,10 +170,10 @@ public class WalletTopupCodeRedemptionService {
     private List<AtomicInteger> reserveAttempt(UUID userId, String clientIp) {
         List<AtomicInteger> reserved = new ArrayList<>(3);
         reserve(failures.get(userId, k -> new AtomicInteger(0)), MAX_FAILURES_PER_HOUR, reserved,
-                "Trop d'essais de code. Réessaie dans une heure.");
+                "problem.topup-code.too-many-attempts.account");
         if (clientIp != null && !clientIp.isBlank()) {
             reserve(ipFailures.get(clientIp, k -> new AtomicInteger(0)), MAX_FAILURES_PER_IP_PER_HOUR, reserved,
-                    "Trop d'essais de code depuis ce réseau. Réessaie dans une heure.");
+                    "problem.topup-code.too-many-attempts.network");
         }
         AtomicInteger global = globalFailures.get(GLOBAL_KEY, k -> new AtomicInteger(0));
         if (global.get() >= MAX_GLOBAL_FAILURES_PER_HOUR && alertOncePerWindow()) {
@@ -184,16 +182,15 @@ public class WalletTopupCodeRedemptionService {
                     Map.of("failures", global.get(), "windowHours", 1));
         }
         reserve(global, MAX_GLOBAL_FAILURES_PER_HOUR, reserved,
-                "Trop d'essais de code en ce moment. Réessayez plus tard.");
+                "problem.topup-code.too-many-attempts.platform");
         return reserved;
     }
 
-    private static void reserve(AtomicInteger counter, int max, List<AtomicInteger> reserved, String detail) {
+    private static void reserve(AtomicInteger counter, int max, List<AtomicInteger> reserved, String messageKey) {
         if (counter.incrementAndGet() > max) {
             counter.decrementAndGet();
             reserved.forEach(AtomicInteger::decrementAndGet);
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts",
-                    "Too Many Requests", detail);
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "topup-code-too-many-attempts", messageKey);
         }
         reserved.add(counter);
     }
@@ -222,7 +219,7 @@ public class WalletTopupCodeRedemptionService {
         return false;
     }
 
-    private static YadonyBusinessException unprocessable(String code, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, UNPROCESSABLE, detail);
+    private static YadonyBusinessException unprocessable(String code, String messageKey) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, code, messageKey);
     }
 }

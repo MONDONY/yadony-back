@@ -174,6 +174,38 @@ class AnnouncementSearchMapperTest {
     }
 
     @Test
+    @DisplayName("invité : adresses de retrait et de remise absentes (unitaire et batch)")
+    void searchResult_guest_hidesExactAddresses() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        "uid-invite", null,
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                                "ROLE_GUEST"))));
+
+        for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL))) {
+            assertThat(r.pickupAddress()).isNull();
+            assertThat(r.deliveryAddress()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("compte connecté : adresses de retrait et de remise inchangées (unitaire et batch)")
+    void searchResult_registered_keepsExactAddresses() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        "uid-inscrit", null,
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                                "ROLE_SENDER"))));
+
+        for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.PROFESSIONAL))) {
+            assertThat(r.pickupAddress().label()).isEqualTo("Toronto Pearson");
+            assertThat(r.pickupAddress().lat()).isEqualTo(43.677);
+            assertThat(r.deliveryAddress().label()).isEqualTo("CDG");
+            assertThat(r.deliveryAddress().lng()).isEqualTo(2.547);
+        }
+    }
+
+    @Test
     @DisplayName("voyageur particulier : statut INDIVIDUAL, aucune donnée d'entreprise (unitaire et batch)")
     void searchResultTraveler_individual_exposesStatusOnly() {
         for (var r : bothVariants(travelerWithStatus(com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL))) {

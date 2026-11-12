@@ -43,8 +43,7 @@ public class ConnectDashboardLinkService {
 
     public DashboardLinkResponse createDashboardLink(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         String accountId = user.getStripeAccountId();
         if (accountId == null || accountId.isBlank()) {
             throw accountMissing();
@@ -61,9 +60,7 @@ public class ConnectDashboardLinkService {
             throw linkFailed();
         }
         if (account == null || !Boolean.TRUE.equals(account.getDetailsSubmitted())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "stripe-onboarding-incomplete",
-                    "Stripe Onboarding Incomplete",
-                    "Terminez d'abord l'inscription de votre compte de paiement.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "stripe-onboarding-incomplete", "problem.stripe-onboarding-incomplete.terminez-abord-inscription-votre");
         }
         try {
             LoginLink link = stripeGateway.createLoginLink(accountId);
@@ -94,12 +91,10 @@ public class ConnectDashboardLinkService {
     }
 
     private static YadonyBusinessException accountMissing() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "stripe-account-missing",
-                "Stripe Account Missing", "Aucun compte de paiement n'est relié à votre profil.");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "stripe-account-missing", "problem.stripe-account-missing");
     }
 
     private static YadonyBusinessException linkFailed() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-dashboard-link-failed",
-                "Stripe Dashboard Link Failed", "Impossible d'ouvrir votre espace Stripe pour le moment.");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-dashboard-link-failed", "problem.stripe-dashboard-link-failed");
     }
 }

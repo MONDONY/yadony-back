@@ -38,8 +38,7 @@ public class MobileMoneyAcceptedOperatorsService {
 
     /** Variante par identifiant (fil de négociation) : charge le voyageur, 404 s'il n'existe plus. */
     public MobileMoneyAcceptedOperatorsResponse forTraveler(UUID travelerId, String currency) {
-        UserEntity traveler = userRepository.findById(travelerId).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Voyageur introuvable"));
+        UserEntity traveler = userRepository.findById(travelerId).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.traveler"));
         return forTraveler(traveler, currency);
     }
 

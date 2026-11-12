@@ -72,10 +72,10 @@ public class MobileMoneyPaymentController {
 
     private UUID callerId(String firebaseUid) {
         if (firebaseUid == null) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise"))
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated"))
                 .getId();
     }
 }

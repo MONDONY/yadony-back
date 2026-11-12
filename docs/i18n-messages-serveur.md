@@ -4,7 +4,7 @@ Recette conformité 1.14 : « textes serveur en français quand l'app est en ang
 
 Inventaire généré par lecture des sources de `origin/main` (avant le paquet 1) : tout `new XxxException(...)`, `ResponseStatusException(...)`, `setDetail(...)` ou `ProblemDetail.forStatusAndDetail(...)` dont un littéral a l'air français (accents ou mots français courants). Détection heuristique, donc quelques faux positifs possibles. Les numéros de ligne sont ceux de `origin/main` avant migration.
 
-**Bilan** : 1324 occurrences repérées. Paquet 1 : **78 migrées** (58 clés `problem.*`, titre et détail, `messages_fr` / `messages_en`). Paquet 2 (`cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings`) : **112 migrées** (116 sites de lancer au total : quelques refus sans accent, non repérés par l'heuristique, ont été migrés avec les autres, 68 clés `problem.*` à titre + détail et 3 clés à valeur unique `problem.kyc.*`). Paquet 3 (reste de `matching` et `auth`) : **218 migrées** (81 clés `problem.*` à titre + détail côté `matching`, 37 côté `auth`, et 7 clés à valeur unique : `problem.price-grid.*`, `problem.devices.*` ; les refus déjà couverts par une clé existante, comme « Utilisateur introuvable », la réutilisent). **916 restent** (les `IllegalStateException` / `IllegalArgumentException` et les services d'administration compris), dont 11 lignes de `matching` et `auth` laissées volontairement (voir « Laissé tel quel » plus bas).
+**Bilan** : 1324 occurrences repérées. Paquet 1 : **78 migrées** (58 clés `problem.*`, titre et détail, `messages_fr` / `messages_en`). Paquet 2 (`cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings`) : **112 migrées** (116 sites de lancer au total : quelques refus sans accent, non repérés par l'heuristique, ont été migrés avec les autres, 68 clés `problem.*` à titre + détail et 3 clés à valeur unique `problem.kyc.*`). Paquet 3 (reste de `matching` et `auth`) : **218 migrées** (81 clés `problem.*` à titre + détail côté `matching`, 37 côté `auth`, et 7 clés à valeur unique : `problem.price-grid.*`, `problem.devices.*` ; les refus déjà couverts par une clé existante, comme « Utilisateur introuvable », la réutilisent). Paquet 4a (`payments` côté utilisateur : paiement carte, Stripe Connect, mobile money payeur, portefeuille, commission espèces, supplément, code de recharge) : **152 occurrences de l'inventaire migrées**, plus une quarantaine de sites que l'heuristique ne voyait pas (aides `notFound(code, texte)`, `payerUnsupported(texte)`, `unprocessable(code, texte)`, `reserve(…, texte)`, détails assemblés par ternaire), soit environ 190 sites de lancer pour 131 nouvelles clés (titre + détail, plus 8 motifs `problem.mobile-money-payer-unsupported.*` et 4 clés `.resolved` qui transmettent un détail déjà résolu dans la langue de la requête). **764 restent** (les `IllegalStateException` / `IllegalArgumentException` et les services d'administration compris), dont 11 lignes de `matching` et `auth` laissées volontairement (voir « Laissé tel quel » plus bas) et 166 dans `payments` (voir ci-dessous).
 
 ## Mode d'emploi (nouvelle erreur ou migration)
 
@@ -14,6 +14,7 @@ Inventaire généré par lecture des sources de `origin/main` (avant le paquet 1
 4. Hors requête HTTP (notification, tâche planifiée), ne pas utiliser `forRequest()` : passer par `messagesResolver.forUser(userId)` ou `dispatcher.messagesFor(userId)` (voir `GpProNotificationListener`).
 5. Cocher « migré » ci-dessous.
 6. Variantes (paquet 2) : une `ResponseStatusException` à texte français se remplace par `new LocalizedResponseStatusException(status, "problem.<clé>")` et une `YadonyNotFoundException("…")` par `YadonyNotFoundException.localized("problem.<clé>")` ; ces deux formes prennent une clé à valeur unique (pas de `.title` / `.detail`), le type et le titre de la réponse restent ceux d'avant (`generic` / `Not Found`). Le garde-fou accepte les deux formes de clé.
+7. Détail déjà résolu (paquet 4a) : quand le texte est calculé plus haut dans la langue de la requête (`messagesResolver.forRequest().get(...)`), le passer comme argument d'une clé `problem.<code>.resolved` dont le détail vaut `{0}` (voir `problem.mobile-money-payer-unsupported.resolved`). Une aide privée qui recevait le texte (`notFound(code, texte)`, `unprocessable(code, texte)`) reçoit désormais la clé. Motifs partagés mobile money : `MobileMoneyPayerRefusals`.
 
 ## Reste à migrer, par priorité
 
@@ -21,7 +22,7 @@ Priorité 1 : erreurs qui remontent jusqu'à l'écran de l'app (paiement, réser
 
 | Priorité | Package | Reste | Fichiers principaux |
 |---|---|---|---|
-| P1 | `payments` | 318 | `PaymentService.java` (46), `cash/CashCommissionService.java` (24), `mobilemoney/MobileMoneyBidPaymentService.java` (17), `pawapay/PawapaySignatureVerifier.java` (14) |
+| P1 | `payments` | 166 | **4a migré** (152) : `PaymentService`, `ConnectDashboardLinkService`, `cash/CashCommissionService`, `mobilemoney/` (paiement colis et négociation, compte de versement, contrôleurs, `MobileMoneyPayerRefusals`), `supplement/` (service, rails carte, espèces et mobile money, ledger mobile money, fenêtre, contrôleur), `wallet/` (`WalletService`, `WalletTopupOrchestrator`, `WalletSelfRefundService`, `WalletRefundRequestService`, `topupcode/WalletTopupCodeRedemptionService`). **Reste pour le 4b** : `amendment/` (service et rails carte et espèces, 37), webhooks (`PaymentStripeWebhookHandler`, `PaymentStripeResyncService`, `pawapay/*`), `split/PaymentSplitService` (8), `wallet/WalletAdminAdjustmentService` (9), `wallet/WalletRefundRetryService` (8), `wallet/topupcode/WalletTopupCodeAdminService` (4), `wallet/WalletExternalRefundService` (3), `supplement/BidSupplementAdminService` (5), `FiscalExportController` (5), `currency/ExchangeRateUpdateService` (5), `cash/CashCommissionController` et `WalletCommissionCollector` (4), `PaymentController` et `ConnectDashboardController` (jetons Firebase), `PaymentBusy`, `EscrowScheduler`, plus les `IllegalState` / `IllegalArgument` des fichiers 4a (journal seulement). `WalletController.java:216` garde un titre français et un détail vide, laissé tel quel. |
 | P1 | `matching` | 0 | migré (paquet 3), sauf 5 `IllegalArgumentException` de calcul / configuration jamais rendues (`BidNegotiationPricing.java` (4), `ranking/TripRankingProperties.java` (1)) et les messages anglais de la recherche publique (`PublicAnnouncement*`, `AnnouncementInsightController` : `user/not-found`) |
 | P1 | `cancellation` | 14 | `NoShowArbitrationService.java` (5, admin), `CancellationService.java` (6 `IllegalStateException` jamais rendues telles quelles : réponse 500 générique), `AdminBidCancellationService.java` (2, admin), `job/ReturnDeadlineScheduler.java` (1, alerte lue par l'équipe) ; non listés : `AdminBidCancellationService.conflict(...)` et `AdminNoShowQueryService` (admin) |
 | P1 | `auth` | 0 | migré (paquet 3), sauf 6 `IllegalStateException` d'environnement ou de développement (`DevTokenController.java` (3), `FirebaseTokenFilter.java` (1), `GuestClaimService.java` (1), `GuestUserProvisioner.java` (1)) et `FirebaseContactService.java` (1, détail technique Firebase) |
@@ -62,7 +63,7 @@ Priorité 1 : erreurs qui remontent jusqu'à l'écran de l'app (paiement, réser
 | P3 | `automation` | 8 | `AutomationHistoryController.java` (4), `AutomationRuleController.java` (3), `AutomationRuleService.java` (1) |
 | P3 | `toolkit` | 1 | `ToolsCompletionController.java` (1) |
 
-Ordre conseillé pour les paquets suivants : (2, fait) `cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings` ; (3, fait) `matching` restant et `auth` ; (4, prochain) `payments` (`PaymentService`, `cash`, `mobilemoney`, `supplement`, `amendment`) ; (5) `tracking` ; (6) priorité 2 ; (7) priorité 3 (dont les services d'administration `cancellation` et `kyc` restants).
+Ordre conseillé pour les paquets suivants : (2, fait) `cancellation` côté utilisateur, `kyc` côté utilisateur, `ratings` ; (3, fait) `matching` restant et `auth` ; (4a, fait) `payments` côté utilisateur (`PaymentService`, `cash`, `mobilemoney`, `supplement`, `wallet`) ; (4b, prochain) `payments` restant (`amendment`, webhooks et rapprochement, `split`, administration du portefeuille, export fiscal) ; (5) `tracking` ; (6) priorité 2 ; (7) priorité 3 (dont les services d'administration `cancellation` et `kyc` restants).
 
 Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `PawapaySignatureException` etc. ne sont pas rendus tels quels par `GlobalExceptionHandler` (réponse générique ou webhook) : colonne « exposition » = `indirect`, à vérifier au cas par cas (un contrôleur qui les attrape et recopie le message les expose).
 
@@ -496,9 +497,9 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | migré | écran | matching | `matching/reception/RecipientReplacementService.java:109` | YadonyBusinessException | Le destinataire n'a pas refusé ce colis |
 | migré | écran | matching | `matching/reception/RecipientReplacementService.java:116` | YadonyBusinessException | Vous avez déjà prévenu l'expéditeur. Nouvelle demande possible 12 h après la précédente. |
 | reste | écran | payments | `payments/ConnectDashboardController.java:41` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | payments | `payments/ConnectDashboardLinkService.java:46` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/ConnectDashboardLinkService.java:97` | YadonyBusinessException | Aucun compte de paiement n'est relié à votre profil. |
-| reste | écran | payments | `payments/ConnectDashboardLinkService.java:102` | YadonyBusinessException | Impossible d'ouvrir votre espace Stripe pour le moment. |
+| migré | écran | payments | `payments/ConnectDashboardLinkService.java:46` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/ConnectDashboardLinkService.java:97` | YadonyBusinessException | Aucun compte de paiement n'est relié à votre profil. |
+| migré | écran | payments | `payments/ConnectDashboardLinkService.java:102` | YadonyBusinessException | Impossible d'ouvrir votre espace Stripe pour le moment. |
 | reste | indirect | payments | `payments/EscrowCaptureService.java:105` | IllegalStateException | Paiement introuvable :  |
 | reste | indirect | payments | `payments/EscrowCaptureService.java:162` | EscrowCaptureException | le paiement n'est plus en séquestre ( |
 | reste | écran | payments | `payments/EscrowScheduler.java:76` | .setDetail |  en séquestre depuis plus de  |
@@ -509,52 +510,52 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/FiscalExportController.java:93` | YadonyBusinessException | Export fiscal réservé aux voyageurs PRO. |
 | reste | écran | payments | `payments/PaymentBusy.java:20` | YadonyBusinessException | Paiement en cours de validation, réessayez dans un instant |
 | reste | écran | payments | `payments/PaymentController.java:134` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | payments | `payments/PaymentService.java:225` | YadonyBusinessException | Vérifiez votre identité avant d'activer les paiements |
-| reste | écran | payments | `payments/PaymentService.java:237` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/PaymentService.java:252` | YadonyBusinessException | Impossible de vérifier le compte de paiement |
-| reste | écran | payments | `payments/PaymentService.java:292` | YadonyBusinessException | Impossible de créer le compte de paiement |
-| reste | écran | payments | `payments/PaymentService.java:305` | YadonyBusinessException | Créez d'abord un compte Stripe Connect |
-| reste | écran | payments | `payments/PaymentService.java:327` | YadonyBusinessException | Votre compte de paiement n'est plus valide. Réessayez pour en créer un nouveau. |
-| reste | écran | payments | `payments/PaymentService.java:332` | YadonyBusinessException | Impossible de générer le lien d'onboarding |
-| reste | écran | payments | `payments/PaymentService.java:337` | YadonyBusinessException | Impossible de générer le lien d'onboarding |
-| reste | écran | payments | `payments/PaymentService.java:378` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/PaymentService.java:388` | YadonyBusinessException | Impossible de changer de pays : votre compte de paiement  / est déjà activé dans ce pays et ne peut plus en ch |
-| reste | écran | payments | `payments/PaymentService.java:417` | YadonyBusinessException | Aucun compte Stripe à rafraîchir — créez-en un d'abord |
-| reste | écran | payments | `payments/PaymentService.java:465` | YadonyBusinessException | Impossible de récupérer l'état du compte Stripe |
-| reste | écran | payments | `payments/PaymentService.java:492` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
-| reste | écran | payments | `payments/PaymentService.java:519` | YadonyBusinessException | Demande introuvable |
-| reste | écran | payments | `payments/PaymentService.java:523` | YadonyBusinessException | Cette demande ne vous appartient pas |
-| reste | écran | payments | `payments/PaymentService.java:532` | YadonyBusinessException | Cette demande ne peut plus être payée (statut :  |
-| reste | écran | payments | `payments/PaymentService.java:541` | YadonyBusinessException | Le paiement pour cette demande a déjà été effectué |
-| reste | écran | payments | `payments/PaymentService.java:557` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
-| reste | écran | payments | `payments/PaymentService.java:582` | YadonyBusinessException | Le paiement pour cette demande a déjà été effectué |
-| reste | écran | payments | `payments/PaymentService.java:589` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | payments | `payments/PaymentService.java:602` | YadonyBusinessException | Cette annonce n'est plus disponible |
-| reste | écran | payments | `payments/PaymentService.java:646` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
-| reste | écran | payments | `payments/PaymentService.java:662` | YadonyBusinessException | Le taux de commission figé de cette négociation est introuvable |
-| reste | écran | payments | `payments/PaymentService.java:704` | YadonyBusinessException | Le taux de commission figé de ce paiement est introuvable |
-| reste | écran | payments | `payments/PaymentService.java:763` | YadonyBusinessException | Le paiement pour cette demande a déjà été effectué |
-| reste | écran | payments | `payments/PaymentService.java:780` | YadonyBusinessException | Voyageur introuvable |
-| reste | écran | payments | `payments/PaymentService.java:793` | YadonyBusinessException | Le montant fourni ne correspond pas au montant calculé pour cette demande |
-| reste | écran | payments | `payments/PaymentService.java:900` | YadonyBusinessException | Le voyageur doit reconfigurer son compte de paiement avant de pouvoir recevoir cette demande. |
-| reste | écran | payments | `payments/PaymentService.java:911` | YadonyBusinessException | Impossible de créer le paiement. Veuillez réessayer. |
-| reste | écran | payments | `payments/PaymentService.java:975` | YadonyBusinessException | Impossible de préparer la fiche de paiement. Veuillez réessayer. |
-| reste | écran | payments | `payments/PaymentService.java:1022` | YadonyBusinessException | Paiement introuvable |
-| reste | écran | payments | `payments/PaymentService.java:1029` | YadonyBusinessException | Ce paiement ne vous appartient pas |
-| reste | écran | payments | `payments/PaymentService.java:1035` | YadonyBusinessException | Le paiement est déjà confirmé, l'option d'enregistrement ne peut plus changer |
-| reste | écran | payments | `payments/PaymentService.java:1059` | YadonyBusinessException | Impossible de mettre à jour l'option d'enregistrement de la carte |
-| reste | écran | payments | `payments/PaymentService.java:1467` | YadonyBusinessException | Bid introuvable |
-| reste | écran | payments | `payments/PaymentService.java:1541` | YadonyBusinessException | Impossible de vérifier le paiement auprès de Stripe |
-| reste | écran | payments | `payments/PaymentService.java:1643` | YadonyBusinessException | Vous n'êtes pas autorisé à accéder à ce paiement |
-| reste | écran | payments | `payments/PaymentService.java:1666` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/PaymentService.java:1773` | YadonyBusinessException | Impossible de vérifier ou d'annuler le paiement existant auprès de Stripe |
-| reste | écran | payments | `payments/PaymentService.java:2150` | YadonyBusinessException | Sender introuvable |
-| reste | écran | payments | `payments/PaymentService.java:2159` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
-| reste | écran | payments | `payments/PaymentService.java:2165` | YadonyBusinessException | Voyageur introuvable |
-| reste | écran | payments | `payments/PaymentService.java:2187` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
-| reste | écran | payments | `payments/PaymentService.java:2235` | YadonyBusinessException | Le paiement pour cette négociation a déjà été effectué |
-| reste | écran | payments | `payments/PaymentService.java:2262` | YadonyBusinessException | Le paiement pour cette négociation a déjà été effectué |
-| reste | écran | payments | `payments/PaymentService.java:2357` | YadonyBusinessException | Échec création PaymentIntent :  |
+| migré | écran | payments | `payments/PaymentService.java:225` | YadonyBusinessException | Vérifiez votre identité avant d'activer les paiements |
+| migré | écran | payments | `payments/PaymentService.java:237` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/PaymentService.java:252` | YadonyBusinessException | Impossible de vérifier le compte de paiement |
+| migré | écran | payments | `payments/PaymentService.java:292` | YadonyBusinessException | Impossible de créer le compte de paiement |
+| migré | écran | payments | `payments/PaymentService.java:305` | YadonyBusinessException | Créez d'abord un compte Stripe Connect |
+| migré | écran | payments | `payments/PaymentService.java:327` | YadonyBusinessException | Votre compte de paiement n'est plus valide. Réessayez pour en créer un nouveau. |
+| migré | écran | payments | `payments/PaymentService.java:332` | YadonyBusinessException | Impossible de générer le lien d'onboarding |
+| migré | écran | payments | `payments/PaymentService.java:337` | YadonyBusinessException | Impossible de générer le lien d'onboarding |
+| migré | écran | payments | `payments/PaymentService.java:378` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/PaymentService.java:388` | YadonyBusinessException | Impossible de changer de pays : votre compte de paiement  / est déjà activé dans ce pays et ne peut plus en ch |
+| migré | écran | payments | `payments/PaymentService.java:417` | YadonyBusinessException | Aucun compte Stripe à rafraîchir — créez-en un d'abord |
+| migré | écran | payments | `payments/PaymentService.java:465` | YadonyBusinessException | Impossible de récupérer l'état du compte Stripe |
+| migré | écran | payments | `payments/PaymentService.java:492` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
+| migré | écran | payments | `payments/PaymentService.java:519` | YadonyBusinessException | Demande introuvable |
+| migré | écran | payments | `payments/PaymentService.java:523` | YadonyBusinessException | Cette demande ne vous appartient pas |
+| migré | écran | payments | `payments/PaymentService.java:532` | YadonyBusinessException | Cette demande ne peut plus être payée (statut :  |
+| migré | écran | payments | `payments/PaymentService.java:541` | YadonyBusinessException | Le paiement pour cette demande a déjà été effectué |
+| migré | écran | payments | `payments/PaymentService.java:557` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
+| migré | écran | payments | `payments/PaymentService.java:582` | YadonyBusinessException | Le paiement pour cette demande a déjà été effectué |
+| migré | écran | payments | `payments/PaymentService.java:589` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | payments | `payments/PaymentService.java:602` | YadonyBusinessException | Cette annonce n'est plus disponible |
+| migré | écran | payments | `payments/PaymentService.java:646` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
+| migré | écran | payments | `payments/PaymentService.java:662` | YadonyBusinessException | Le taux de commission figé de cette négociation est introuvable |
+| migré | écran | payments | `payments/PaymentService.java:704` | YadonyBusinessException | Le taux de commission figé de ce paiement est introuvable |
+| migré | écran | payments | `payments/PaymentService.java:763` | YadonyBusinessException | Le paiement pour cette demande a déjà été effectué |
+| migré | écran | payments | `payments/PaymentService.java:780` | YadonyBusinessException | Voyageur introuvable |
+| migré | écran | payments | `payments/PaymentService.java:793` | YadonyBusinessException | Le montant fourni ne correspond pas au montant calculé pour cette demande |
+| migré | écran | payments | `payments/PaymentService.java:900` | YadonyBusinessException | Le voyageur doit reconfigurer son compte de paiement avant de pouvoir recevoir cette demande. |
+| migré | écran | payments | `payments/PaymentService.java:911` | YadonyBusinessException | Impossible de créer le paiement. Veuillez réessayer. |
+| migré | écran | payments | `payments/PaymentService.java:975` | YadonyBusinessException | Impossible de préparer la fiche de paiement. Veuillez réessayer. |
+| migré | écran | payments | `payments/PaymentService.java:1022` | YadonyBusinessException | Paiement introuvable |
+| migré | écran | payments | `payments/PaymentService.java:1029` | YadonyBusinessException | Ce paiement ne vous appartient pas |
+| migré | écran | payments | `payments/PaymentService.java:1035` | YadonyBusinessException | Le paiement est déjà confirmé, l'option d'enregistrement ne peut plus changer |
+| migré | écran | payments | `payments/PaymentService.java:1059` | YadonyBusinessException | Impossible de mettre à jour l'option d'enregistrement de la carte |
+| migré | écran | payments | `payments/PaymentService.java:1467` | YadonyBusinessException | Bid introuvable |
+| migré | écran | payments | `payments/PaymentService.java:1541` | YadonyBusinessException | Impossible de vérifier le paiement auprès de Stripe |
+| migré | écran | payments | `payments/PaymentService.java:1643` | YadonyBusinessException | Vous n'êtes pas autorisé à accéder à ce paiement |
+| migré | écran | payments | `payments/PaymentService.java:1666` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/PaymentService.java:1773` | YadonyBusinessException | Impossible de vérifier ou d'annuler le paiement existant auprès de Stripe |
+| migré | écran | payments | `payments/PaymentService.java:2150` | YadonyBusinessException | Sender introuvable |
+| migré | écran | payments | `payments/PaymentService.java:2159` | YadonyBusinessException | La zone CFA n'accepte pas le paiement par carte pour un colis. |
+| migré | écran | payments | `payments/PaymentService.java:2165` | YadonyBusinessException | Voyageur introuvable |
+| migré | écran | payments | `payments/PaymentService.java:2187` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
+| migré | écran | payments | `payments/PaymentService.java:2235` | YadonyBusinessException | Le paiement pour cette négociation a déjà été effectué |
+| migré | écran | payments | `payments/PaymentService.java:2262` | YadonyBusinessException | Le paiement pour cette négociation a déjà été effectué |
+| migré | écran | payments | `payments/PaymentService.java:2357` | YadonyBusinessException | Échec création PaymentIntent :  |
 | reste | écran | payments | `payments/PaymentStripeResyncService.java:160` | YadonyBusinessException | Ce paiement n'a pas de PaymentIntent Stripe : rien à resynchroniser |
 | reste | écran | payments | `payments/PaymentStripeResyncService.java:203` | YadonyBusinessException | ) : rien n'a été écrit,  / le paiement reste en séquestre |
 | reste | écran | payments | `payments/PaymentStripeResyncService.java:264` | YadonyBusinessException | Paiement introuvable |
@@ -612,30 +613,30 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/amendment/BidAmendmentService.java:884` | YadonyBusinessException | Cette modification n'attend plus de réponse |
 | reste | écran | payments | `payments/cash/CashCommissionController.java:105` | YadonyBusinessException | Utilisateur introuvable |
 | reste | écran | payments | `payments/cash/CashCommissionController.java:112` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:358` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:376` | YadonyBusinessException | Le setup intent n'a pas encore de méthode de paiement attachée |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:385` | YadonyBusinessException | La méthode de paiement fournie n'est pas une carte |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:358` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:376` | YadonyBusinessException | Le setup intent n'a pas encore de méthode de paiement attachée |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:385` | YadonyBusinessException | La méthode de paiement fournie n'est pas une carte |
 | reste | indirect | payments | `payments/cash/CashCommissionService.java:396` | RuntimeException | Impossible de récupérer les données Stripe |
 | reste | écran | payments | `payments/cash/CashCommissionService.java:544` | CommissionChargeFailedException | Erreur Stripe lors du débit de commission |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:881` | YadonyBusinessException | Ce fil de négociation ne vous appartient pas |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1214` | YadonyBusinessException | Devise de prélèvement inconnue |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1243` | YadonyBusinessException | Demande introuvable |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1246` | YadonyBusinessException | Ce trajet ne vous appartient pas |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1250` | YadonyBusinessException | Demande introuvable |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1253` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1257` | YadonyBusinessException | Ce trajet ne vous appartient pas |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:881` | YadonyBusinessException | Ce fil de négociation ne vous appartient pas |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1214` | YadonyBusinessException | Devise de prélèvement inconnue |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1243` | YadonyBusinessException | Demande introuvable |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1246` | YadonyBusinessException | Ce trajet ne vous appartient pas |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1250` | YadonyBusinessException | Demande introuvable |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1253` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1257` | YadonyBusinessException | Ce trajet ne vous appartient pas |
 | reste | écran | payments | `payments/cash/CashCommissionService.java:1261` | InvalidPaymentMethodForAnnouncementException | Cette annonce n'accepte pas le paiement en espèces |
 | reste | écran | payments | `payments/cash/CashCommissionService.java:1265` | InvalidPaymentMethodForAnnouncementException | Ce bid n'est pas un bid cash |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1278` | YadonyBusinessException | Cette demande n'attend plus de réponse |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1294` | YadonyBusinessException | Ce trajet n'accepte plus de colis |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1307` | YadonyBusinessException | Capacité insuffisante pour accepter cette demande |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1424` | YadonyBusinessException | Impossible de vérifier le paiement par carte en cours de cette commission |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1444` | YadonyBusinessException | Un paiement par carte de cette commission est encore en cours. Réessayez dans un instant. |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1458` | YadonyBusinessException | Demande introuvable |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1461` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1464` | YadonyBusinessException | Ce trajet ne vous appartient pas |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1468` | YadonyBusinessException | Cette demande n'est plus en attente de réponse |
-| reste | écran | payments | `payments/cash/CashCommissionService.java:1492` | YadonyBusinessException | Ce trajet ne vous appartient pas |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1278` | YadonyBusinessException | Cette demande n'attend plus de réponse |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1294` | YadonyBusinessException | Ce trajet n'accepte plus de colis |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1307` | YadonyBusinessException | Capacité insuffisante pour accepter cette demande |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1424` | YadonyBusinessException | Impossible de vérifier le paiement par carte en cours de cette commission |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1444` | YadonyBusinessException | Un paiement par carte de cette commission est encore en cours. Réessayez dans un instant. |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1458` | YadonyBusinessException | Demande introuvable |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1461` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1464` | YadonyBusinessException | Ce trajet ne vous appartient pas |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1468` | YadonyBusinessException | Cette demande n'est plus en attente de réponse |
+| migré | écran | payments | `payments/cash/CashCommissionService.java:1492` | YadonyBusinessException | Ce trajet ne vous appartient pas |
 | reste | écran | payments | `payments/cash/WalletCommissionCollector.java:449` | YadonyBusinessException | Devise de prélèvement inconnue |
 | reste | indirect | payments | `payments/cash/WalletCommissionCollector.java:465` | IllegalStateException | Commission non couverte par les portefeuilles : aucun débit |
 | reste | écran | payments | `payments/currency/ExchangeRateLookup.java:33` | YadonyBusinessException | Aucun taux de change n'est configure pour la devise  |
@@ -645,34 +646,34 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/currency/ExchangeRateUpdateService.java:145` | YadonyBusinessException | Le taux de change est obligatoire |
 | reste | écran | payments | `payments/currency/ExchangeRateUpdateService.java:150` | YadonyBusinessException | Le taux de change doit etre strictement positif |
 | reste | écran | payments | `payments/currency/ExchangeRateUpdateService.java:156` | YadonyBusinessException | Le taux de change depasse la borne maximale autorisee ( |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyAcceptedOperatorsService.java:41` | YadonyBusinessException | Voyageur introuvable |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyAccountService.java:163` | YadonyBusinessException | Numéro de téléphone invalide pour le versement mobile money. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyAccountService.java:173` | YadonyBusinessException | Indiquez le numéro mobile money qui recevra vos versements. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyAccountService.java:253` | YadonyBusinessException | Utilisateur introuvable :  |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:188` | YadonyBusinessException | Ce trajet ne vous appartient pas |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:191` | YadonyBusinessException | Ce colis n'est pas payé en mobile money |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:203` | YadonyBusinessException | Ce colis n'est plus en attente de réponse |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:217` | YadonyBusinessException | Votre compte de versement est en  / , ce trajet est en  |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:225` | YadonyBusinessException | Ce trajet n'accepte plus de colis |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:232` | YadonyBusinessException | Capacité insuffisante pour accepter cette demande |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:404` | YadonyBusinessException | Indiquez le numéro mobile money qui paiera. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:421` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:424` | YadonyBusinessException | Ce paiement n'est plus en attente ( |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:430` | YadonyBusinessException | Le délai de paiement est dépassé. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:465` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyAcceptedOperatorsService.java:41` | YadonyBusinessException | Voyageur introuvable |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyAccountService.java:163` | YadonyBusinessException | Numéro de téléphone invalide pour le versement mobile money. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyAccountService.java:173` | YadonyBusinessException | Indiquez le numéro mobile money qui recevra vos versements. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyAccountService.java:253` | YadonyBusinessException | Utilisateur introuvable :  |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:188` | YadonyBusinessException | Ce trajet ne vous appartient pas |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:191` | YadonyBusinessException | Ce colis n'est pas payé en mobile money |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:203` | YadonyBusinessException | Ce colis n'est plus en attente de réponse |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:217` | YadonyBusinessException | Votre compte de versement est en  / , ce trajet est en  |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:225` | YadonyBusinessException | Ce trajet n'accepte plus de colis |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:232` | YadonyBusinessException | Capacité insuffisante pour accepter cette demande |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:404` | YadonyBusinessException | Indiquez le numéro mobile money qui paiera. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:421` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:424` | YadonyBusinessException | Ce paiement n'est plus en attente ( |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:430` | YadonyBusinessException | Le délai de paiement est dépassé. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:465` | YadonyBusinessException | Vous n'êtes pas l'expéditeur de ce colis |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:556` | IllegalStateException | Paiement introuvable :  |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:567` | IllegalStateException | Bid introuvable :  |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:583` | IllegalStateException | Annonce introuvable :  |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:623` | IllegalStateException | Paiement PAWAPAY introuvable pour le bid  |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:626` | IllegalStateException | Deposit pawaPay COMPLETED introuvable pour le paiement  |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:864` | YadonyBusinessException | Vous n'avez pas accès à ce paiement |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyBidPricing.java:142` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyCountriesController.java:37` | YadonyBusinessException | L'opération doit être DEPOSIT ou PAYOUT. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:142` | YadonyBusinessException | Un paiement par carte est déjà en cours sur cette négociation. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:149` | YadonyBusinessException | Ce paiement n'est plus en attente ( |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:202` | YadonyBusinessException | Ce paiement n'est plus en attente ( |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:206` | YadonyBusinessException | Le délai de paiement est dépassé. |
-| reste | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:280` | YadonyBusinessException | Indiquez le numéro mobile money qui paiera. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPaymentService.java:864` | YadonyBusinessException | Vous n'avez pas accès à ce paiement |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyBidPricing.java:142` | YadonyBusinessException | Le montant calculé est invalide (≤ 0) |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyCountriesController.java:37` | YadonyBusinessException | L'opération doit être DEPOSIT ou PAYOUT. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:142` | YadonyBusinessException | Un paiement par carte est déjà en cours sur cette négociation. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:149` | YadonyBusinessException | Ce paiement n'est plus en attente ( |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:202` | YadonyBusinessException | Ce paiement n'est plus en attente ( |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:206` | YadonyBusinessException | Le délai de paiement est dépassé. |
+| migré | écran | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:280` | YadonyBusinessException | Indiquez le numéro mobile money qui paiera. |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:365` | IllegalStateException | Paiement PAWAPAY introuvable pour le fil  |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:368` | IllegalStateException | Deposit pawaPay COMPLETED introuvable pour le paiement  |
 | reste | indirect | payments | `payments/mobilemoney/MobileMoneyNegotiationPaymentService.java:384` | IllegalStateException | Séquestre sans deposit COMPLETED : paiement  |
@@ -717,50 +718,50 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/supplement/BidSupplementAdminService.java:129` | YadonyBusinessException | Supplément en espèces : l'argent n'est jamais passé par Yadony, rien à verser ni à rembourser |
 | reste | écran | payments | `payments/supplement/BidSupplementAdminService.java:137` | YadonyBusinessException | Supplément introuvable |
 | reste | indirect | payments | `payments/supplement/BidSupplementCardPayouts.java:113` | IllegalStateException | charge du supplément introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:121` | YadonyBusinessException | Le paiement du supplément est en cours de traitement |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:146` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:151` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:208` | YadonyBusinessException | Expéditeur introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:239` | YadonyBusinessException | Impossible de créer le paiement du supplément. Veuillez réessayer. |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:255` | YadonyBusinessException | Impossible de vérifier le paiement auprès de Stripe |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:273` | YadonyBusinessException | Demande de supplément introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementCardRail.java:278` | YadonyBusinessException | Cette demande de supplément n'attend plus de paiement |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:121` | YadonyBusinessException | Le paiement du supplément est en cours de traitement |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:146` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:151` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:208` | YadonyBusinessException | Expéditeur introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:239` | YadonyBusinessException | Impossible de créer le paiement du supplément. Veuillez réessayer. |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:255` | YadonyBusinessException | Impossible de vérifier le paiement auprès de Stripe |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:273` | YadonyBusinessException | Demande de supplément introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementCardRail.java:278` | YadonyBusinessException | Cette demande de supplément n'attend plus de paiement |
 | reste | indirect | payments | `payments/supplement/BidSupplementCardRefunds.java:68` | IllegalStateException | PaymentIntent du supplément absent |
-| reste | écran | payments | `payments/supplement/BidSupplementCashRail.java:242` | YadonyBusinessException | Le débit de la commission n'a pas pu aboutir. Veuillez réessayer. |
-| reste | écran | payments | `payments/supplement/BidSupplementCashRail.java:253` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementCashRail.java:258` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
-| reste | écran | payments | `payments/supplement/BidSupplementCashRail.java:279` | YadonyBusinessException | Impossible de vérifier le paiement auprès de Stripe |
-| reste | écran | payments | `payments/supplement/BidSupplementCashRail.java:368` | YadonyBusinessException | Votre carte commission a été refusée : rien n'a été prélevé et la demande est annulée |
-| reste | écran | payments | `payments/supplement/BidSupplementCashRail.java:374` | YadonyBusinessException | Demande de supplément introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementController.java:143` | YadonyBusinessException | Un token Firebase valide est requis |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:102` | YadonyBusinessException | Ce supplément ne se paie pas en mobile money |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:116` | YadonyBusinessException | Ce colis n'attend plus de réponse à un supplément |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:129` | YadonyBusinessException | Le délai de réponse à cette demande de supplément est dépassé |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:332` | YadonyBusinessException | Demande de supplément introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:337` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:342` | YadonyBusinessException | Cette demande de supplément n'attend plus de paiement |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:237` | YadonyBusinessException | Indiquez le numéro mobile money qui paiera. |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:259` | YadonyBusinessException | Ce supplément ne se paie pas en mobile money |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:354` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:360` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:362` | YadonyBusinessException | Voyageur introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementCashRail.java:242` | YadonyBusinessException | Le débit de la commission n'a pas pu aboutir. Veuillez réessayer. |
+| migré | écran | payments | `payments/supplement/BidSupplementCashRail.java:253` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementCashRail.java:258` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
+| migré | écran | payments | `payments/supplement/BidSupplementCashRail.java:279` | YadonyBusinessException | Impossible de vérifier le paiement auprès de Stripe |
+| migré | écran | payments | `payments/supplement/BidSupplementCashRail.java:368` | YadonyBusinessException | Votre carte commission a été refusée : rien n'a été prélevé et la demande est annulée |
+| migré | écran | payments | `payments/supplement/BidSupplementCashRail.java:374` | YadonyBusinessException | Demande de supplément introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementController.java:143` | YadonyBusinessException | Un token Firebase valide est requis |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:102` | YadonyBusinessException | Ce supplément ne se paie pas en mobile money |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:116` | YadonyBusinessException | Ce colis n'attend plus de réponse à un supplément |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:129` | YadonyBusinessException | Le délai de réponse à cette demande de supplément est dépassé |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:332` | YadonyBusinessException | Demande de supplément introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:337` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyLedger.java:342` | YadonyBusinessException | Cette demande de supplément n'attend plus de paiement |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:237` | YadonyBusinessException | Indiquez le numéro mobile money qui paiera. |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:259` | YadonyBusinessException | Ce supplément ne se paie pas en mobile money |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:354` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:360` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementMobileMoneyRail.java:362` | YadonyBusinessException | Voyageur introuvable |
 | reste | indirect | payments | `payments/supplement/BidSupplementPricing.java:38` | IllegalArgumentException | Le net du supplément doit être strictement positif |
-| reste | écran | payments | `payments/supplement/BidSupplementRail.java:54` | YadonyBusinessException | Un supplément n'est pas encore possible avec ce moyen de paiement |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:193` | YadonyBusinessException | Le nombre maximum de demandes de supplément pour ce colis est atteint |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:518` | YadonyBusinessException | Ce colis n'attend plus de réponse à un supplément |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:528` | YadonyBusinessException | Le délai de réponse à cette demande de supplément est dépassé |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:542` | YadonyBusinessException | Le montant du supplément est hors des limites autorisées |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:560` | YadonyBusinessException | La photo doit être une clé de stockage valide pour ce colis |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:576` | YadonyBusinessException | La demande de supplément n'est pas disponible |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:594` | YadonyBusinessException | Utilisateur introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:599` | YadonyBusinessException | Transaction introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:604` | YadonyBusinessException | Annonce introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:609` | YadonyBusinessException | Demande de supplément introuvable |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:635` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:640` | YadonyBusinessException | Cette demande de supplément n'attend plus de réponse |
-| reste | écran | payments | `payments/supplement/BidSupplementService.java:645` | YadonyBusinessException | Une demande de supplément est déjà en cours pour ce colis |
-| reste | écran | payments | `payments/supplement/BidSupplementWindow.java:57` | YadonyBusinessException | Un supplément ne se demande que sur un colis accepté ou remis avant le départ |
-| reste | écran | payments | `payments/supplement/BidSupplementWindow.java:60` | YadonyBusinessException | Le départ est trop proche pour demander un supplément |
+| migré | écran | payments | `payments/supplement/BidSupplementRail.java:54` | YadonyBusinessException | Un supplément n'est pas encore possible avec ce moyen de paiement |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:193` | YadonyBusinessException | Le nombre maximum de demandes de supplément pour ce colis est atteint |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:518` | YadonyBusinessException | Ce colis n'attend plus de réponse à un supplément |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:528` | YadonyBusinessException | Le délai de réponse à cette demande de supplément est dépassé |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:542` | YadonyBusinessException | Le montant du supplément est hors des limites autorisées |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:560` | YadonyBusinessException | La photo doit être une clé de stockage valide pour ce colis |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:576` | YadonyBusinessException | La demande de supplément n'est pas disponible |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:594` | YadonyBusinessException | Utilisateur introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:599` | YadonyBusinessException | Transaction introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:604` | YadonyBusinessException | Annonce introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:609` | YadonyBusinessException | Demande de supplément introuvable |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:635` | YadonyBusinessException | Vous n'êtes pas partie à ce colis |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:640` | YadonyBusinessException | Cette demande de supplément n'attend plus de réponse |
+| migré | écran | payments | `payments/supplement/BidSupplementService.java:645` | YadonyBusinessException | Une demande de supplément est déjà en cours pour ce colis |
+| migré | écran | payments | `payments/supplement/BidSupplementWindow.java:57` | YadonyBusinessException | Un supplément ne se demande que sur un colis accepté ou remis avant le départ |
+| migré | écran | payments | `payments/supplement/BidSupplementWindow.java:60` | YadonyBusinessException | Le départ est trop proche pour demander un supplément |
 | reste | écran | payments | `payments/wallet/WalletAdminAdjustmentService.java:212` | YadonyBusinessException | Une correction doit être approuvée par un autre admin que son auteur |
 | reste | écran | payments | `payments/wallet/WalletAdminAdjustmentService.java:289` | YadonyBusinessException | Solde gelé : une demande de remboursement est en cours sur cette devise |
 | reste | écran | payments | `payments/wallet/WalletAdminAdjustmentService.java:295` | YadonyBusinessException | , montant à débiter :  |
@@ -774,18 +775,18 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/wallet/WalletExternalRefundService.java:112` | YadonyBusinessException | Indiquez comment le solde a été régularisé ( /  caractères au plus) |
 | reste | écran | payments | `payments/wallet/WalletExternalRefundService.java:118` | YadonyBusinessException | Gel introuvable |
 | reste | écran | payments | `payments/wallet/WalletExternalRefundService.java:121` | YadonyBusinessException | Ce gel a déjà été levé |
-| reste | écran | payments | `payments/wallet/WalletMobileMoneyTopupService.java:167` | YadonyBusinessException | Recharge introuvable. |
-| reste | écran | payments | `payments/wallet/WalletMobileMoneyTopupService.java:235` | YadonyBusinessException | Indiquez le numéro mobile money qui paie la recharge. |
-| reste | écran | payments | `payments/wallet/WalletMobileMoneyTopupService.java:242` | YadonyBusinessException | Numéro de téléphone invalide pour la recharge. |
+| migré | écran | payments | `payments/wallet/WalletMobileMoneyTopupService.java:167` | YadonyBusinessException | Recharge introuvable. |
+| migré | écran | payments | `payments/wallet/WalletMobileMoneyTopupService.java:235` | YadonyBusinessException | Indiquez le numéro mobile money qui paie la recharge. |
+| migré | écran | payments | `payments/wallet/WalletMobileMoneyTopupService.java:242` | YadonyBusinessException | Numéro de téléphone invalide pour la recharge. |
 | reste | indirect | payments | `payments/wallet/WalletRefundRail.java:27` | IllegalArgumentException | paymentRef n'est pas un rail pawaPay :  |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:78` | YadonyBusinessException | Aucun solde à rembourser |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:276` | YadonyBusinessException | Demande introuvable |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:285` | YadonyBusinessException | Un remboursement mobile money est en cours pour cette demande :  / attendez son issue avant de la résoudre à l |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:290` | YadonyBusinessException | Cette demande a déjà été traitée |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:367` | YadonyBusinessException | Le montant versé doit être strictement positif |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:372` | YadonyBusinessException | Le montant versé dépasse le montant de la demande ( |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:380` | YadonyBusinessException | Le montant versé a trop de décimales pour la devise  |
-| reste | écran | payments | `payments/wallet/WalletRefundRequestService.java:394` | YadonyBusinessException | La note dépasse  /  caractères |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:78` | YadonyBusinessException | Aucun solde à rembourser |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:276` | YadonyBusinessException | Demande introuvable |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:285` | YadonyBusinessException | Un remboursement mobile money est en cours pour cette demande :  / attendez son issue avant de la résoudre à l |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:290` | YadonyBusinessException | Cette demande a déjà été traitée |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:367` | YadonyBusinessException | Le montant versé doit être strictement positif |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:372` | YadonyBusinessException | Le montant versé dépasse le montant de la demande ( |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:380` | YadonyBusinessException | Le montant versé a trop de décimales pour la devise  |
+| migré | écran | payments | `payments/wallet/WalletRefundRequestService.java:394` | YadonyBusinessException | La note dépasse  /  caractères |
 | reste | écran | payments | `payments/wallet/WalletRefundRetryService.java:364` | YadonyBusinessException | Le montant à verser doit être strictement positif |
 | reste | écran | payments | `payments/wallet/WalletRefundRetryService.java:369` | YadonyBusinessException | Le montant a trop de décimales pour la devise  |
 | reste | écran | payments | `payments/wallet/WalletRefundRetryService.java:374` | YadonyBusinessException | Le montant dépasse le montant dû ( |
@@ -794,16 +795,16 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | reste | écran | payments | `payments/wallet/WalletRefundRetryService.java:409` | YadonyBusinessException | Demande introuvable |
 | reste | écran | payments | `payments/wallet/WalletRefundRetryService.java:419` | YadonyBusinessException | Un remboursement mobile money est déjà en cours pour cette demande |
 | reste | écran | payments | `payments/wallet/WalletRefundRetryService.java:424` | YadonyBusinessException | Solde du wallet pawaPay illisible : réessayez dans quelques instants |
-| reste | écran | payments | `payments/wallet/WalletService.java:87` | YadonyBusinessException | Solde gelé - une demande de remboursement est en cours sur cette devise |
-| reste | écran | payments | `payments/wallet/WalletService.java:94` | YadonyBusinessException | Solde bloqué : une recharge de cette devise fait l'objet d'une contestation  |
-| reste | écran | payments | `payments/wallet/WalletService.java:104` | YadonyBusinessException | Solde bloqué : une recharge de cette devise vous a déjà été remboursée sur  |
+| migré | écran | payments | `payments/wallet/WalletService.java:87` | YadonyBusinessException | Solde gelé - une demande de remboursement est en cours sur cette devise |
+| migré | écran | payments | `payments/wallet/WalletService.java:94` | YadonyBusinessException | Solde bloqué : une recharge de cette devise fait l'objet d'une contestation  |
+| migré | écran | payments | `payments/wallet/WalletService.java:104` | YadonyBusinessException | Solde bloqué : une recharge de cette devise vous a déjà été remboursée sur  |
 | reste | indirect | payments | `payments/wallet/WalletService.java:192` | IllegalStateException | Wallet introuvable après création : user= |
 | reste | indirect | payments | `payments/wallet/WalletService.java:275` | IllegalStateException | Wallet introuvable après création : user= |
 | reste | indirect | payments | `payments/wallet/WalletService.java:289` | IllegalArgumentException |  invalide :  |
-| reste | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:108` | YadonyBusinessException | Impossible de préparer la recharge du wallet. Veuillez réessayer. |
-| reste | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:124` | YadonyBusinessException | Le rechargement par mobile money n'est plus disponible pour le moment.  |
-| reste | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:172` | YadonyBusinessException | Impossible de préparer la recharge du wallet. Veuillez réessayer. |
-| reste | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:183` | YadonyBusinessException | Une recharge par carte est limitée à  |
+| migré | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:108` | YadonyBusinessException | Impossible de préparer la recharge du wallet. Veuillez réessayer. |
+| migré | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:124` | YadonyBusinessException | Le rechargement par mobile money n'est plus disponible pour le moment.  |
+| migré | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:172` | YadonyBusinessException | Impossible de préparer la recharge du wallet. Veuillez réessayer. |
+| migré | écran | payments | `payments/wallet/WalletTopupOrchestrator.java:183` | YadonyBusinessException | Une recharge par carte est limitée à  |
 | reste | indirect | payments | `payments/wallet/fees/PawapayRefundSafeAmount.java:68` | IllegalArgumentException | Taux de frais négatif :  |
 | reste | indirect | payments | `payments/wallet/topupcode/TopupCodeHasher.java:52` | IllegalStateException | TOPUP_CODE_HMAC_KEY est obligatoire hors dev/test (profils actifs :  |
 | reste | indirect | payments | `payments/wallet/topupcode/TopupCodeHasher.java:58` | IllegalStateException | TOPUP_CODE_HMAC_KEY trop courte :  /  caractères au moins (openssl rand -hex 32) |

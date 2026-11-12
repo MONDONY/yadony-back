@@ -160,8 +160,7 @@ public class MobileMoneyAccountService {
             try {
                 return new PhoneSource(Msisdn.normalize(providedPhone), "provided");
             } catch (IllegalArgumentException e) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone",
-                        "Mobile Money Invalid Phone", "Numéro de téléphone invalide pour le versement mobile money.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-invalid-phone", "problem.mobile-money-invalid-phone.payout");
             }
         }
         if (allowStored && user.getMobileMoneyMsisdn() != null && !user.getMobileMoneyMsisdn().isBlank()) {
@@ -170,8 +169,7 @@ public class MobileMoneyAccountService {
         String firebasePhone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
         if (firebasePhone == null || firebasePhone.isBlank()) {
             log.warn("Numéro mobile money introuvable pour {} : aucun numéro vérifié ni saisi", user.getId());
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
-                    "Phone Required", "Indiquez le numéro mobile money qui recevra vos versements.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required", "problem.mobile-money-phone-required.indiquez-numero-mobile-money");
         }
         return new PhoneSource(firebasePhone, "firebase");
     }
@@ -245,12 +243,11 @@ public class MobileMoneyAccountService {
     /** Rejet métier (422) : trace la branche d'échec pour le support, sans jamais loguer le numéro. */
     private static YadonyBusinessException unsupported(UUID userId, String detail) {
         log.warn("Activation mobile money refusée pour {} : {}", userId, detail);
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-unsupported",
-                "Mobile Money Account Unsupported", detail);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-unsupported",
+                "problem.mobile-money-account-unsupported.resolved", detail);
     }
 
     private static YadonyBusinessException notFound(UUID userId) {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
-                "Utilisateur introuvable : " + userId);
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.utilisateur-introuvable", String.valueOf(userId));
     }
 }

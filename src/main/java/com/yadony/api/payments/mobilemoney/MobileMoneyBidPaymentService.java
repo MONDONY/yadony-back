@@ -181,15 +181,14 @@ public class MobileMoneyBidPaymentService {
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
         }
-        BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+        BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElseThrow(() -> notFound("bid-not-found", "problem.not-found.bid-request"));
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId())
-                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+                .orElseThrow(() -> notFound("announcement-not-found", "problem.not-found.announcement"));
         if (!announcement.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Ce trajet ne vous appartient pas");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.trajet-vous-appartient-pas");
         }
         if (bid.getPaymentMethod() != PaymentMethod.MOBILE_MONEY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-payment-method",
-                    "Invalid Payment Method", "Ce colis n'est pas payé en mobile money");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-payment-method", "problem.invalid-payment-method.not-mobile-money");
         }
         // Filtré par rail comme les deux autres lectures de ce même paiement dans ce fichier
         // (initiateDeposit, status) — un paiement d'un autre rail sur ce bid (état incohérent,
@@ -200,13 +199,11 @@ public class MobileMoneyBidPaymentService {
             return status(bid, announcement, existing, operations.findLatest(existing.get().getId(), PawapayOperationKind.DEPOSIT));
         }
         if (bid.getStatus() != BidStatus.PENDING) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "invalid-status", "Invalid Status",
-                    "Ce colis n'est plus en attente de réponse");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "invalid-status", "problem.invalid-status.colis-est-plus-attente");
         }
-        UserEntity traveler = userRepository.findById(travelerId).orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+        UserEntity traveler = userRepository.findById(travelerId).orElseThrow(() -> notFound("user-not-found", "problem.not-found.traveler"));
         if (!traveler.hasActiveMobileMoney()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-required",
-                    "Mobile Money Account Required", "Activez votre compte de versement mobile money avant d'accepter.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-account-required", "problem.mobile-money-account-required");
         }
         // Le compte de versement du voyageur a pu être désactivé puis réactivé dans une autre
         // devise depuis la création du bid (garde de BidService.resolvePaymentMethodFor) —
@@ -214,23 +211,20 @@ public class MobileMoneyBidPaymentService {
         // devise et pas seulement l'activité du compte. Sans cette ligne : le dépôt réussirait
         // et le versement serait rejeté à la livraison, argent encaissé, voyageur impayable.
         if (!traveler.canReceiveMobileMoney(announcement.getCurrency())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-currency-mismatch",
-                    "Mobile Money Currency Mismatch",
-                    (traveler.getMobileMoneyCurrencyList().size() > 1
-                            ? "Vos comptes de versement sont en " : "Votre compte de versement est en ")
-                            + String.join(", ", traveler.getMobileMoneyCurrencyList())
-                            + ", ce trajet est en " + announcement.getCurrency() + ".");
+            boolean severalAccounts = traveler.getMobileMoneyCurrencyList().size() > 1;
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-currency-mismatch",
+                    severalAccounts ? "problem.mobile-money-currency-mismatch.several"
+                            : "problem.mobile-money-currency-mismatch.single",
+                    String.join(", ", traveler.getMobileMoneyCurrencyList()), announcement.getCurrency());
         }
         if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "announcement-not-accepting",
-                    "Announcement Not Accepting", "Ce trajet n'accepte plus de colis");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-accepting", "problem.announcement-not-accepting.no-parcels");
         }
         // FLUTTER-GA : acceptation refusée après la date limite de dépôt (fuseau du trajet).
         com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
         boolean kgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
         if (!kgFree && bid.getWeightKg() != null && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "capacity-insufficient", "Insufficient Capacity",
-                    "Capacité insuffisante pour accepter cette demande");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
         }
 
         MobileMoneyBidPricing.Quote quote = pricing.price(bid, announcement);
@@ -296,8 +290,8 @@ public class MobileMoneyBidPaymentService {
     public MobileMoneyPaymentStatusResponse initiateDeposit(UUID bidId, UUID senderId, String phoneOverride, String provider) {
         PaymentEntity payment = paymentRepository.findByBidIdForUpdate(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
-                .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
-        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+                .orElseThrow(() -> notFound("mobile-money-payment-not-found", "problem.mobile-money-payment-not-found.parcel"));
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "problem.not-found.bid-request"));
         assertPayableBySender(bid, payment, senderId);
         // Un deposit vivant ou abouti existe : on le renvoie, on n'en crée pas un second.
         Optional<PawapayOperationEntity> live = operations.findLive(payment.getId(), PawapayOperationKind.DEPOSIT);
@@ -332,7 +326,7 @@ public class MobileMoneyBidPaymentService {
             resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(), provider,
                     "l'initiation du deposit pour le bid " + bidId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw payerUnsupported(payerReason(e, payment.getCurrency()));
+            throw MobileMoneyPayerRefusals.of(e, payment.getCurrency());
         }
         // Couplage (décision produit) : l'expéditeur ne paie que sur un opérateur (code exact, pays
         // compris) où le voyageur a un compte de versement dans la devise du colis : il sera versé
@@ -346,7 +340,7 @@ public class MobileMoneyBidPaymentService {
         PawapayProviderConfig.Limits deposit = resolved.config().deposit();
         if (deposit.minAmount() != null && payment.getAmount().compareTo(deposit.minAmount()) < 0
                 || deposit.maxAmount() != null && payment.getAmount().compareTo(deposit.maxAmount()) > 0) {
-            throw payerUnsupported("Montant hors des limites de " + resolved.providerLabel() + ".");
+            throw MobileMoneyPayerRefusals.amountOutOfRange(resolved.providerLabel());
         }
         if (!resolved.msisdn().equals(bid.getMobileMoneyPhone())) {
             bid.setMobileMoneyPhone(resolved.msisdn());
@@ -373,8 +367,8 @@ public class MobileMoneyBidPaymentService {
                 Map.of("operationId", op.getId().toString(), "provider", op.getProvider(),
                         "msisdnMasked", op.getMsisdnMasked(), "status", op.getStatus().name())));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", views.rejectedDetail(op));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
+                    "problem.mobile-money-deposit-rejected.resolved", views.rejectedDetail(op));
         }
         return status(bid, null, Optional.of(payment), Optional.of(op));
     }
@@ -384,7 +378,7 @@ public class MobileMoneyBidPaymentService {
             try {
                 return Msisdn.normalize(phoneOverride);
             } catch (IllegalArgumentException e) {
-                throw payerUnsupported("Numéro de téléphone invalide.");
+                throw MobileMoneyPayerRefusals.invalidPhone();
             }
         }
         Optional<UserEntity> sender = userRepository.findById(bid.getSenderId());
@@ -401,8 +395,7 @@ public class MobileMoneyBidPaymentService {
         String firebasePhone = sender
                 .map(u -> firebaseContact.getContact(u.getFirebaseUid()).phoneNumber()).orElse(null);
         if (firebasePhone == null || firebasePhone.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
-                    "Phone Required", "Indiquez le numéro mobile money qui paiera.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required", "problem.mobile-money-phone-required");
         }
         // Ce numéro vient de Firebase, pas d'une saisie de CETTE requête, mais reste une valeur
         // externe non garantie dans les bornes de Msisdn.normalize (8-15 chiffres). Un numéro
@@ -411,46 +404,34 @@ public class MobileMoneyBidPaymentService {
         try {
             return Msisdn.normalize(firebasePhone);
         } catch (IllegalArgumentException e) {
-            throw payerUnsupported("Le numéro enregistré n'est pas exploitable. Indiquez un autre numéro.");
+            throw MobileMoneyPayerRefusals.savedPhoneUnusable();
         }
     }
 
     /** Gardes communes à l'initiation et au catalogue payeur : propriété, paiement en attente, fenêtre ouverte. */
     private static void assertPayableBySender(BidEntity bid, PaymentEntity payment, UUID senderId) {
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-etes-pas-expediteur");
         }
         if (payment.getStatus() != PaymentStatus.PENDING) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "mobile-money-payment-not-pending",
-                    "Payment Not Pending", "Ce paiement n'est plus en attente (" + payment.getStatus() + ")");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "mobile-money-payment-not-pending", "problem.mobile-money-payment-not-pending", String.valueOf(payment.getStatus()));
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (bid.getStatus() != BidStatus.AWAITING_PAYMENT || bid.getAwaitingPaymentExpiresAt() == null
                 || bid.getAwaitingPaymentExpiresAt().isBefore(now)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payment-expired",
-                    "Payment Expired", "Le délai de paiement est dépassé.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payment-expired", "problem.mobile-money-payment-expired");
         }
     }
 
     /** Voyageur d'un bid : le propriétaire de son annonce (comme dans {@link #acceptBid}). */
     private UserEntity travelerOf(BidEntity bid) {
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+                .orElseThrow(() -> notFound("announcement-not-found", "problem.not-found.announcement"));
         return userRepository.findById(announcement.getTravelerId())
-                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+                .orElseThrow(() -> notFound("user-not-found", "problem.not-found.traveler"));
     }
 
     /** Libellé du 422 payeur pour un numéro reconnu mais inexploitable. */
-    private static String payerReason(PawapayProviderResolver.UnsupportedNumberException e, String currency) {
-        return switch (e.reason()) {
-            case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
-            case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
-            case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + currency + ".";
-            case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
-            case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
-        };
-    }
-
     // ── Opérateurs acceptés par le voyageur ─────────────────────────────────
 
     /**
@@ -460,18 +441,18 @@ public class MobileMoneyBidPaymentService {
      */
     @Transactional(readOnly = true)
     public MobileMoneyAcceptedOperatorsResponse acceptedOperators(UUID bidId, UUID senderId) {
-        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "problem.not-found.bid-request"));
         if (!bid.getSenderId().equals(senderId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'êtes pas l'expéditeur de ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-etes-pas-expediteur");
         }
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+                .orElseThrow(() -> notFound("announcement-not-found", "problem.not-found.announcement"));
         String currency = paymentRepository.findByBidId(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
                 .map(PaymentEntity::getCurrency)
                 .orElse(announcement.getCurrency());
         UserEntity traveler = userRepository.findById(announcement.getTravelerId())
-                .orElseThrow(() -> notFound("user-not-found", "Voyageur introuvable"));
+                .orElseThrow(() -> notFound("user-not-found", "problem.not-found.traveler"));
         return acceptedOperators.forTraveler(traveler, currency);
     }
 
@@ -487,8 +468,8 @@ public class MobileMoneyBidPaymentService {
     public MobileMoneyPayerProvidersResponse providersForPayer(UUID bidId, UUID senderId, String phoneOverride) {
         PaymentEntity payment = paymentRepository.findByBidId(bidId)
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
-                .orElseThrow(() -> notFound("mobile-money-payment-not-found", "Aucun paiement mobile money pour ce colis"));
-        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+                .orElseThrow(() -> notFound("mobile-money-payment-not-found", "problem.mobile-money-payment-not-found.parcel"));
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "problem.not-found.bid-request"));
         assertPayableBySender(bid, payment, senderId);
         if (!props.enabled()) {
             throw PawapayErrors.disabled();
@@ -500,7 +481,7 @@ public class MobileMoneyBidPaymentService {
             catalogue = providers.catalogue(msisdn, PawapayOperationKind.DEPOSIT, payment.getCurrency(),
                     "le catalogue payeur du bid " + bidId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw payerUnsupported(payerReason(e, payment.getCurrency()));
+            throw MobileMoneyPayerRefusals.of(e, payment.getCurrency());
         }
         Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), payment.getCurrency());
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
@@ -855,13 +836,13 @@ public class MobileMoneyBidPaymentService {
 
     @Transactional(readOnly = true)
     public MobileMoneyPaymentStatusResponse status(UUID bidId, UUID callerId) {
-        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "Demande introuvable"));
+        BidEntity bid = bidRepository.findById(bidId).orElseThrow(() -> notFound("bid-not-found", "problem.not-found.bid-request"));
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> notFound("announcement-not-found", "Annonce introuvable"));
+                .orElseThrow(() -> notFound("announcement-not-found", "problem.not-found.announcement"));
         boolean isSender = bid.getSenderId().equals(callerId);
         boolean isTraveler = announcement.getTravelerId().equals(callerId);
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Vous n'avez pas accès à ce paiement");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-avez-pas-acces");
         }
         Optional<PaymentEntity> payment = paymentRepository.findByBidId(bidId).filter(p -> p.getRail() == PaymentRail.PAWAPAY);
         Optional<PawapayOperationEntity> deposit = payment.flatMap(p -> operations.findLatest(p.getId(), PawapayOperationKind.DEPOSIT));
@@ -878,13 +859,13 @@ public class MobileMoneyBidPaymentService {
                 payment.map(PaymentEntity::getCurrency).orElse(announcement != null ? announcement.getCurrency() : null), view);
     }
 
-    private static YadonyBusinessException notFound(String code, String detail) {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, code, "Not Found", detail);
+    private static YadonyBusinessException notFound(String code, String messageKey) {
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, code, messageKey);
     }
 
     private static YadonyBusinessException payerUnsupported(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payer-unsupported",
-                "Mobile Money Payer Unsupported", detail);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payer-unsupported",
+                "problem.mobile-money-payer-unsupported.resolved", detail);
     }
 
 }

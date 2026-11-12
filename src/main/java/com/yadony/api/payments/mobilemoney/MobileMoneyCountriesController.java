@@ -34,8 +34,7 @@ public class MobileMoneyCountriesController {
         return switch (op) {
             case "DEPOSIT" -> PawapayOperationKind.DEPOSIT;
             case "PAYOUT" -> PawapayOperationKind.PAYOUT;
-            default -> throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-operation",
-                    "Invalid Operation", "L'opération doit être DEPOSIT ou PAYOUT.");
+            default -> throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-operation", "problem.invalid-operation");
         };
     }
 }

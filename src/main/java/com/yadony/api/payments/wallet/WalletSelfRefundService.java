@@ -488,9 +488,7 @@ public class WalletSelfRefundService {
                 .filter(t -> selected.isEmpty() || selected.contains(t.walletTransactionId()))
                 .toList();
         if (selectedTargets.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-not-refund-eligible", "Unprocessable",
-                    "Aucun montant remboursable sur ce solde");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-not-refund-eligible", "problem.wallet-not-refund-eligible");
         }
 
         // Le ledger interne garde toujours 2 décimales (NUMERIC(10,2)), même pour une devise
@@ -516,9 +514,7 @@ public class WalletSelfRefundService {
             }
         }
         if (scaledTargets.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-not-refund-eligible", "Unprocessable",
-                    "Aucun montant remboursable sur ce solde");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-not-refund-eligible", "problem.wallet-not-refund-eligible");
         }
 
         // Recharges carte ET mobile money dans la même devise (cas atteignable : une recharge

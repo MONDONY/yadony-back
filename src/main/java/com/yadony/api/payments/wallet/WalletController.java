@@ -230,8 +230,7 @@ public class WalletController {
         SupportedCurrency code = currency == null ? null
                 : SupportedCurrency.fromCode(currency.trim().toUpperCase(java.util.Locale.ROOT));
         if (code == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported",
-                    "Currency Unsupported", "Devise non prise en charge");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported.devise-non-prise-charge");
         }
         return code.name();
     }
