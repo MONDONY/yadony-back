@@ -357,6 +357,9 @@ public class PackageRequestService {
         rejectMobileMoneyMethods(req.acceptedPaymentMethods());
         com.yadony.api.matching.TransportMode requestedMode = resolveRequestedMode(req.transportMode());
         transportModeGuard.assertRequestModeAllowed(requestedMode);
+        // Plafond par mode (V380) : 32 kg en avion et « peu importe », tonnes en route et bateau.
+        // Brouillon compris : un brouillon trop lourd pour son mode ne serait jamais publiable.
+        com.yadony.api.matching.WeightLimits.assertRequestWeight(req.weightKg(), requestedMode);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -490,6 +493,9 @@ public class PackageRequestService {
         if (modeProvided && newMode != entity.getTransportMode()) {
             transportModeGuard.assertRequestModeAllowed(newMode);
         }
+        // Le plafond se lit sur le mode APRÈS modification : une demande route de 60 kg passée en
+        // avion est refusée, une demande route modifiée sans mode garde ses tonnes.
+        com.yadony.api.matching.WeightLimits.assertRequestWeight(req.weightKg(), newMode);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -608,6 +614,8 @@ public class PackageRequestService {
         }
         // Un brouillon bateau ou route créé interrupteur allumé ne sort pas une fois l'interrupteur éteint.
         transportModeGuard.assertRequestModeAllowed(entity.getTransportMode());
+        // Règle de poids rejouée : le brouillon a pu être enregistré avant une règle plus stricte.
+        com.yadony.api.matching.WeightLimits.assertRequestWeight(entity.getWeightKg(), entity.getTransportMode());
         requireTargetPrice(entity.getTargetPriceEur());
         long openCount = repository.countBySenderIdAndStatusIn(callerUid,
             List.of(PackageRequestStatus.OPEN, PackageRequestStatus.NEGOTIATING));

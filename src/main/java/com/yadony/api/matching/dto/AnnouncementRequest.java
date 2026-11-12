@@ -3,6 +3,7 @@ package com.yadony.api.matching.dto;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.NotBlank;
@@ -41,6 +42,8 @@ public record AnnouncementRequest(
 
         @NotNull(message = "{validation.trip.available-kg.required}")
         @DecimalMin(value = "1.0", message = "{validation.trip.available-kg.min}")
+        // Maximum technique (NUMERIC(8,2), V380) ; le plafond par mode est au service (WeightLimits).
+        @DecimalMax(value = "999999.99", message = "{validation.trip.available-kg.max}")
         BigDecimal availableKg,
 
         // Nullable en mode MIXED (grille seule) ; validé côté service si mode KG

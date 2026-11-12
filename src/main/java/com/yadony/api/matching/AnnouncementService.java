@@ -1052,6 +1052,9 @@ public class AnnouncementService {
         announcement.setDeliveryAddressLabel(request.deliveryAddress().label());
         announcement.setDeliveryLat(java.math.BigDecimal.valueOf(request.deliveryAddress().lat()));
         announcement.setDeliveryLng(java.math.BigDecimal.valueOf(request.deliveryAddress().lng()));
+        // Plafond par mode (V380) : 999,99 kg en avion, train, autre ; tonnes en route et bateau.
+        // En kilo libre, availableKg est une valeur technique basse : elle passe toujours.
+        WeightLimits.assertTripCapacity(request.availableKg(), request.transportMode());
         announcement.setAvailableKg(request.availableKg());
         announcement.setTotalKg(request.availableKg());
         assertPricePerKgWithinBounds(request.pricePerKg(), announcement.getCurrency());
@@ -1576,6 +1579,8 @@ public class AnnouncementService {
 
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime(), request.transportMode());
+        // Plafond sur le mode APRÈS modification (V380), avant toute écriture.
+        WeightLimits.assertTripCapacity(request.availableKg(), request.transportMode());
 
         // Calculés AVANT d'écraser les villes : une modification qui omet le code pays
         // (l'édition ne le recevait pas du détail) le conserve si la ville n'a pas changé,

@@ -66,6 +66,7 @@ class ServerMessagesGuardTest {
             "matching/AnnouncementController.java",
             "matching/AnnouncementViewService.java",
             "matching/ArrivalRules.java",
+            "matching/WeightLimits.java",
             "matching/BidCheckoutService.java",
             "matching/BidContentRules.java",
             "matching/BidController.java",

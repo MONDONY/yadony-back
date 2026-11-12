@@ -2,6 +2,7 @@ package com.yadony.api.matching.dto;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -13,7 +14,9 @@ import java.util.UUID;
 public record BidCheckoutRequest(
         @NotNull UUID announcementId,
         // Nullable en mode MIXED (grille seule) — validé côté service
-        @DecimalMin(value = "0.0") BigDecimal weightKg,
+        // Maximum technique (NUMERIC(8,2), V380) : en kilo libre rien d'autre ne borne le poids.
+        @DecimalMin(value = "0.0")
+        @DecimalMax(value = "999999.99", message = "{validation.bid.weight.max}") BigDecimal weightKg,
         @Size(max = 1000) String description,
         // Multi-sélection jointe par virgule côté front : le catalogue canonique complet
         // joint fait 216 caractères, donc 500 laisse de la marge pour la saisie libre.

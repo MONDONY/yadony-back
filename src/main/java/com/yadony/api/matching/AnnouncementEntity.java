@@ -154,10 +154,10 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "delivery_lng", nullable = false, precision = 9, scale = 6)
     private java.math.BigDecimal deliveryLng;
 
-    @Column(name = "available_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "available_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal availableKg;
 
-    @Column(name = "total_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "total_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal totalKg;
 
     @Column(name = "price_per_kg", nullable = false, precision = 10, scale = 2)
@@ -240,7 +240,7 @@ public class AnnouncementEntity extends BaseEntity {
      * surplusEligible: la négociation est payée → le voyageur peut ouvrir le surplus.
      * surplusPublished: le surplus est ouvert et visible dans la recherche publique.
      */
-    @Column(name = "reserved_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "reserved_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal reservedKg = BigDecimal.ZERO;
 
     @Column(name = "surplus_eligible", nullable = false)

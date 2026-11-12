@@ -20,7 +20,8 @@ public record NegotiationStartRequest(
     @NotNull UUID packageRequestId,
     @NotNull @DecimalMin("0.01") @DecimalMax("1000000.0") BigDecimal proposedPriceEur,
     @NotNull LocalDate travelerTravelDate,
-    @NotNull @DecimalMin("0.01") BigDecimal travelerAvailableKg,
+    // Maximum technique de la colonne (NUMERIC(8,2), V380) : au-delà, 422 et non une 500 SQL.
+    @NotNull @DecimalMin("0.01") @DecimalMax("999999.99") BigDecimal travelerAvailableKg,
     UUID travelerAnnouncementId,
     @Size(max = 280) String body,
     boolean createDedicatedTrip,

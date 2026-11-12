@@ -396,16 +396,52 @@ class PackageRequestControllerIT {
         verify(service).create(eq(SENDER_UUID), argThat(r -> r.weightKg().compareTo(new BigDecimal("32")) == 0));
     }
 
-    /** Au-delà de 32 kg : refus Bean Validation (422 du projet), le service n'est pas appelé. */
+    /**
+     * V380 : le DTO borne au maximum technique (999 999,99 kg, NUMERIC(8,2)) ; les 32 kg de l'avion
+     * et de « peu importe » sont appliqués au service (WeightLimits, 422 weight-too-heavy, testé dans
+     * PackageRequestServiceTest), le service étant mocké ici. Au-delà : refus Bean Validation (422 du
+     * projet), le service n'est pas appelé.
+     */
     @Test
-    void post_create_weightAbove32_rejectedByValidation() throws Exception {
+    void post_create_weight1000000_rejected422() throws Exception {
         mockMvc.perform(post("/package-requests")
                 .with(authentication(authAs("uid-sender", "SENDER")))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(requestWithWeight("32.01"))))
+                .content(objectMapper.writeValueAsString(requestWithWeight("1000000.00"))))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.violations.weightKg").exists());
         verify(service, org.mockito.Mockito.never()).create(any(), any());
+    }
+
+    /** V380 : 999 999,99 kg (maximum technique) passe la validation du DTO et atteint le service. */
+    @Test
+    void post_create_weight999999_99_passesValidation() throws Exception {
+        UUID newId = UUID.randomUUID();
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(fakeResponse(newId));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("999999.99"))))
+            .andExpect(status().isCreated());
+        verify(service).create(eq(SENDER_UUID),
+            argThat(r -> r.weightKg().compareTo(new BigDecimal("999999.99")) == 0));
+    }
+
+    /** Le 422 weight-too-heavy du service sort en ProblemDetail avec son code (pas une 500). */
+    @Test
+    void post_create_serviceWeightTooHeavy_returnsProblemDetail422() throws Exception {
+        when(service.create(eq(SENDER_UUID), any())).thenThrow(
+            com.yadony.api.common.YadonyBusinessException.localized(
+                org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "weight-too-heavy",
+                "problem.weight-too-heavy", "32"));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("33"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("weight-too-heavy"));
     }
 
     /** Mode de transport inconnu : refus Bean Validation (422 validation), le service n'est pas appelé. */
@@ -465,12 +501,12 @@ class PackageRequestControllerIT {
     }
 
     @Test
-    void put_update_weightAbove32_rejectedByValidation() throws Exception {
+    void put_update_weight1000000_rejected422() throws Exception {
         UUID id = UUID.randomUUID();
         mockMvc.perform(put("/package-requests/" + id)
                 .with(authentication(authAs("uid-sender", "SENDER")))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(requestWithWeight("32.01"))))
+                .content(objectMapper.writeValueAsString(requestWithWeight("1000000.00"))))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.violations.weightKg").exists());
         verify(service, org.mockito.Mockito.never()).update(any(), any(), any());

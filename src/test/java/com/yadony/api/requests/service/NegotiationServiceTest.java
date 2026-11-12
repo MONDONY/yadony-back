@@ -5307,6 +5307,36 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("trajet dédié avion : réservé 5 + surplus 995 = 1 000 kg → 422 trip-capacity-too-high, rien d'écrit")
+        void openSurplus_planeTotalAbove999_99_throws422() {
+            ann.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+            when(announcementRepo.findById(ANN_ID)).thenReturn(Optional.of(ann));
+            org.mockito.Mockito.lenient().when(threadRepo.findByTravelerAnnouncementIdAndStatus(
+                    ANN_ID, NegotiationThreadStatus.ACCEPTED)).thenReturn(Optional.of(thread));
+
+            assertThatThrownBy(() -> service.openSurplus(TRAVELER_ID, ANN_ID,
+                new BigDecimal("995"), new BigDecimal("7")))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("trip-capacity-too-high"));
+            verify(announcementRepo, never()).save(any());
+            assertThat(ann.isSurplusPublished()).isFalse();
+        }
+
+        @Test
+        @DisplayName("trajet dédié route : réservé 5 + surplus 1 200 kg → ouvert")
+        void openSurplus_road1200kg_accepted() {
+            ann.setTransportMode(com.yadony.api.matching.TransportMode.CAR);
+            when(announcementRepo.findById(ANN_ID)).thenReturn(Optional.of(ann));
+            when(threadRepo.findByTravelerAnnouncementIdAndStatus(ANN_ID, NegotiationThreadStatus.ACCEPTED))
+                .thenReturn(Optional.of(thread));
+            when(announcementRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.openSurplus(TRAVELER_ID, ANN_ID, new BigDecimal("1200"), new BigDecimal("2"));
+
+            assertThat(ann.getTotalKg()).isEqualByComparingTo("1205");
+        }
+
+        @Test
         @DisplayName("annonce introuvable → 404")
         void openSurplus_notFound_throws404() {
             when(announcementRepo.findById(ANN_ID)).thenReturn(Optional.empty());

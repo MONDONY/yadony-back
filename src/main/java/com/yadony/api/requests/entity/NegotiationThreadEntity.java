@@ -32,7 +32,7 @@ public class NegotiationThreadEntity extends BaseEntity {
     @Column(name = "traveler_travel_date", nullable = false)
     private LocalDate travelerTravelDate;
 
-    @Column(name = "traveler_available_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "traveler_available_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal travelerAvailableKg;
 
     @Enumerated(EnumType.STRING)

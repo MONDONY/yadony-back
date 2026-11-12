@@ -1,6 +1,7 @@
 package com.yadony.api.matching.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -12,6 +13,8 @@ import java.util.List;
 
 public record BidRequest(
         @DecimalMin(value = "0.1", message = "{validation.bid.weight.min}")
+        // Maximum technique (NUMERIC(8,2), V380) : en kilo libre rien d'autre ne borne le poids.
+        @DecimalMax(value = "999999.99", message = "{validation.bid.weight.max}")
         BigDecimal weightKg,  // nullable désormais (GRID mode = pas de poids)
 
         @NotBlank(message = "{validation.bid.description.required}")

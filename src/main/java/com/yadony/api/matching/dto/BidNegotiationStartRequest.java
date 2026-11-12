@@ -20,6 +20,8 @@ import java.util.List;
  */
 public record BidNegotiationStartRequest(
         @DecimalMin(value = "0.1", message = "{validation.bid.weight.min}")
+        // Maximum technique (NUMERIC(8,2), V380) : en kilo libre rien d'autre ne borne le poids.
+        @DecimalMax(value = "999999.99", message = "{validation.bid.weight.max}")
         BigDecimal weightKg,
 
         @NotBlank(message = "{validation.bid.description.required}")

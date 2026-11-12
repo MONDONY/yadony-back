@@ -37,7 +37,7 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(name = "date_tolerance_days")
     private Short dateToleranceDays;
 
-    @Column(name = "weight_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "weight_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal weightKg;
 
     @Enumerated(EnumType.STRING)

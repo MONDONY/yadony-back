@@ -32,7 +32,7 @@ public class BidEntity extends BaseEntity {
     @Column(name = "sender_id", nullable = false)
     private UUID senderId;
 
-    @Column(name = "weight_kg", precision = 5, scale = 2)
+    @Column(name = "weight_kg", precision = 8, scale = 2)
     private BigDecimal weightKg;
 
     /** Net négocié figé (= prix d'accord du thread) pour un bid issu d'une

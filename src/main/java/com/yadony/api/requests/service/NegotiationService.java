@@ -2110,6 +2110,10 @@ public class NegotiationService {
         }
         threadRepo.findByTravelerAnnouncementIdAndStatus(announcementId, NegotiationThreadStatus.ACCEPTED)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "surplus/negotiation-not-accepted"));
+        // Capacité totale du trajet dédié après ouverture (réservé + surplus), bornée par mode (V380) :
+        // 999,99 kg en avion (avant : 500 SQL au-delà), tonnes en route et bateau.
+        com.yadony.api.matching.WeightLimits.assertTripCapacity(
+            ann.getReservedKg().add(surplusKg), ann.getTransportMode());
 
         ann.setAvailableKg(surplusKg);
         ann.setTotalKg(ann.getReservedKg().add(surplusKg));

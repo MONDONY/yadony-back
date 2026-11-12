@@ -1823,6 +1823,136 @@ class AnnouncementServiceTest {
         }
     }
 
+    // ─── Capacité par mode (V380, WeightLimits) ─────────────────────────────────
+
+    @Nested
+    @DisplayName("capacité d'un trajet par mode — WeightLimits")
+    class TripCapacityByMode {
+
+        private AnnouncementRequest tripRequest(TransportMode mode, String kg) {
+            LocalDate departure = LocalDate.now().plusDays(10);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar",
+                    departure,
+                    LocalTime.of(10, 0), LocalTime.of(22, 0),
+                    new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                    new AddressDto("Aéroport LSS", 14.739, -17.490),
+                    new BigDecimal(kg), BigDecimal.valueOf(5),
+                    mode,
+                    null, null, null, null, null, null,
+                    null, null,
+                    departure.atTime(9, 0),
+                    null,
+                    null,
+                    null);
+        }
+
+        private void stubCreate() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+            org.mockito.Mockito.lenient().when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            org.mockito.Mockito.lenient().when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            org.mockito.Mockito.lenient().when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+        }
+
+        private void assertCapacityTooHigh(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String max) {
+            assertThatThrownBy(call).isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                assertThat(ex.getErrorCode()).isEqualTo("trip-capacity-too-high");
+                assertThat(ex.getMessage()).contains(max + " kg");
+            });
+        }
+
+        @Test
+        @DisplayName("trajet route de 2 500 kg → créé, kilos et total à 2 500")
+        void create_roadTrip_2500kg_accepted() {
+            stubCreate();
+
+            AnnouncementResponse result = announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.CAR, "2500"));
+
+            assertThat(result.availableKg()).isEqualByComparingTo("2500");
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+            assertThat(saved.getValue().getTotalKg()).isEqualByComparingTo("2500");
+        }
+
+        @Test
+        @DisplayName("trajet route de 999 999,99 kg → créé ; 1 000 000 → 422 trip-capacity-too-high")
+        void create_roadTrip_999999_99_accepted_1000000_refused422() {
+            stubCreate();
+
+            assertThat(announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.BUS, "999999.99")).availableKg())
+                    .isEqualByComparingTo("999999.99");
+            assertCapacityTooHigh(() -> announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.CAR, "1000000")), "999999.99");
+        }
+
+        @Test
+        @DisplayName("trajet avion de 999,99 kg → créé (borne effective d'avant V380)")
+        void create_planeTrip_999_99_accepted() {
+            stubCreate();
+
+            assertThat(announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.PLANE, "999.99")).availableKg())
+                    .isEqualByComparingTo("999.99");
+        }
+
+        @Test
+        @DisplayName("trajet avion de 1 000 kg → 422 trip-capacity-too-high (avant : 500 SQL), rien n'est écrit")
+        void create_planeTrip_1000kg_refused422_tripCapacityTooHigh() {
+            stubCreate();
+
+            assertCapacityTooHigh(() -> announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.PLANE, "1000")), "999.99");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("occurrence de série avion de 1 000 kg → 422 (même chemin de création)")
+        void createSeriesCopy_plane1000kg_refused422() {
+            stubCreate();
+
+            assertCapacityTooHigh(() -> announcementService.createSeriesCopy(
+                    FIREBASE_UID, tripRequest(TransportMode.TRAIN, "1000"), UUID.randomUUID()), "999.99");
+        }
+
+        @Test
+        @DisplayName("modification route → avion avec 1 200 kg → 422, rien n'est écrit")
+        void update_roadToPlane_1200kg_refused422() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setTransportMode(TransportMode.CAR);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertCapacityTooHigh(() -> announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, tripRequest(TransportMode.PLANE, "1200")), "999.99");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("modification d'un trajet route à 1 200 kg → acceptée")
+        void update_roadTrip_1200kg_accepted() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setTransportMode(TransportMode.CAR);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, tripRequest(TransportMode.CAR, "1200"));
+
+            assertThat(a.getAvailableKg()).isEqualByComparingTo("1200");
+            assertThat(a.getTotalKg()).isEqualByComparingTo("1200");
+        }
+    }
+
     // ─── updateAnnouncement ────────────────────────────────────────────────────
 
     @Nested

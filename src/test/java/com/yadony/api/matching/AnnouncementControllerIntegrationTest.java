@@ -517,6 +517,76 @@ class AnnouncementControllerIntegrationTest {
             .andExpect(jsonPath("$.status").value("ACTIVE"));
     }
 
+    // ─── Capacité en tonnes (V380, WeightLimits) ──────────────────────────────
+
+    @Test
+    void post_trip_availableKg1000000_rejected422() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithModeAndKg("CAR", "1000000")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.availableKg").exists());
+    }
+
+    @Test
+    void post_planeTrip_1000kg_returns422TripCapacityTooHigh() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithModeAndKg("PLANE", "1000")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("trip-capacity-too-high"));
+    }
+
+    @Test
+    void detail_serializes1200kgAsPlainNumber() throws Exception {
+        seedTraveler("uid-test-traveler");
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithModeAndKg("CAR", "1200")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.availableKg").value(1200.0))
+            .andReturn();
+        String id = objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+
+        var detail = mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableKg").value(1200.0))
+            .andReturn();
+        // Nombre décimal ordinaire (ni chaîne, ni notation scientifique) : les anciennes apps le lisent.
+        JsonNode kg = objectMapper.readTree(detail.getResponse().getContentAsString()).get("availableKg");
+        assertThatNumber(kg);
+    }
+
+    private static void assertThatNumber(JsonNode node) {
+        org.assertj.core.api.Assertions.assertThat(node.isNumber()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(node.asText()).doesNotContain("E").doesNotContain("e");
+    }
+
+    private String bodyWithModeAndKg(String mode, String kg) {
+        String date = LocalDate.now().plusDays(10).toString();
+        return """
+            {
+              "departureCity": "Paris",
+              "arrivalCity": "Dakar",
+              "departureDate": "%s",
+              "departureTime": "10:00",
+              "availableKg": %s,
+              "pricePerKg": 5,
+              "transportMode": "%s",
+              "capacityUnit": "KG_EXACT",
+              "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
+              "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
+              "handoverDeadline": "%sT07:30:00"
+            }
+            """.formatted(date, kg, mode, date);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private String validBodyWithMode(String mode) {

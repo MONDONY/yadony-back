@@ -15,7 +15,9 @@ public record PackageRequestCreateRequest(
     @FutureOrPresent LocalDate desiredDate,
     // Ignorée (stockée null) sans date ; avec une date, null retombe sur 2 jours.
     @Min(0) @Max(7) Integer dateToleranceDays,
-    @NotNull @DecimalMin("0.5") @DecimalMax("32.0") BigDecimal weightKg,
+    // Maximum technique (NUMERIC(8,2), V380). Le plafond par mode (32 kg en avion et « peu importe »)
+    // est appliqué au service (WeightLimits, 422 weight-too-heavy) : il dépend du mode.
+    @NotNull @DecimalMin("0.5") @DecimalMax("999999.99") BigDecimal weightKg,
     // Multi-sélection jointe par virgule côté front — alignée sur BidCheckoutRequest
     // (500, cf. V171__unify_content_categories.sql pour le pourquoi).
     @NotBlank @Size(max = 500) String contentCategory,
