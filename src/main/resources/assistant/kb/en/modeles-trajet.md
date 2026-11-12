@@ -9,4 +9,4 @@ routes:
 A template pre-fills a usual trip: you only have to pick the date.
 After publishing a trip, the app offers "Turn it into a trip template?". You can also open a published or completed trip, tap the ⋮ menu then "Save as template", or create one in Activity › Trip templates › New template.
 A template keeps the name, cities, times, handover deadline and places.
-To use it, start publishing a trip and choose "My templates" then "Use".
+To use it, tap "Post a trip": the "Start from a template?" sheet opens, then tap "Use" on the template. The form opens pre-filled, only the date is left. "Create a new trip" opens an empty form.

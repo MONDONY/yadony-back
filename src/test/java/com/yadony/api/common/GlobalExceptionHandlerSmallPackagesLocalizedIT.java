@@ -72,7 +72,8 @@ class GlobalExceptionHandlerSmallPackagesLocalizedIT {
         @GetMapping("/t/trip-limit-other")
         void tripLimitOther() {
             throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "monthly-trip-limit-reached",
-                    "problem.monthly-trip-limit-reached.other", 3, LocalDate.of(2026, 12, 1));
+                    "problem.monthly-trip-limit-reached.other", 3,
+                    new com.yadony.api.common.i18n.LocalizedDate(LocalDate.of(2026, 12, 1)));
         }
 
         @GetMapping("/t/trip-not-found")
@@ -165,8 +166,8 @@ class GlobalExceptionHandlerSmallPackagesLocalizedIT {
                 "La période de départ ne peut pas dépasser 31 jours.",
                 "The departure period cannot exceed 31 days.");
         expect("/t/trip-limit-other", 403, "monthly-trip-limit-reached",
-                "Vous avez atteint votre limite de 3 trajets ce mois-ci. Vous pourrez publier de nouveau à partir du 2026-12-01.",
-                "You have reached your limit of 3 trips this month. You will be able to publish again from 2026-12-01.");
+                "Vous avez atteint votre limite de 3 trajets ce mois-ci. Vous pourrez publier de nouveau à partir du 1er décembre 2026.",
+                "You have reached your limit of 3 trips this month. You will be able to publish again from December 1, 2026.");
     }
 
     @Test

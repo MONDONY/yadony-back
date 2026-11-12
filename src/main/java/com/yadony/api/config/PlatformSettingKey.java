@@ -120,7 +120,8 @@ public enum PlatformSettingKey {
 
     /**
      * Lot 4 : un particulier est signalé à l'équipe (et reçoit la question « Confirmez votre statut ») au-delà de ce
-     * nombre de trajets avec une réservation acceptée sur 30 jours. Jamais de blocage. Aucune property : défaut 4,
+     * nombre de trajets publiés dans le mois civil en cours (Europe/Paris, avec ou sans réservation, brouillons, annulés
+     * et retirés exclus). Jamais de blocage. Aucune property : défaut 4,
      * bornes 1 à 100, réglé depuis le panel admin ; ligne absente, illisible ou hors bornes : le défaut.
      */
     public static final int DEFAULT_INDIVIDUAL_TRIPS_ALERT_THRESHOLD = 4;

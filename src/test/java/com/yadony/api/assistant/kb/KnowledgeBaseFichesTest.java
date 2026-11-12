@@ -179,8 +179,10 @@ class KnowledgeBaseFichesTest {
                 .findFirst().orElseThrow();
         KbArticle en = corpus.articles("en").stream().filter(x -> x.id().equals("statut-voyageur"))
                 .findFirst().orElseThrow();
-        assertThat(fr.body()).contains("Confirmez votre statut", "Rien n'est bloqué");
-        assertThat(en.body()).contains("Confirm your status", "Nothing is blocked");
+        assertThat(fr.body()).contains("Confirmez votre statut", "Rien n'est bloqué", "plus de 4 trajets dans le mois civil");
+        assertThat(fr.body()).doesNotContain("souvent avec des colis");
+        assertThat(en.body()).contains("Confirm your status", "Nothing is blocked", "more than 4 trips in a calendar month");
+        assertThat(en.body()).doesNotContain("often travel with parcels");
         assertThat(fr.body().length()).isLessThanOrEqualTo(2000);
         assertThat(en.body().length()).isLessThanOrEqualTo(2000);
     }
@@ -227,9 +229,15 @@ class KnowledgeBaseFichesTest {
     void lesQuestionsSurLaLimiteEtLaSortieGpProTrouventLaFicheStatutVoyageur() {
         KnowledgeBase kb = productionKb();
         assertThat(firstHit(kb, "fr", "Comment redevenir particulier ?")).isEqualTo("statut-voyageur");
-        assertThat(firstHit(kb, "fr", "Pourquoi j'ai une limite de trajets par mois ?")).isEqualTo("statut-voyageur");
+        // La fiche dédiée « limite-mensuelle-trajets » (retest R2) peut passer en tête sur cette question ;
+        // statut-voyageur, qui explique le statut et la sortie vers GP Pro, reste juste derrière.
+        assertThat(kb.search("fr", "Pourquoi j'ai une limite de trajets par mois ?", null, 2))
+                .extracting(h -> h.article().id())
+                .containsExactlyInAnyOrder("statut-voyageur", "limite-mensuelle-trajets");
         assertThat(firstHit(kb, "en", "How do I become an individual again?")).isEqualTo("statut-voyageur");
-        assertThat(firstHit(kb, "en", "Why is there a monthly trip limit?")).isEqualTo("statut-voyageur");
+        assertThat(kb.search("en", "Why is there a monthly trip limit?", null, 2))
+                .extracting(h -> h.article().id())
+                .containsExactlyInAnyOrder("statut-voyageur", "limite-mensuelle-trajets");
     }
 
     @Test

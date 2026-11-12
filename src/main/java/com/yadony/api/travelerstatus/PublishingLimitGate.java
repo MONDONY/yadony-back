@@ -45,7 +45,7 @@ public class PublishingLimitGate {
             case STATUS_REQUIRED -> throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, CODE_STATUS_REQUIRED, "problem.traveler-status-required");
             case LIMIT_REACHED -> throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, CODE_LIMIT_REACHED,
                     e.limit() > 1 ? "problem.monthly-trip-limit-reached.other" : "problem.monthly-trip-limit-reached.one",
-                    e.limit(), e.resetsOn());
+                    e.limit(), new com.yadony.api.common.i18n.LocalizedDate(e.resetsOn()));
             case GP_PRO_PENDING -> throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, CODE_GP_PRO_PENDING, "problem.gp-pro-pending");
         }
     }

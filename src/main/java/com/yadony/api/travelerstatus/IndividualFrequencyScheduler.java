@@ -38,9 +38,9 @@ import java.util.stream.Collectors;
  *
  * <p><b>Éteint par défaut</b> ({@code YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED}, transmise par
  * {@code deploy-prod.yml} et {@code deploy-staging.yml} avec le défaut {@code false}). Cet interrupteur coupe tout :
- * le compteur de trajets ET le déclencheur « demande GP Pro chaque semaine ». <b>Premier passage après l'allumage</b> :
- * tous les particuliers déjà au-dessus du seuil (ou dont une demande GP Pro « chaque semaine » a été refusée ou
- * annulée dans les 30 derniers jours) sont signalés ET reçoivent la question d'un coup, au premier 04:30 UTC.
+ * le compteur de trajets publiés dans le mois ET le déclencheur « demande GP Pro chaque semaine ». <b>Premier passage après l'allumage</b> :
+ * tous les particuliers qui ont déjà publié plus de trajets que le seuil dans le mois civil en cours (ou dont une
+ * demande GP Pro « chaque semaine » a été refusée ou annulée dans les 30 derniers jours) sont signalés ET reçoivent la question d'un coup, au premier 04:30 UTC.
  */
 @Component
 public class IndividualFrequencyScheduler {
@@ -146,7 +146,8 @@ public class IndividualFrequencyScheduler {
         IndividualFrequencyFlagEntity flag = new IndividualFrequencyFlagEntity();
         flag.setUserId(userId);
         flag.setTripsCount(detection.tripsCount());
-        flag.setWindowDays(IndividualFrequencyEvaluator.WINDOW_DAYS);
+        // Période du compte : le mois civil (Europe/Paris) de la détection, de 28 à 31 jours.
+        flag.setWindowDays(IndividualFrequencyEvaluator.monthOf(now).lengthOfMonth());
         flag.setThreshold(threshold);
         flag.setWeeklyApplication(detection.weeklyApplication());
         flag.setDetectedAt(now);

@@ -2,8 +2,6 @@ package com.yadony.api.travelerstatus;
 
 import com.yadony.api.gppro.GpProApplicationStatus;
 import com.yadony.api.gppro.GpProTravelFrequency;
-import com.yadony.api.matching.AnnouncementStatus;
-import com.yadony.api.matching.BidStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -52,47 +50,48 @@ public interface IndividualFrequencyFlagRepository extends JpaRepository<Individ
 
     /**
      * Particuliers sans badge GP Pro, compte actif (ni suspendu, ni banni, ni en cours de suppression, ni supprimé),
-     * sans demande GP Pro en cours d'examen, et leurs VOYAGES (dates de départ distinctes) parmi les trajets ayant au
-     * moins une réservation dans {@code bidStatuses} créée depuis {@code since}, au-delà de {@code threshold}
-     * (strictement). Compter les dates plutôt que les annonces : un seul vol peut porter plusieurs annonces (trajets
-     * dédiés créés en répondant à des demandes d'envoi, ou une annonce par ville d'arrivée). Lecture seule.
+     * sans demande GP Pro en cours d'examen, et leurs TRAJETS PUBLIÉS dans {@code [from, to[} (mois civil), au-delà de
+     * {@code threshold} (strictement). Avec ou sans réservation. Même définition que la limite mensuelle de trajets
+     * ({@code AnnouncementRepository#countPublishedInPeriod}, {@code PublishingEligibilityService}) : un trajet compte
+     * si sa date de publication ({@code published_at}) tombe dans la période, un brouillon jamais publié (date nulle)
+     * non, supprimer un trajet ne le retire pas du compte (SQL natif, volontairement SANS filtre {@code deleted_at}
+     * sur les trajets), chaque étape d'un voyage multi-étapes compte pour un trajet. Seule différence voulue avec le
+     * quota : les trajets annulés ou retirés par la modération ({@code excludedTripStatuses}) ne comptent pas ici, on
+     * ne signale pas quelqu'un pour des trajets qui n'ont pas eu lieu. Lecture seule.
      *
-     * @return lignes {@code [travelerId (UUID), tripsCount (Long)]}
+     * @return lignes {@code [travelerId (UUID), tripsCount (Number)]}
      */
-    @Query("""
-        SELECT a.travelerId, COUNT(DISTINCT a.departureDate)
-        FROM BidEntity b, AnnouncementEntity a, UserEntity u
-        WHERE b.announcementId = a.id AND u.id = a.travelerId
-          AND b.status IN :bidStatuses AND b.createdAt >= :since
-          AND a.status NOT IN :excludedTripStatuses
-          AND u.gpPro = false AND u.travelerStatus = com.yadony.api.travelerstatus.TravelerStatus.INDIVIDUAL
-          AND u.status = com.yadony.api.auth.UserStatus.ACTIVE AND u.deletionRequestedAt IS NULL
-          AND b.deletedAt IS NULL AND a.deletedAt IS NULL AND u.deletedAt IS NULL
-          AND NOT EXISTS (SELECT 1 FROM GpProApplicationEntity o
-                          WHERE o.userId = u.id AND o.status IN :openApplications AND o.deletedAt IS NULL)
-        GROUP BY a.travelerId
-        HAVING COUNT(DISTINCT a.departureDate) > :threshold
-    """)
-    List<Object[]> countTripsAboveThreshold(@Param("bidStatuses") Collection<BidStatus> bidStatuses,
-                                            @Param("excludedTripStatuses") Collection<AnnouncementStatus> excludedTripStatuses,
-                                            @Param("openApplications") Collection<GpProApplicationStatus> openApplications,
-                                            @Param("since") LocalDateTime since,
-                                            @Param("threshold") long threshold);
+    @Query(value = """
+        SELECT a.traveler_id, COUNT(*)
+        FROM announcements a JOIN users u ON u.id = a.traveler_id
+        WHERE a.published_at >= :from AND a.published_at < :to
+          AND a.status NOT IN (:excludedTripStatuses)
+          AND u.gp_pro = false AND u.traveler_status = 'INDIVIDUAL'
+          AND u.status = 'ACTIVE' AND u.deletion_requested_at IS NULL AND u.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM gp_pro_applications o
+                          WHERE o.user_id = u.id AND o.status IN (:openApplications) AND o.deleted_at IS NULL)
+        GROUP BY a.traveler_id
+        HAVING COUNT(*) > :threshold
+    """, nativeQuery = true)
+    List<Object[]> countPublishedTripsAboveThreshold(@Param("from") LocalDateTime from,
+                                                     @Param("to") LocalDateTime to,
+                                                     @Param("excludedTripStatuses") Collection<String> excludedTripStatuses,
+                                                     @Param("openApplications") Collection<String> openApplications,
+                                                     @Param("threshold") long threshold);
 
-    /** Même compte (dates de départ distinctes) que {@link #countTripsAboveThreshold}, pour des voyageurs donnés, sans seuil. */
-    @Query("""
-        SELECT a.travelerId, COUNT(DISTINCT a.departureDate)
-        FROM BidEntity b, AnnouncementEntity a
-        WHERE b.announcementId = a.id AND a.travelerId IN :travelerIds
-          AND b.status IN :bidStatuses AND b.createdAt >= :since
-          AND a.status NOT IN :excludedTripStatuses
-          AND b.deletedAt IS NULL AND a.deletedAt IS NULL
-        GROUP BY a.travelerId
-    """)
-    List<Object[]> countTrips(@Param("travelerIds") Collection<UUID> travelerIds,
-                              @Param("bidStatuses") Collection<BidStatus> bidStatuses,
-                              @Param("excludedTripStatuses") Collection<AnnouncementStatus> excludedTripStatuses,
-                              @Param("since") LocalDateTime since);
+    /** Même compte que {@link #countPublishedTripsAboveThreshold}, pour des voyageurs donnés, sans seuil. */
+    @Query(value = """
+        SELECT a.traveler_id, COUNT(*)
+        FROM announcements a
+        WHERE a.traveler_id IN (:travelerIds)
+          AND a.published_at >= :from AND a.published_at < :to
+          AND a.status NOT IN (:excludedTripStatuses)
+        GROUP BY a.traveler_id
+    """, nativeQuery = true)
+    List<Object[]> countPublishedTrips(@Param("travelerIds") Collection<UUID> travelerIds,
+                                       @Param("from") LocalDateTime from,
+                                       @Param("to") LocalDateTime to,
+                                       @Param("excludedTripStatuses") Collection<String> excludedTripStatuses);
 
     /**
      * Particuliers sans badge GP Pro, compte actif (mêmes exclusions), sans demande en cours d'examen, dont une

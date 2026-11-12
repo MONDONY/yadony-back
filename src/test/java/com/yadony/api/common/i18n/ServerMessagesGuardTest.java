@@ -411,7 +411,7 @@ class ServerMessagesGuardTest {
 
         assertThat(e.isLocalized()).isTrue();
         assertThat(e.getMessage()).isEqualTo("Limite de 3 brouillon(s) atteinte. Passez en PRO pour en créer davantage.");
-        assertThat(e.getTitle()).isEqualTo("Draft Limit Reached");
+        assertThat(e.getTitle()).isEqualTo("Limite de brouillons atteinte");
         assertThat(e.getDetail(TestMessages.fr())).isEqualTo(e.getMessage());
         assertThat(e.getDetail(TestMessages.en())).isEqualTo("Limit of 3 draft(s) reached. Upgrade to PRO to create more.");
         assertThat(e.withProperties(java.util.Map.of("legIndex", 1)).getDetail(TestMessages.en()))
