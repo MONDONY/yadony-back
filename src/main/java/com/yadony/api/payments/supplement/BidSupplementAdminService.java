@@ -77,8 +77,7 @@ public class BidSupplementAdminService {
     public AdminSupplementDecisionResponse payout(UUID supplementId, UUID adminId, String reason) {
         BidSupplementEntity s = requireMoneyHeld(supplementId);
         if (!PAYABLE.contains(s.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-not-payable", "Supplement Not Payable",
-                    "Ce supplément ne peut pas être versé (statut " + s.getStatus() + ")");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-not-payable", "problem.supplement-not-payable", String.valueOf(s.getStatus()));
         }
         audit(s, "BID_SUPPLEMENT_ADMIN_PAYOUT_DECIDED", adminId, reason);
         boolean resume = s.getStatus() == BidSupplementStatus.PAYOUT_PENDING;
@@ -95,15 +94,10 @@ public class BidSupplementAdminService {
     public AdminSupplementDecisionResponse refund(UUID supplementId, UUID adminId, String reason) {
         BidSupplementEntity s = requireMoneyHeld(supplementId);
         if (s.getStatus() == BidSupplementStatus.PAYOUT_PENDING || s.getStatus() == BidSupplementStatus.PAID_OUT) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-already-paid-out",
-                    "Supplement Already Paid Out",
-                    "Ce supplément est déjà versé au voyageur : pas de remboursement automatique, à traiter "
-                            + "directement chez le prestataire");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-already-paid-out", "problem.supplement-already-paid-out");
         }
         if (!REFUNDABLE.contains(s.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-not-refundable",
-                    "Supplement Not Refundable",
-                    "Ce supplément ne peut pas être remboursé (statut " + s.getStatus() + ")");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-not-refundable", "problem.supplement-not-refundable", String.valueOf(s.getStatus()));
         }
         audit(s, "BID_SUPPLEMENT_ADMIN_REFUND_DECIDED", adminId, reason);
         boolean acted = s.getRail() == BidSupplementRail.STRIPE
@@ -126,16 +120,13 @@ public class BidSupplementAdminService {
     private BidSupplementEntity requireMoneyHeld(UUID supplementId) {
         BidSupplementEntity s = require(supplementId);
         if (s.getRail() == BidSupplementRail.CASH) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-cash-no-money-held",
-                    "Cash Supplement",
-                    "Supplément en espèces : l'argent n'est jamais passé par Yadony, rien à verser ni à rembourser");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-cash-no-money-held", "problem.supplement-cash-no-money-held");
         }
         return s;
     }
 
     private BidSupplementEntity require(UUID supplementId) {
-        return supplements.findById(supplementId).orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                "supplement-not-found", "Not Found", "Supplément introuvable"));
+        return supplements.findById(supplementId).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "supplement-not-found", "problem.supplement-not-found.supplement-introuvable"));
     }
 
     private void audit(BidSupplementEntity s, String action, UUID adminId, String reason) {

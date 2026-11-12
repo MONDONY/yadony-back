@@ -58,8 +58,7 @@ public class BidAmendmentPricing {
 
         if (addedKg != null && addedKg.signum() > 0) {
             if (announcement.getPricePerKg() == null) {
-                throw unprocessable("amendment-not-eligible", "Amendment Unavailable",
-                        "Ce trajet ne vend pas de kilos au kilo");
+                throw unprocessable("amendment-not-eligible", "problem.amendment-not-eligible");
             }
             net = net.add(addedKg.multiply(announcement.getPricePerKg()));
         }
@@ -72,8 +71,7 @@ public class BidAmendmentPricing {
             for (AmendmentLineRequest line : items) {
                 AnnouncementPriceGridItemEntity item = grid.get(line.gridItemId());
                 if (item == null) {
-                    throw unprocessable("amendment-item-unknown", "Amendment Item Unknown",
-                            "Cet article ne fait pas partie de la grille du trajet");
+                    throw unprocessable("amendment-item-unknown", "problem.amendment-item-unknown");
                 }
                 net = net.add(item.getUnitPriceNet().multiply(BigDecimal.valueOf(line.quantity())));
                 lines.add(new BidAmendmentQuote.Line(item.getId(), item.getLabel(), item.getUnitPriceNet(), line.quantity()));
@@ -82,7 +80,7 @@ public class BidAmendmentPricing {
 
         net = net.setScale(currency.minorUnit(), RoundingMode.HALF_UP);
         if (net.signum() <= 0) {
-            throw unprocessable("amendment-empty", "Amendment Empty", "La modification n'ajoute rien au colis");
+            throw unprocessable("amendment-empty", "problem.amendment-empty");
         }
 
         IncrementalCommission.Result r = incrementalCommission.compute(bid, announcement.getTravelerId(),
@@ -97,7 +95,7 @@ public class BidAmendmentPricing {
      */
     private static void requireWellFormed(BigDecimal addedKg, List<AmendmentLineRequest> items) {
         if (addedKg != null && addedKg.signum() < 0) {
-            throw invalid("Les kilos ajoutés ne peuvent pas être négatifs");
+            throw invalid("problem.validation.les-kilos-ajoutes-ne-peuvent-pas");
         }
         if (items == null) {
             return;
@@ -105,20 +103,19 @@ public class BidAmendmentPricing {
         Set<UUID> seen = new HashSet<>();
         for (AmendmentLineRequest line : items) {
             if (line == null || line.gridItemId() == null || line.quantity() < 1) {
-                throw invalid("Chaque article demande un identifiant et une quantité d'au moins 1");
+                throw invalid("problem.validation.chaque-article-demande-un-identifiant-et");
             }
             if (!seen.add(line.gridItemId())) {
-                throw unprocessable("amendment-item-duplicate", "Amendment Item Duplicate",
-                        "Un même article ne peut figurer qu'une fois dans la demande");
+                throw unprocessable("amendment-item-duplicate", "problem.amendment-item-duplicate");
             }
         }
     }
 
-    private static YadonyBusinessException invalid(String detail) {
-        return new YadonyBusinessException(HttpStatus.BAD_REQUEST, "validation", "Validation Failed", detail);
+    private static YadonyBusinessException invalid(String key, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "validation", key, args);
     }
 
-    private static YadonyBusinessException unprocessable(String code, String title, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, title, detail);
+    private static YadonyBusinessException unprocessable(String code, String key, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, code, key, args);
     }
 }

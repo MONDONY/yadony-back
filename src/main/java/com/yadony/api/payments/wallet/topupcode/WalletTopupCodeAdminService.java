@@ -66,32 +66,29 @@ public class WalletTopupCodeAdminService {
         boolean manual = command.code() != null && !command.code().isBlank();
         String code = manual ? WalletTopupCodeRedemptionService.normalize(command.code()) : generateCode();
         if (!WalletTopupCodeRedemptionService.CODE_FORMAT.matcher(code).matches()) {
-            throw badRequest("topup-code-format-invalid",
-                    "Le code doit faire au plus 32 caractères : lettres, chiffres ou tirets");
+            throw badRequest("topup-code-format-invalid", "problem.topup-code-format-invalid");
         }
         if (manual && code.replace("-", "").length() < MANUAL_CODE_MIN_ALPHANUMERIC) {
-            throw badRequest("topup-code-too-short", "Le code doit contenir au moins "
-                    + MANUAL_CODE_MIN_ALPHANUMERIC + " lettres ou chiffres (les tirets ne comptent pas)");
+            throw badRequest("topup-code-too-short", "problem.topup-code-too-short", String.valueOf(MANUAL_CODE_MIN_ALPHANUMERIC));
         }
         String codeHash = hasher.hash(code);
         SupportedCurrency currency = SupportedCurrency.fromCode(command.currency() == null ? null
                 : command.currency().trim().toUpperCase(java.util.Locale.ROOT));
         if (currency == null) {
-            throw badRequest("topup-code-currency-unsupported", "Devise non prise en charge");
+            throw badRequest("topup-code-currency-unsupported", "problem.topup-code-currency-unsupported");
         }
         BigDecimal amount = command.amount();
         if (amount == null || amount.signum() <= 0 || amount.stripTrailingZeros().scale() > currency.minorUnit()) {
-            throw badRequest("topup-code-amount-invalid", "Le montant doit être positif, avec au plus "
-                    + currency.minorUnit() + " décimale(s) en " + currency.name());
+            throw badRequest("topup-code-amount-invalid", "problem.topup-code-amount-invalid", String.valueOf(currency.minorUnit()), String.valueOf(currency.name()));
         }
         int quantity = command.maxRedemptions() == null ? 1 : command.maxRedemptions();
         if (quantity < 1 || quantity > MAX_QUANTITY) {
-            throw badRequest("topup-code-quantity-invalid", "La quantité doit être comprise entre 1 et " + MAX_QUANTITY);
+            throw badRequest("topup-code-quantity-invalid", "problem.topup-code-quantity-invalid", String.valueOf(MAX_QUANTITY));
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         LocalDateTime expiresAt = command.expiresAt() == null ? now.plusDays(DEFAULT_VALIDITY_DAYS) : command.expiresAt();
         if (!expiresAt.isAfter(now)) {
-            throw badRequest("topup-code-expiry-invalid", "La date d'expiration doit être dans le futur");
+            throw badRequest("topup-code-expiry-invalid", "problem.topup-code-expiry-invalid");
         }
         if (codes.existsByCodeHash(codeHash)) {
             throw duplicate();
@@ -170,9 +167,7 @@ public class WalletTopupCodeAdminService {
     private void assertUnderCap(BigDecimal amount, String code) {
         BigDecimal eur = "EUR".equals(code) ? amount : exchangeRateService.toEurPivot(amount, code);
         if (eur.compareTo(CAP_EUR) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-amount-cap",
-                    "Unprocessable", "Un code ne peut pas dépasser 500 € d'équivalent",
-                    Map.of("capEur", CAP_EUR.toPlainString(), "eurEquivalent", eur.toPlainString(), "currency", code));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "topup-code-amount-cap", "problem.topup-code-amount-cap", Map.of("capEur", CAP_EUR.toPlainString(), "eurEquivalent", eur.toPlainString(), "currency", code));
         }
     }
 
@@ -182,17 +177,15 @@ public class WalletTopupCodeAdminService {
         return sb.toString();
     }
 
-    private static YadonyBusinessException badRequest(String code, String detail) {
-        return new YadonyBusinessException(HttpStatus.BAD_REQUEST, code, "Bad Request", detail);
+    private static YadonyBusinessException badRequest(String code, String key, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, code, key, args);
     }
 
     private static YadonyBusinessException duplicate() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "topup-code-duplicate", "Conflict",
-                "Un code de recharge existe déjà avec ce code");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "topup-code-duplicate", "problem.topup-code-duplicate");
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "topup-code-not-found", "Not Found",
-                "Code de recharge introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "topup-code-not-found", "problem.topup-code-not-found");
     }
 }

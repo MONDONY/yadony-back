@@ -30,9 +30,6 @@ public class ExchangeRateLookup {
     public BigDecimal unitsPerEur(String currency) {
         return repository.findByCurrency(currency)
                 .map(ExchangeRateEntity::getUnitsPerEur)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        ExchangeRateService.RATE_MISSING_CODE, "Exchange Rate Missing",
-                        "Aucun taux de change n'est configure pour la devise " + currency,
-                        Map.of("currency", currency)));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, ExchangeRateService.RATE_MISSING_CODE, "problem.exchange-rate-missing", Map.of("currency", currency), String.valueOf(currency)));
     }
 }

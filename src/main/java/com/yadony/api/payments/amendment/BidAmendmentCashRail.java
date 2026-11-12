@@ -186,8 +186,8 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
     private YadonyBusinessException unfunded(UUID travelerId, CommissionSplit split, String bidCurrency,
                                              String complement, BigDecimal commission) {
         boolean hasCard = users.findById(travelerId).map(u -> u.getCommissionPaymentMethodId() != null).orElse(false);
-        return CommissionUnfundedProblem.of("amendment-commission-unfunded", "Amendment Commission Unfunded",
-                "Votre solde ne couvre pas la commission de cette modification : rechargez-le ou payez par carte",
+        return CommissionUnfundedProblem.of("amendment-commission-unfunded",
+                "problem.amendment-commission-unfunded",
                 split, bidCurrency, complement, commission, hasCard,
                 collector.alternatives(travelerId, bidCurrency, complement, commission));
     }
@@ -257,8 +257,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "amendment-commission-charge-failed",
-                    "Commission Charge Failed", "Le débit de la commission n'a pas pu aboutir. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "amendment-commission-charge-failed", "problem.supplement-commission-charge-failed");
         }
         return applyPaymentIntent(amendmentId, pi, "create", attempt);
     }
@@ -297,9 +296,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             ledger.reportStale(a.getId(), previous, "retry-check");
         } else if ("processing".equals(pi.status())) {
             ledger.abortRetry(a.getId());
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-commission-in-progress",
-                    "Amendment Commission In Progress",
-                    "Un prélèvement de votre commission est encore en cours de traitement : réessayez dans quelques minutes");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-commission-in-progress", "problem.amendment-commission-in-progress");
         }
     }
 
@@ -310,8 +307,7 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de vérifier le paiement auprès de Stripe");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error");
         }
     }
 
@@ -329,17 +325,14 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
      * d'abord celui du colis.
      */
     public BidAmendmentResponse confirmCommission(UUID bidId, UUID amendmentId, String firebaseUid) {
-        UserEntity traveler = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        UserEntity traveler = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
         BidAmendmentEntity a = amendments.findById(amendmentId).filter(found -> found.getBidId().equals(bidId))
                 .orElseThrow(BidAmendmentCashRail::notFound);
         if (!traveler.getId().equals(a.getTravelerId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas partie à cette modification");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.not-amendment-party");
         }
         if (a.getRail() != BidSupplementRail.CASH) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-rail-unavailable",
-                    "Amendment Rail Unavailable", "Cette modification n'a pas de commission à confirmer");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-rail-unavailable", "problem.amendment-rail-unavailable.cette-modification-n-a-pas-de-commission-a");
         }
         if (a.getStatus() != BidAmendmentStatus.COMMISSION_PENDING) {
             return response(a, null).amendment();
@@ -473,13 +466,10 @@ public class BidAmendmentCashRail implements BidAmendmentRailHandler {
         if (declineCode != null) {
             props.put("declineCode", declineCode);
         }
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-commission-card-declined",
-                "Commission Card Declined",
-                "Votre carte commission a été refusée : rien n'a été prélevé, vous pouvez réessayer d'accepter", props);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-commission-card-declined", "problem.amendment-commission-card-declined", props);
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "amendment-not-found", "Amendment Not Found",
-                "Modification introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "amendment-not-found", "problem.amendment-not-found");
     }
 }

@@ -102,15 +102,13 @@ public class CashCommissionController {
         String firebaseUid = requireFirebaseUid();
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(u -> u.getId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
     }
 
     private String requireFirebaseUid() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return (String) auth.getPrincipal();
     }

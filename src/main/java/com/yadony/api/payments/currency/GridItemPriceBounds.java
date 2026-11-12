@@ -31,19 +31,17 @@ public final class GridItemPriceBounds {
         BigDecimal min = CurrencyBounds.minGridItemPrice(currency);
         BigDecimal max = CurrencyBounds.maxGridItemPrice(currency);
         if (unitPriceNet.compareTo(min) < 0) {
-            throw refusal(PricePerKgBounds.REASON_TOO_LOW, min, max, currency,
-                    "Ce prix d'article est inférieur au minimum autorisé dans cette devise.");
+            throw refusal(PricePerKgBounds.REASON_TOO_LOW, min, max, currency, "problem.price-out-of-bounds.ce-prix-d-article-est-inferieur");
         }
         if (unitPriceNet.compareTo(max) > 0) {
-            throw refusal(PricePerKgBounds.REASON_TOO_HIGH, min, max, currency,
-                    "Ce prix d'article dépasse le plafond autorisé dans cette devise.");
+            throw refusal(PricePerKgBounds.REASON_TOO_HIGH, min, max, currency, "problem.price-out-of-bounds.ce-prix-d-article-depasse-le");
         }
     }
 
     private static YadonyBusinessException refusal(String reason, BigDecimal min, BigDecimal max,
-            SupportedCurrency currency, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE, "Price Out Of Bounds",
-                detail, Map.of(
+            SupportedCurrency currency, String key) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE, key,
+                Map.of(
                         "reason", reason,
                         "min", min,
                         "max", max,

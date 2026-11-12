@@ -26,10 +26,10 @@ public final class CommissionUnfundedProblem {
 
     /**
      * @param errorCode code du problème ({@code supplement-commission-unfunded},
-     *                  {@code amendment-commission-unfunded}) ; le titre en est dérivé par l'appelant.
+     *                  {@code amendment-commission-unfunded}) ; le titre et le détail viennent de la clé i18n {@code messageKey}.
      * @param split     répartition non couverte rendue par {@link WalletCommissionCollector#plan}.
      */
-    public static YadonyBusinessException of(String errorCode, String title, String detail, CommissionSplit split,
+    public static YadonyBusinessException of(String errorCode, String messageKey, CommissionSplit split,
                                              String bidCurrency, String complementCurrency, BigDecimal commission,
                                              boolean hasCard, List<FundingAlternativeDto> alternatives) {
         BigDecimal missing = split.sameCurrency()
@@ -48,6 +48,6 @@ public final class CommissionUnfundedProblem {
         props.put("bidCurrency", bidCurrency);
         props.put("alternatives", alternatives);
         props.put("fundingDetail", CommissionFundingDetailDto.from(split));
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, title, detail, props);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, messageKey, props);
     }
 }

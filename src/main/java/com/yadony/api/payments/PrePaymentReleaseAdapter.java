@@ -205,7 +205,6 @@ public class PrePaymentReleaseAdapter implements PrePaymentReleasePort {
     }
 
     private static YadonyBusinessException stripeError() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                "Impossible de joindre le service de paiement. Réessayez dans un instant.");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error.impossible-de-joindre-le-service-de-paiement-reessayez");
     }
 }

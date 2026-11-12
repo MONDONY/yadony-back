@@ -109,17 +109,13 @@ public class WalletExternalRefundService {
     public WalletExternalRefundHoldEntity release(UUID userId, UUID holdId, UUID adminId, String note) {
         String trimmed = note == null ? "" : note.trim();
         if (trimmed.isEmpty() || trimmed.length() > NOTE_MAX_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "wallet-external-refund-hold-note-invalid",
-                    "Bad Request", "Indiquez comment le solde a été régularisé (" + NOTE_MAX_LENGTH
-                    + " caractères au plus)");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "wallet-external-refund-hold-note-invalid", "problem.wallet-external-refund-hold-note-invalid", String.valueOf(NOTE_MAX_LENGTH));
         }
         WalletExternalRefundHoldEntity hold = holdRepository.findById(holdId)
                 .filter(h -> h.getUserId().equals(userId))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "wallet-external-refund-hold-not-found", "Not Found", "Gel introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "wallet-external-refund-hold-not-found", "problem.wallet-external-refund-hold-not-found"));
         if (holdRepository.release(holdId, userId, adminId, LocalDateTime.now(ZoneOffset.UTC), trimmed) == 0) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "wallet-external-refund-hold-already-released",
-                    "Conflict", "Ce gel a déjà été levé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "wallet-external-refund-hold-already-released", "problem.wallet-external-refund-hold-already-released");
         }
         auditService.log("wallet_external_refund_hold", holdId, "WALLET_EXTERNAL_REFUND_HOLD_RELEASED", adminId,
                 Map.of("userId", userId.toString(), "currency", hold.getCurrency(),

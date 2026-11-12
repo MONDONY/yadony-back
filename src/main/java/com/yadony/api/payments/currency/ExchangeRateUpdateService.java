@@ -91,31 +91,20 @@ public class ExchangeRateUpdateService {
         String normalized = normalize(currency);
 
         if (FIXED_PARITY_CURRENCIES.contains(normalized)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-fixed-parity", "Fixed Parity Currency",
-                    normalized + " a une parite fixe avec l'euro (655,957), elle ne se pilote pas depuis cet ecran.",
-                    Map.of("currency", normalized));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "exchange-rate-fixed-parity", "problem.exchange-rate-fixed-parity", Map.of("currency", normalized), String.valueOf(normalized));
         }
 
         validateRate(unitsPerEur);
 
         ExchangeRateEntity entity = exchangeRateRepository.findByCurrency(normalized)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "exchange-rate-not-found", "Exchange Rate Not Found",
-                        "Aucun taux de change n'existe pour la devise " + normalized));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "exchange-rate-not-found", "problem.exchange-rate-not-found", String.valueOf(normalized)));
 
         BigDecimal previous = entity.getUnitsPerEur();
         if (!confirmLargeChange && previous != null && previous.signum() > 0) {
             BigDecimal change = unitsPerEur.subtract(previous).abs()
                     .divide(previous, 6, java.math.RoundingMode.HALF_UP);
             if (change.compareTo(LARGE_CHANGE) > 0) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "exchange-rate-large-change", "Exchange Rate Large Change",
-                        "Le nouveau taux s'écarte de plus de 10 % du taux en place : confirmez la saisie.",
-                        Map.of("currency", normalized, "currentRate", previous.toPlainString(),
-                                "newRate", unitsPerEur.toPlainString(),
-                                "changePercent", change.movePointRight(2).setScale(1, java.math.RoundingMode.HALF_UP)
-                                        .toPlainString()));
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "exchange-rate-large-change", "problem.exchange-rate-large-change", Map.of("currency", normalized, "currentRate", previous.toPlainString(), "newRate", unitsPerEur.toPlainString(), "changePercent", change.movePointRight(2).setScale(1, java.math.RoundingMode.HALF_UP) .toPlainString()));
             }
         }
 
@@ -142,21 +131,13 @@ public class ExchangeRateUpdateService {
 
     private void validateRate(BigDecimal unitsPerEur) {
         if (unitsPerEur == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-required", "Exchange Rate Required",
-                    "Le taux de change est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "exchange-rate-required", "problem.exchange-rate-required");
         }
         if (unitsPerEur.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-not-positive", "Exchange Rate Not Positive",
-                    "Le taux de change doit etre strictement positif",
-                    Map.of("unitsPerEur", unitsPerEur.toPlainString()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "exchange-rate-not-positive", "problem.exchange-rate-not-positive", Map.of("unitsPerEur", unitsPerEur.toPlainString()));
         }
         if (unitsPerEur.compareTo(MAX_UNITS_PER_EUR) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "exchange-rate-out-of-range", "Exchange Rate Out Of Range",
-                    "Le taux de change depasse la borne maximale autorisee (" + MAX_UNITS_PER_EUR.toPlainString() + ")",
-                    Map.of("unitsPerEur", unitsPerEur.toPlainString(), "max", MAX_UNITS_PER_EUR.toPlainString()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "exchange-rate-out-of-range", "problem.exchange-rate-out-of-range", Map.of("unitsPerEur", unitsPerEur.toPlainString(), "max", MAX_UNITS_PER_EUR.toPlainString()), String.valueOf(MAX_UNITS_PER_EUR.toPlainString()));
         }
     }
 

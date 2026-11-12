@@ -288,8 +288,7 @@ public class BidAmendmentService {
         Optional<BidAmendmentRailHandler> handler = handler(a.getRail());
         if (a.getStatus() == BidAmendmentStatus.PAYMENT_PENDING && handler.isPresent()
                 && !handler.get().mayExpire(a)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-payment-in-progress",
-                    "Amendment Payment In Progress", "Un paiement de cette modification est en cours de traitement");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-payment-in-progress", "problem.amendment-payment-in-progress");
         }
         close(a, BidAmendmentStatus.CANCELLED, BidAmendmentClosedReason.CANCELLED_BY_SENDER, sender.getId(), Map.of());
         return view(a, true);
@@ -355,8 +354,7 @@ public class BidAmendmentService {
             throw BidAmendmentEligibility.exceptionFor("invalid-bid-status");
         }
         if (a.getStatus() != BidAmendmentStatus.ACCEPTED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-not-accepted", "Amendment Not Accepted",
-                    "Cette modification n'est pas acceptée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-not-accepted", "problem.amendment-not-accepted");
         }
         BidAmendmentStatus previous = a.getStatus();
         a.setClosedReason(BidAmendmentClosedReason.NOT_BROUGHT);
@@ -720,8 +718,7 @@ public class BidAmendmentService {
     private BidAmendmentEntity lockForResponse(UUID bidId, UUID amendmentId) {
         lockBid(bidId);
         lockAnnouncement(bid(bidId));
-        return amendments.findByIdAndBidIdForUpdate(amendmentId, bidId).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "amendment-not-found", "Amendment Not Found", "Modification introuvable"));
+        return amendments.findByIdAndBidIdForUpdate(amendmentId, bidId).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "amendment-not-found", "problem.amendment-not-found"));
     }
 
     private void requireAwaitingTraveler(BidAmendmentEntity a, UserEntity traveler) {
@@ -732,8 +729,7 @@ public class BidAmendmentService {
             throw notPending();
         }
         if (!a.getExpiresAt().isAfter(window.now())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-expired", "Amendment Expired",
-                    "Le délai de réponse à cette modification est dépassé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-expired", "problem.amendment-expired");
         }
     }
 
@@ -763,9 +759,7 @@ public class BidAmendmentService {
             props.put("min", min);
             props.put("max", max);
             props.put("currency", currency.name());
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-amount-out-of-range",
-                    "Amendment Amount Out Of Range", "Le montant de la modification est hors des limites autorisées",
-                    props);
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-amount-out-of-range", "problem.amendment-amount-out-of-range", props);
         }
         return q;
     }
@@ -832,8 +826,7 @@ public class BidAmendmentService {
     }
 
     private UserEntity user(String firebaseUid) {
-        return users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        return users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
     }
 
     private UserEntity traveler(AnnouncementEntity announcement) {
@@ -866,22 +859,18 @@ public class BidAmendmentService {
     }
 
     private static YadonyBusinessException bidNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                "Transaction introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable");
     }
 
     private static YadonyBusinessException announcementNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                "Announcement Not Found", "Annonce introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
     }
 
     private static YadonyBusinessException forbidden() {
-        return new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                "Vous n'êtes pas partie à cette modification");
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.not-amendment-party");
     }
 
     private static YadonyBusinessException notPending() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-not-pending", "Amendment Not Pending",
-                "Cette modification n'attend plus de réponse");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-not-pending", "problem.amendment-not-pending");
     }
 }

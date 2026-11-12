@@ -58,8 +58,7 @@ public class BidAmendmentCapacity {
      */
     public static void requireAvailable(AnnouncementEntity announcement, BigDecimal addedKg) {
         if (!isAvailable(announcement, addedKg)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-capacity-unavailable",
-                    "Amendment Capacity Unavailable", "Le trajet n'a plus assez de kilos libres pour cet ajout");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-capacity-unavailable", "problem.amendment-capacity-unavailable");
         }
     }
 
