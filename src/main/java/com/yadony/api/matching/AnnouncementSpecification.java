@@ -313,7 +313,8 @@ public class AnnouncementSpecification {
 
     /**
      * « Passe par » : les trajets des voyages qui s'arrêtent dans {@code city}, soit une étape
-     * qui en part ou y arrive (comparaison insensible à la casse). Un trajet hors voyage
+     * publiée qui en part ou y arrive (statuts de {@link AnnouncementStatus#SEARCHABLE} ; brouillon,
+     * annulée ou retirée ne comptent pas ; comparaison insensible à la casse). Un trajet hors voyage
      * ({@code tripGroupId} nul) n'est retenu que s'il part de la ville ou y arrive lui-même.
      * Départ et arrivée de la recherche restent appliqués séparément, à l'étape.
      */
@@ -324,6 +325,7 @@ public class AnnouncementSpecification {
             Root<AnnouncementEntity> leg = legs.from(AnnouncementEntity.class);
             legs.select(leg.<UUID>get("tripGroupId")).where(
                     cb.isNotNull(leg.get("tripGroupId")),
+                    leg.get("status").in(AnnouncementStatus.SEARCHABLE),
                     cb.or(cb.equal(cb.lower(leg.get("departureCity")), wanted),
                             cb.equal(cb.lower(leg.get("arrivalCity")), wanted)));
             return cb.or(

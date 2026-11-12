@@ -28,4 +28,12 @@ public enum AnnouncementStatus {
      */
     public static final Set<AnnouncementStatus> OUT_OF_MARKET =
             EnumSet.of(REMOVED_BY_ADMIN, CANCELLED, COMPLETED);
+
+    /**
+     * Statuts qui peuvent figurer dans une recherche de trajets : réservables ({@code ACTIVE}) et
+     * complets ({@code FULL}, affichés après les réservables avec {@code includeFull}). Un brouillon,
+     * un trajet annulé, retiré, en cours ou terminé n'y entre jamais. « Passe par » ne compte que
+     * les étapes de ces statuts : une étape qui n'existe plus pour la recherche n'est plus un arrêt.
+     */
+    public static final Set<AnnouncementStatus> SEARCHABLE = EnumSet.of(ACTIVE, FULL);
 }

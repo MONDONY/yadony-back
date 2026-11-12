@@ -231,6 +231,10 @@ class PublicAnnouncementSearchControllerIT {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("invalid-search"));
+        // Même borne que les villes de la recherche (80 caractères).
+        mockMvc.perform(get(PUBLIC_PATH).param("viaCity", "x".repeat(81)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid-search"));
         mockMvc.perform(get(PUBLIC_PATH).param("transportMode", "teleporter"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("invalid-search"));

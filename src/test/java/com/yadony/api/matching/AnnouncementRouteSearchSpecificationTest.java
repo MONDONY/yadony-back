@@ -119,6 +119,58 @@ class AnnouncementRouteSearchSpecificationTest {
         assertThat(search(spec)).containsExactly(leg1);
     }
 
+    @Test
+    void voyageStopsAt_cancelledLegInTheCity_voyageDoesNotSurface() {
+        UUID voyage = UUID.randomUUID();
+        UUID leg1 = persist("Paris", "Marseille", null, voyage, "10");
+        persist("Marseille", "Tanger", null, voyage, "10", AnnouncementStatus.CANCELLED);
+
+        assertThat(search(AnnouncementSpecification.voyageStopsAt("Tanger"))).doesNotContain(leg1);
+    }
+
+    @Test
+    void voyageStopsAt_draftLegInTheCity_voyageDoesNotSurface() {
+        UUID voyage = UUID.randomUUID();
+        UUID leg1 = persist("Paris", "Marseille", null, voyage, "10");
+        persist("Marseille", "Tanger", null, voyage, "10", AnnouncementStatus.DRAFT);
+
+        assertThat(search(AnnouncementSpecification.voyageStopsAt("Tanger"))).doesNotContain(leg1);
+    }
+
+    @Test
+    void voyageStopsAt_removedByAdminLegInTheCity_voyageDoesNotSurface() {
+        UUID voyage = UUID.randomUUID();
+        UUID leg1 = persist("Paris", "Marseille", null, voyage, "10");
+        persist("Marseille", "Tanger", null, voyage, "10", AnnouncementStatus.REMOVED_BY_ADMIN);
+
+        assertThat(search(AnnouncementSpecification.voyageStopsAt("Tanger"))).doesNotContain(leg1);
+    }
+
+    @Test
+    void voyageStopsAt_softDeletedLegInTheCity_voyageDoesNotSurface() {
+        UUID voyage = UUID.randomUUID();
+        UUID leg1 = persist("Paris", "Marseille", null, voyage, "10");
+        UUID deleted = persist("Marseille", "Tanger", null, voyage, "10");
+        AnnouncementEntity entity = repository.findById(deleted).orElseThrow();
+        entity.setDeletedAt(java.time.LocalDateTime.now());
+        repository.saveAndFlush(entity);
+
+        assertThat(search(AnnouncementSpecification.voyageStopsAt("Tanger"))).doesNotContain(leg1);
+    }
+
+    @Test
+    void voyageStopsAt_activeOrFullLegInTheCity_voyageSurfaces() {
+        UUID voyage = UUID.randomUUID();
+        UUID leg1 = persist("Paris", "Marseille", null, voyage, "10");
+        persist("Marseille", "Tanger", null, voyage, "10", AnnouncementStatus.ACTIVE);
+        assertThat(search(AnnouncementSpecification.voyageStopsAt("Tanger"))).contains(leg1);
+
+        UUID fullVoyage = UUID.randomUUID();
+        UUID legA = persist("Lyon", "Alger", null, fullVoyage, "10");
+        persist("Alger", "Tunis", null, fullVoyage, "10", AnnouncementStatus.FULL);
+        assertThat(search(AnnouncementSpecification.voyageStopsAt("Tunis"))).contains(legA);
+    }
+
     // ─── garde-fou (déjà vert) : le curseur de kilos n'a pas de borne haute ─
 
     @Test
@@ -133,6 +185,11 @@ class AnnouncementRouteSearchSpecificationTest {
     }
 
     private UUID persist(String dep, String arr, ItemSize maxSize, UUID tripGroupId, String availableKg) {
+        return persist(dep, arr, maxSize, tripGroupId, availableKg, AnnouncementStatus.ACTIVE);
+    }
+
+    private UUID persist(String dep, String arr, ItemSize maxSize, UUID tripGroupId, String availableKg,
+                         AnnouncementStatus status) {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setTravelerId(UUID.randomUUID());
         a.setDepartureCity(dep);
@@ -149,7 +206,7 @@ class AnnouncementRouteSearchSpecificationTest {
         a.setAvailableKg(new BigDecimal(availableKg));
         a.setTotalKg(new BigDecimal(availableKg));
         a.setPricePerKg(new BigDecimal("5"));
-        a.setStatus(AnnouncementStatus.ACTIVE);
+        a.setStatus(status);
         a.setMaxItemSize(maxSize);
         a.setTripGroupId(tripGroupId);
         if (tripGroupId != null) {
