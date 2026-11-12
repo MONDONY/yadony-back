@@ -63,8 +63,45 @@ public record PackageRequestResponse(
      * Grille de commission figée sur la demande ({@code null} pour une demande sans grille).
      * Additif, en fin de record : l'app s'en sert pour ses aperçus.
      */
-    UUID commissionGridId
+    UUID commissionGridId,
+    /**
+     * Taille du colis (« S », « M », « L », « XL »), facultative. Toujours sérialisée, null compris :
+     * null = taille non renseignée. Additif, en fin de record.
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS) String itemSize
 ) {
+    /** Constructeur de compatibilité, sans {@code itemSize} (null) : l'arité d'avant la taille. */
+    public PackageRequestResponse(
+            UUID id, UUID senderId,
+            String departureCity, String arrivalCity,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            String description, BigDecimal targetPriceEur, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            PackageRequestStatus status,
+            LocalDateTime createdAt,
+            boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            BigDecimal grossPriceEur,
+            List<PackageRequestPhotoResponse> photos,
+            UUID viewerThreadId,
+            String viewerThreadStatus,
+            String promoCode,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency,
+            boolean moderationRemoved,
+            UUID commissionGridId) {
+        this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
+            transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
+            deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
+            viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
+            convertedDisplayPrice, convertedCurrency, moderationRemoved, commissionGridId, null);
+    }
+
     /** Constructeur de compatibilité, sans {@code commissionGridId} (null). */
     public PackageRequestResponse(
             UUID id, UUID senderId,
@@ -158,6 +195,6 @@ public record PackageRequestResponse(
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
             viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
-            convertedDisplayPrice, convertedCurrency, moderationRemoved, commissionGridId);
+            convertedDisplayPrice, convertedCurrency, moderationRemoved, commissionGridId, itemSize);
     }
 }

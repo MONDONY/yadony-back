@@ -159,4 +159,29 @@ class ParcelFitRulesTest {
         assertThat(ParcelFitRules.fits(trip(ItemSize.M, "20"), null, null)).isTrue();
         assertThat(ParcelFitRules.fits(trip(null, null), bd("500"), ItemSize.XL)).isTrue();
     }
+
+    @Test
+    @DisplayName("taille d'une demande gardée en voiture, bus et « peu importe » (null), effacée sinon")
+    void requestItemSize_keptForRoadAndAny() {
+        assertThat(ParcelFitRules.normalizeRequestItemSize(ItemSize.M, TransportMode.CAR)).isEqualTo(ItemSize.M);
+        assertThat(ParcelFitRules.normalizeRequestItemSize(ItemSize.M, TransportMode.BUS)).isEqualTo(ItemSize.M);
+        assertThat(ParcelFitRules.normalizeRequestItemSize(ItemSize.M, null)).isEqualTo(ItemSize.M);
+        assertThat(ParcelFitRules.normalizeRequestItemSize(ItemSize.M, TransportMode.PLANE)).isNull();
+        assertThat(ParcelFitRules.normalizeRequestItemSize(ItemSize.M, TransportMode.BOAT)).isNull();
+        assertThat(ParcelFitRules.normalizeRequestItemSize(ItemSize.M, TransportMode.TRAIN)).isNull();
+        assertThat(ParcelFitRules.normalizeRequestItemSize(null, TransportMode.CAR)).isNull();
+    }
+
+    @Test
+    @DisplayName("taille d'une demande à la modification : absente = conservée, NONE = effacée, sinon remplacée")
+    void requestItemSize_onUpdate() {
+        assertThat(ParcelFitRules.resolveRequestItemSizeOnUpdate(null, ItemSize.L, TransportMode.CAR))
+                .isEqualTo(ItemSize.L);
+        assertThat(ParcelFitRules.resolveRequestItemSizeOnUpdate("NONE", ItemSize.L, TransportMode.CAR)).isNull();
+        assertThat(ParcelFitRules.resolveRequestItemSizeOnUpdate("xl", ItemSize.L, TransportMode.BUS))
+                .isEqualTo(ItemSize.XL);
+        assertThat(ParcelFitRules.resolveRequestItemSizeOnUpdate(null, ItemSize.L, null)).isEqualTo(ItemSize.L);
+        assertThat(ParcelFitRules.resolveRequestItemSizeOnUpdate(null, ItemSize.L, TransportMode.PLANE)).isNull();
+        assertThat(ParcelFitRules.resolveRequestItemSizeOnUpdate("M", null, TransportMode.BOAT)).isNull();
+    }
 }

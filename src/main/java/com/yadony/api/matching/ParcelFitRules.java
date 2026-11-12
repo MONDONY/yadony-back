@@ -24,6 +24,24 @@ public final class ParcelFitRules {
     }
 
     /**
+     * Taille d'une demande de colis gardée en voiture, bus et « peu importe » ({@code mode == null}) ;
+     * ignorée (effacée) en avion, bateau, train et autre. Facultative : {@code null} reste {@code null}.
+     */
+    public static ItemSize normalizeRequestItemSize(ItemSize size, TransportMode mode) {
+        return mode == null || mode == TransportMode.CAR || mode == TransportMode.BUS ? size : null;
+    }
+
+    /**
+     * Taille d'une demande à enregistrer à la modification : absente = taille actuelle conservée ;
+     * « NONE » (ou valeur inconnue) = effacée ; sinon la taille demandée. Puis normalisée selon le mode
+     * final, donc effacée quand le nouveau mode l'interdit.
+     */
+    public static ItemSize resolveRequestItemSizeOnUpdate(String requested, ItemSize current, TransportMode mode) {
+        ItemSize candidate = requested == null ? current : ItemSize.parseOrNull(requested);
+        return normalizeRequestItemSize(candidate, mode);
+    }
+
+    /**
      * Poids maximal par colis gardé en voiture, bus et bateau ; ignoré pour tout autre mode. Zéro
      * (sentinelle d'effacement de la requête) vaut « aucune limite » : {@code null}.
      */
