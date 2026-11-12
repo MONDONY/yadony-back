@@ -484,12 +484,16 @@ class AnnouncementBoatPublishIT {
         tooLarge.put("volumeCapacityM3", 10000);
         Map<String, Object> freePrice = boatM3Body();
         freePrice.put("pricePerM3", 0);
+        Map<String, Object> roundsToZero = boatM3Body();
+        roundsToZero.put("pricePerM3", 0.004);
 
         postTrip(tooSmall).andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.violations.volumeCapacityM3").exists());
         postTrip(tooLarge).andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.violations.volumeCapacityM3").exists());
         postTrip(freePrice).andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.pricePerM3").exists());
+        postTrip(roundsToZero).andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.violations.pricePerM3").exists());
     }
 
@@ -579,6 +583,10 @@ class AnnouncementBoatPublishIT {
                         .with(authentication(asSender())))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         assertThat(page.path("content").isArray()).isTrue();
+        for (JsonNode n : page.path("content")) {
+            assertThat(n.path("id").asText())
+                    .as("un trajet au m³ n'a pas de kilos : exclu du filtre minAvailableKg").isNotEqualTo(id);
+        }
         JsonNode all = objectMapper.readTree(mockMvc.perform(get("/announcements")
                         .param("departureCity", "Marseille").param("arrivalCity", "Dakar")
                         .with(authentication(asSender())))
@@ -629,6 +637,27 @@ class AnnouncementBoatPublishIT {
 
         putTrip(id, boatM3Body()).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("pricing-unit-locked"));
+    }
+
+    @Test
+    void editBoatPricingUnit_withDeliveredBid_409() throws Exception {
+        seed(true, false);
+        String id = createTrip("BOAT", false);
+        UserEntity sender = userRepository.save(sender());
+        for (BidStatus finished : List.of(BidStatus.COMPLETED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED)) {
+            BidEntity bid = new BidEntity();
+            bid.setAnnouncementId(UUID.fromString(id));
+            bid.setSenderId(sender.getId());
+            bid.setWeightKg(new BigDecimal("5"));
+            bid.setStatus(finished);
+            bid.setCurrency("EUR");
+            bidRepository.save(bid);
+
+            putTrip(id, boatM3Body()).andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("pricing-unit-locked"));
+            bidRepository.delete(bid);
+        }
+        assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().isPricedPerM3()).isFalse();
     }
 
     @Test

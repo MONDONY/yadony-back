@@ -222,7 +222,10 @@ public class MatchingService {
      * Point d'extension unique : ajouter un critère ici le propage aux trois chemins.
      */
     private boolean matches(PackageRequestEntity request, AnnouncementEntity announcement) {
-        return fitsMode(request, announcement)
+        // Jusqu'à la réservation au m³ (tâche BB2), un trajet vendu au m³ ne se réserve pas : le
+        // proposer en notification voyageur ou en suggestion expéditeur mènerait à un 422.
+        return !announcement.isPricedPerM3()
+                && fitsMode(request, announcement)
                 && fitsWeight(request, announcement)
                 && fitsSize(request, announcement)
                 && fitsDate(request, announcement);

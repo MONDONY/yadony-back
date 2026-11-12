@@ -126,7 +126,7 @@ public record AnnouncementRequest(
         BigDecimal volumeCapacityM3,
         // Prix au m³, sans borne haute métier (plafond technique de NUMERIC(10,2)) ; exactement un
         // de pricePerM3 / pricePerKg en bateau (422 boat-price-required).
-        @DecimalMin(value = "0", inclusive = false, message = "{validation.trip.price-per-m3.positive}")
+        @DecimalMin(value = "0.01", message = "{validation.trip.price-per-m3.positive}")
         @DecimalMax(value = "99999999.99", message = "{validation.trip.price-per-m3.max}")
         BigDecimal pricePerM3
 ) {

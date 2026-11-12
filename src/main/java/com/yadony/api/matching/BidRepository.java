@@ -385,6 +385,9 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     List<Object[]> sumReservedNetByAnnouncementIds(@Param("ids") java.util.Collection<UUID> ids,
                                                    @Param("statuses") List<String> statuses);
 
+    /** Au moins un bid non supprimé sur le trajet, quel que soit son statut (livré et refusé compris). */
+    boolean existsByAnnouncementId(UUID announcementId);
+
     boolean existsByAnnouncementIdAndStatus(UUID announcementId, BidStatus status);
 
     boolean existsByAnnouncementIdAndStatusIn(UUID announcementId, List<BidStatus> statuses);

@@ -235,6 +235,11 @@ public class AnnouncementService {
      * existe : bid d'un statut de {@link #CURRENCY_LOCKING_BID_STATUSES}, ou fil de négociation
      * d'une demande d'envoi lié à ce trajet (statut actif).
      */
+    private boolean isPricingUnitLocked(java.util.UUID announcementId) {
+        return bidRepository.existsByAnnouncementId(announcementId)
+                || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
+    }
+
     private boolean isCurrencyLocked(java.util.UUID announcementId) {
         return bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(CURRENCY_LOCKING_BID_STATUSES))
                 || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
@@ -1730,8 +1735,10 @@ public class AnnouncementService {
         }
         final boolean pricedPerM3 = isPricedPerM3(request);
         // Passer du kilo au m³ (ou l'inverse) change ce que portent les demandes, offres et
-        // négociations vivantes : refusé dès qu'il en existe une, comme le changement de devise.
-        if (pricedPerM3 != announcement.isPricedPerM3() && isCurrencyLocked(id)) {
+        // négociations vivantes, et efface le prix au kilo que lisent encore les revenus des colis
+        // terminés : refusé dès qu'il existe un colis ou une offre, quel que soit son statut
+        // (livré, no-show et refusé compris), ou une négociation vivante.
+        if (pricedPerM3 != announcement.isPricedPerM3() && isPricingUnitLocked(id)) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "pricing-unit-locked",
                     "problem.pricing-unit-locked");
         }

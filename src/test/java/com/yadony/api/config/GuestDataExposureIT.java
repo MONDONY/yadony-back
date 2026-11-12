@@ -758,6 +758,10 @@ class GuestDataExposureIT {
                     .doesNotContain(interdit);
         }
 
+        // pricePerM3 est le NET au m³ : sa clé est autorisée (toujours sérialisée) mais sa valeur doit
+        // rester nulle sur toute surface invité, comme pricePerKg l'est par la liste noire.
+        assertPricePerM3Masque(corps, surface);
+
         Set<String> inconnues = new TreeSet<>(cles);
         inconnues.removeAll(CLES_AUTORISEES);
         assertThat(inconnues).as(
@@ -778,6 +782,21 @@ class GuestDataExposureIT {
         assertThat(brut.toLowerCase(Locale.ROOT))
                 .as("%s : fragment de numero de telephone dans la charge servie a un invite", surface)
                 .doesNotContain(TEL_DESTINATAIRE.substring(1));
+    }
+
+    private static void assertPricePerM3Masque(JsonNode noeud, String surface) {
+        if (noeud.isObject()) {
+            for (Map.Entry<String, JsonNode> propriete : noeud.properties()) {
+                if ("pricePerM3".equals(propriete.getKey())) {
+                    assertThat(propriete.getValue().isNull())
+                            .as("%s : le net au m³ (pricePerM3) doit etre nul pour un invite", surface)
+                            .isTrue();
+                }
+                assertPricePerM3Masque(propriete.getValue(), surface);
+            }
+        } else if (noeud.isArray()) {
+            noeud.forEach(enfant -> assertPricePerM3Masque(enfant, surface));
+        }
     }
 
     private static void collecterCles(JsonNode noeud, Set<String> accumulateur) {
