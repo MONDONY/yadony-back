@@ -1645,11 +1645,12 @@ public class AnnouncementService {
         announcement.setStopsCount(TripStops.normalizeOnUpdate(
                 request.stopsCount(), announcement.getStopsCount(), request.transportMode()));
         announcement.setTransportMode(request.transportMode());
-        // Taille et poids maximaux selon le mode APRÈS modification : un passage à l'avion les efface.
-        announcement.setMaxItemSize(ParcelFitRules.normalizeMaxItemSize(
-                ItemSize.parseOrNull(request.maxItemSize()), request.transportMode()));
-        announcement.setMaxParcelWeightKg(ParcelFitRules.normalizeMaxParcelWeight(
-                request.maxParcelWeightKg(), request.transportMode()));
+        // Taille et poids maximaux : absents = conservés (client antérieur), « NONE » / 0 = effacés ;
+        // selon le mode APRÈS modification, un passage hors route les efface toujours.
+        announcement.setMaxItemSize(ParcelFitRules.resolveMaxItemSizeOnUpdate(
+                request.maxItemSize(), announcement.getMaxItemSize(), request.transportMode()));
+        announcement.setMaxParcelWeightKg(ParcelFitRules.resolveMaxParcelWeightOnUpdate(
+                request.maxParcelWeightKg(), announcement.getMaxParcelWeightKg(), request.transportMode()));
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         if (request.acceptedContentTypes() != null)

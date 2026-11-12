@@ -677,6 +677,104 @@ class AnnouncementControllerIntegrationTest {
             .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
     }
 
+    private String createRoadTripWithLimits(String uid) throws Exception {
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs(uid)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"M\", \"maxParcelWeightKg\": 30")))
+            .andExpect(status().isCreated())
+            .andReturn();
+        return objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+    }
+
+    @Test
+    void update_roadWithoutLimitFields_keepsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        // Ancienne app : le PUT n'envoie ni taille ni poids max.
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", "")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value("M"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(30.0));
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value("M"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(30.0));
+    }
+
+    @Test
+    void update_roadWithNoneAndZero_clearsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"NONE\", \"maxParcelWeightKg\": 0")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void update_roadToPlaneWithoutLimitFields_clearsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("PLANE", "")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void update_invalidLimits_rejected422AndLimitsUntouched() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxParcelWeightKg\": 0.3")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"XXL\"")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.maxItemSize").exists());
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(jsonPath("$.maxItemSize").value("M"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(30.0));
+    }
+
+    @Test
+    void create_noneAndZero_acceptedAsNoLimit() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"NONE\", \"maxParcelWeightKg\": 0")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
     @Test
     void create_maxParcelWeightAbove999999_99_rejected422() throws Exception {
         seedTraveler("uid-test-traveler");

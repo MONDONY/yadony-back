@@ -56,6 +56,39 @@ class ParcelFitRulesTest {
     }
 
     @Test
+    @DisplayName("poids max à 0 (sentinelle d'effacement) ou négatif : aucune limite")
+    void maxParcelWeight_zeroOrNegativeMeansNoLimit() {
+        assertThat(ParcelFitRules.normalizeMaxParcelWeight(BigDecimal.ZERO, TransportMode.CAR)).isNull();
+        assertThat(ParcelFitRules.normalizeMaxParcelWeight(bd("0.00"), TransportMode.BOAT)).isNull();
+        assertThat(ParcelFitRules.normalizeMaxParcelWeight(bd("-1"), TransportMode.CAR)).isNull();
+    }
+
+    @Test
+    @DisplayName("modification : taille absente = conservée, NONE = effacée, valeur = remplacée, hors route = effacée")
+    void resolveMaxItemSizeOnUpdate_rules() {
+        assertThat(ParcelFitRules.resolveMaxItemSizeOnUpdate(null, ItemSize.M, TransportMode.CAR)).isEqualTo(ItemSize.M);
+        assertThat(ParcelFitRules.resolveMaxItemSizeOnUpdate("NONE", ItemSize.M, TransportMode.CAR)).isNull();
+        assertThat(ParcelFitRules.resolveMaxItemSizeOnUpdate("XL", ItemSize.M, TransportMode.BUS)).isEqualTo(ItemSize.XL);
+        assertThat(ParcelFitRules.resolveMaxItemSizeOnUpdate(null, ItemSize.M, TransportMode.PLANE)).isNull();
+        assertThat(ParcelFitRules.resolveMaxItemSizeOnUpdate("L", ItemSize.M, TransportMode.BOAT)).isNull();
+        assertThat(ParcelFitRules.resolveMaxItemSizeOnUpdate(null, null, TransportMode.CAR)).isNull();
+    }
+
+    @Test
+    @DisplayName("modification : poids absent = conservé, 0 = effacé, valeur = remplacée, hors route et bateau = effacé")
+    void resolveMaxParcelWeightOnUpdate_rules() {
+        assertThat(ParcelFitRules.resolveMaxParcelWeightOnUpdate(null, bd("30"), TransportMode.CAR))
+                .isEqualByComparingTo("30");
+        assertThat(ParcelFitRules.resolveMaxParcelWeightOnUpdate(bd("0"), bd("30"), TransportMode.CAR)).isNull();
+        assertThat(ParcelFitRules.resolveMaxParcelWeightOnUpdate(bd("12"), bd("30"), TransportMode.BOAT))
+                .isEqualByComparingTo("12");
+        assertThat(ParcelFitRules.resolveMaxParcelWeightOnUpdate(null, bd("30"), TransportMode.BOAT))
+                .isEqualByComparingTo("30");
+        assertThat(ParcelFitRules.resolveMaxParcelWeightOnUpdate(null, bd("30"), TransportMode.TRAIN)).isNull();
+        assertThat(ParcelFitRules.resolveMaxParcelWeightOnUpdate(bd("12"), bd("30"), TransportMode.PLANE)).isNull();
+    }
+
+    @Test
     @DisplayName("unité de capacité par défaut : kilo exact en route, valise 23 kg sinon")
     void defaultCapacityUnit_perMode() {
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.CAR)).isEqualTo(CapacityUnit.KG_EXACT);

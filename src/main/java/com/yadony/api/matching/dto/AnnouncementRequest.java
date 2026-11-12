@@ -99,12 +99,19 @@ public record AnnouncementRequest(
         // valeur conservée (client antérieur).
         Integer stopsCount,
         // Taille maximale d'un colis (S, M, L, XL), route (voiture, bus) seulement : facultative,
-        // jamais exigée ; ignorée hors route (ParcelFitRules). Chaîne et non enum : minuscule ou
-        // valeur inconnue donnent un 422 avec « violations », pas une erreur de désérialisation.
-        @Pattern(regexp = "S|M|L|XL", message = "{validation.trip.max-item-size.pattern}")
+        // jamais exigée. Chaîne et non enum : minuscule ou valeur inconnue donnent un 422 avec
+        // « violations », pas une erreur de désérialisation.
+        // Création : absente = aucune limite. Modification, même règle que stopsCount : ABSENTE
+        // (null) = valeur conservée (client antérieur) ; « NONE » = effacer la limite. Passer le
+        // trajet à un mode hors route l'efface toujours, et hors route la valeur est ignorée
+        // (ParcelFitRules).
+        @Pattern(regexp = "NONE|S|M|L|XL", message = "{validation.trip.max-item-size.pattern}")
         String maxItemSize,
-        // Poids maximal par colis en kg, route et bateau seulement : facultatif ; ignoré ailleurs.
-        @DecimalMin(value = "0.5", message = "{validation.trip.max-parcel-weight.min}")
+        // Poids maximal par colis en kg, route et bateau seulement : facultatif. Création : absent
+        // ou 0 = aucune limite. Modification : ABSENT (null) = valeur conservée ; 0 = effacer la
+        // limite ; sinon entre 0,5 et 999 999,99. Passer à un mode hors route et bateau l'efface
+        // toujours ; hors route et bateau la valeur est ignorée.
+        @ClearableMaxParcelWeight
         @DecimalMax(value = "999999.99", message = "{validation.trip.max-parcel-weight.max}")
         BigDecimal maxParcelWeightKg
 ) {

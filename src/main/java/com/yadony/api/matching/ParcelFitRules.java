@@ -23,12 +23,34 @@ public final class ParcelFitRules {
         return mode == TransportMode.CAR || mode == TransportMode.BUS ? size : null;
     }
 
-    /** Poids maximal par colis gardé en voiture, bus et bateau ; ignoré pour tout autre mode. */
+    /**
+     * Poids maximal par colis gardé en voiture, bus et bateau ; ignoré pour tout autre mode. Zéro
+     * (sentinelle d'effacement de la requête) vaut « aucune limite » : {@code null}.
+     */
     public static BigDecimal normalizeMaxParcelWeight(BigDecimal kg, TransportMode mode) {
-        if (kg == null || !WeightLimits.isHeavyMode(mode)) {
+        if (kg == null || kg.signum() <= 0 || !WeightLimits.isHeavyMode(mode)) {
             return null;
         }
         return kg.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Taille maximale à enregistrer à la modification (même règle que {@code TripStops.normalizeOnUpdate}) :
+     * absente = taille actuelle conservée ; « NONE » = effacée ; sinon la taille demandée. Puis normalisée
+     * selon le mode final, donc toujours effacée hors route.
+     */
+    public static ItemSize resolveMaxItemSizeOnUpdate(String requested, ItemSize current, TransportMode mode) {
+        ItemSize candidate = requested == null ? current : ItemSize.parseOrNull(requested);
+        return normalizeMaxItemSize(candidate, mode);
+    }
+
+    /**
+     * Poids maximal à enregistrer à la modification : absent = poids actuel conservé ; 0 = effacé ;
+     * sinon le poids demandé. Puis normalisé selon le mode final.
+     */
+    public static BigDecimal resolveMaxParcelWeightOnUpdate(BigDecimal requested, BigDecimal current,
+                                                            TransportMode mode) {
+        return normalizeMaxParcelWeight(requested == null ? current : requested, mode);
     }
 
     /** Route : kilo exact (le voyageur donne un nombre de kilos) ; sinon valise de 23 kg. */

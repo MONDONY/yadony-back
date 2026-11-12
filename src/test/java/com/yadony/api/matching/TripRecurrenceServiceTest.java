@@ -118,6 +118,35 @@ class TripRecurrenceServiceTest {
         assertThat(cap.getValue().arrivalDate()).isEqualTo(cap.getValue().departureDate().plusDays(1));
     }
 
+    // Taille et poids max de la récurrence (chaîne, Double) recopiés sur chaque occurrence (BigDecimal).
+    @Test
+    void generate_copiesMaxItemSizeAndMaxParcelWeightToEachOccurrence() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setMaxItemSize("L");
+        rec.setMaxParcelWeightKg(20.5);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().maxItemSize()).isEqualTo("L");
+        assertThat(cap.getValue().maxParcelWeightKg()).isEqualByComparingTo("20.5");
+    }
+
+    @Test
+    void generate_withoutLimits_leavesMaxItemSizeAndMaxParcelWeightEmpty() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().maxItemSize()).isNull();
+        assertThat(cap.getValue().maxParcelWeightKg()).isNull();
+    }
+
     @Test
     void generate_sameDayRecurrence_leavesArrivalDateEmpty() {
         mockUser();
