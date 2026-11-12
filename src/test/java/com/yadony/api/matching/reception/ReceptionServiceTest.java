@@ -216,6 +216,24 @@ class ReceptionServiceTest {
         assertThat(r.updatedAt()).isNull();
     }
 
+    @Test
+    void toResponse_portsAnnouncementTransportMode() {
+        AnnouncementEntity trip = announcement();
+        trip.setTransportMode(com.yadony.api.matching.TransportMode.CAR);
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(trip));
+        BidEntity b = bid(BidStatus.IN_TRANSIT, NOW_LDT);
+
+        assertThat(service.toResponse(link(b, ReceptionLinkStatus.PENDING), b).transportMode()).isEqualTo("CAR");
+    }
+
+    @Test
+    void toResponse_transportModeNullWhenAnnouncementMissing() {
+        when(announcementRepository.findById(annId)).thenReturn(Optional.empty());
+        BidEntity b = bid(BidStatus.ARRIVED, NOW_LDT);
+
+        assertThat(service.toResponse(link(b, ReceptionLinkStatus.CONFIRMED), b).transportMode()).isNull();
+    }
+
     // ── get ─────────────────────────────────────────────────────────────────
 
     @Test

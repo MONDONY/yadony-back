@@ -56,8 +56,37 @@ public record ConversationResponse(
         LocalDateTime messagesPurgeAt,
         // Messages et photos déjà effacés : la conversation est vide et fermée à l'écriture.
         // Absent chez un ancien back : l'app retombe sur false.
-        boolean messagesPurged
+        boolean messagesPurged,
+        // Mode de transport du trajet (nom de TransportMode : PLANE, CAR, BUS, BOAT…), lu sur
+        // l'annonce du bid. Null sans bid ou sans annonce. Absent chez un ancien back : l'app
+        // retombe sur le mode avion.
+        String tripTransportMode
 ) {
+    /** Forme d'avant le mode du trajet : pas de mode. */
+    public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
+                                ParticipantDTO otherParticipant, String lastMessagePreview,
+                                LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
+                                String tripDestination, String tripDate, Double tripWeightKg,
+                                String bidStatus, boolean readOnly, boolean deletedBySelf,
+                                String kind, String viewerRole, boolean callAvailable,
+                                boolean notificationsMuted, boolean mediaAllowed,
+                                String parcelStatus, boolean returnPending, LocalDateTime deliveredAt,
+                                LocalDateTime messagesPurgeAt, boolean messagesPurged) {
+        this(id, bidId, firestoreConversationId, otherParticipant, lastMessagePreview, lastMessageAt,
+                hasUnread, tripOrigin, tripDestination, tripDate, tripWeightKg, bidStatus, readOnly,
+                deletedBySelf, kind, viewerRole, callAvailable, notificationsMuted, mediaAllowed,
+                parcelStatus, returnPending, deliveredAt, messagesPurgeAt, messagesPurged, null);
+    }
+
+    /** Copie portant le mode de transport du trajet, lu sur l'annonce déjà chargée. */
+    public ConversationResponse withTripTransportMode(String tripTransportMode) {
+        return new ConversationResponse(id, bidId, firestoreConversationId, otherParticipant,
+                lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
+                tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
+                notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
+                messagesPurgeAt, messagesPurged, tripTransportMode);
+    }
+
     /** Forme d'avant la purge des messages après livraison. */
     public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
                                 ParticipantDTO otherParticipant, String lastMessagePreview,
@@ -80,7 +109,7 @@ public record ConversationResponse(
                 lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
                 tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
                 notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
-                messagesPurgeAt, messagesPurged);
+                messagesPurgeAt, messagesPurged, tripTransportMode);
     }
 
     /** Forme d'avant le statut du colis (FLUTTER-EZ) : pas de statut, pas de retour. */
@@ -103,7 +132,7 @@ public record ConversationResponse(
                 lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
                 tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
                 notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
-                messagesPurgeAt, messagesPurged);
+                messagesPurgeAt, messagesPurged, tripTransportMode);
     }
 
     /** Forme d'avant les photos (FLUTTER-B4) : photos non permises. */

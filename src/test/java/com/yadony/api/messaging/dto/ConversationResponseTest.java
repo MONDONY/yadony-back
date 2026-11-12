@@ -56,4 +56,20 @@ class ConversationResponseTest {
         String json = new ObjectMapper().registerModule(new JavaTimeModule()).writeValueAsString(withState);
         assertThat(json).contains("\"parcelStatus\":\"HANDED_OVER\"").contains("\"returnPending\":true");
     }
+    @Test
+    void tripTransportMode_defaultsToNull_isCarriedByEveryWither_andSerialized() throws Exception {
+        var base = new ConversationResponse(id, bidId, "conv_1", null, "Salut", null, false,
+                "Paris", "Dakar", "2026-10-20", 3.0, "IN_TRANSIT", false, false,
+                "SENDER_TRAVELER", null, true, true, true);
+        assertThat(base.tripTransportMode()).isNull();
+
+        var withMode = base.withTripTransportMode("BOAT");
+        assertThat(withMode.tripTransportMode()).isEqualTo("BOAT");
+        assertThat(withMode.withParcelState("HANDED_OVER", true).tripTransportMode()).isEqualTo("BOAT");
+        assertThat(withMode.withMessageRetention(null, null, false).tripTransportMode()).isEqualTo("BOAT");
+        assertThat(withMode.withTripTransportMode(null)).isEqualTo(base);
+
+        String json = new ObjectMapper().registerModule(new JavaTimeModule()).writeValueAsString(withMode);
+        assertThat(json).contains("\"tripTransportMode\":\"BOAT\"");
+    }
 }

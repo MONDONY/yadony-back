@@ -495,6 +495,7 @@ public class ConversationService {
         String tripDate        = null;
         Double tripWeightKg    = null;
         String bidStatus       = null;
+        String tripTransportMode = null;
         boolean revealPhone    = false;
 
         Optional<BidEntity> bidOpt = conv.getBidId() == null ? Optional.empty() : bidRepository.findById(conv.getBidId());
@@ -519,6 +520,7 @@ public class ConversationService {
                 tripOrigin      = ann.getDepartureCity();
                 tripDestination = ann.getArrivalCity();
                 tripDate        = ann.getDepartureDate() != null ? ann.getDepartureDate().toString() : null;
+                tripTransportMode = ann.getTransportMode() != null ? ann.getTransportMode().name() : null;
             }
         }
 
@@ -559,7 +561,8 @@ public class ConversationService {
             .withMessageRetention(
                 deliveredAt,
                 deliveredAt == null ? null : deliveredAt.plusDays(messagePurgeAfterDays),
-                conv.isMessagesPurged());
+                conv.isMessagesPurged())
+            .withTripTransportMode(tripTransportMode);
     }
 
     /**

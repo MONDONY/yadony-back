@@ -45,5 +45,10 @@ public record ReceptionResponse(
          */
         boolean canRate,
         /** Étoiles de la note laissée depuis ce compte, null s'il n'a pas noté. */
-        Integer myRating
+        Integer myRating,
+        /**
+         * Mode de transport du trajet (nom de {@code TransportMode}), lu sur l'annonce. Null si
+         * l'annonce est introuvable. Absent chez un ancien back : l'app retombe sur l'avion.
+         */
+        String transportMode
 ) {}
