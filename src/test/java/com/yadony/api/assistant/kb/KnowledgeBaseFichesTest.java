@@ -533,4 +533,98 @@ class KnowledgeBaseFichesTest {
         assertThat(kb.discoveryCandidates("de", java.util.Set.of(), null, 1))
                 .allSatisfy(a -> assertThat(a.locale()).isEqualTo("fr"));
     }
+
+    private static java.util.Optional<KbArticle> article(String locale, String id) {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        return corpus.articles(locale).stream().filter(a -> a.id().equals(id)).findFirst();
+    }
+
+    private static String body(String locale, String id) {
+        return article(locale, id).orElseThrow(() -> new AssertionError(locale + "/" + id)).body();
+    }
+
+    @Test
+    void reporterTrajet_listsModeAwareReasons() {
+        assertThat(body("fr", "reporter-trajet")).contains("Panne ou contretemps").contains("Vol annulé")
+                .contains("Transport annulé").contains("Voyage repoussé").contains("Autre raison");
+        assertThat(body("en", "reporter-trajet")).contains("Breakdown or setback").contains("Flight canceled")
+                .contains("Transport canceled").contains("Trip postponed").contains("Other reason");
+        assertThat(article("fr", "reporter-trajet").orElseThrow().keywords()).contains("panne", "transport annulé");
+    }
+
+    @Test
+    void annulerTrajet_firstReasonFollowsTheMode() {
+        assertThat(body("fr", "annuler-trajet")).contains("vol annulé").contains("panne ou contretemps")
+                .contains("transport annulé");
+        assertThat(body("en", "annuler-trajet")).contains("flight canceled").contains("breakdown or setback")
+                .contains("transport canceled");
+    }
+
+    @Test
+    void ecranCreerTrajet_describesFiveSteps() {
+        assertThat(body("fr", "ecran-creer-trajet")).contains("« Mode »").contains("« Trajet »")
+                .contains("« Capacité »").contains("« Prix »").contains("« Conditions »").contains("Passer");
+        assertThat(body("en", "ecran-creer-trajet")).contains("\"Mode\"").contains("\"Trip\"")
+                .contains("\"Capacity\"").contains("\"Price\"").contains("\"Terms\"").contains("Skip");
+    }
+
+    @Test
+    void proposerTrajet_describesTheModeStep() {
+        assertThat(body("fr", "proposer-trajet")).contains("« Mode »").contains("« Conditions »");
+        assertThat(body("en", "proposer-trajet")).contains("\"Mode\"").contains("\"Terms\"");
+    }
+
+    @Test
+    void modesTransport_existsInBothLanguages() {
+        assertThat(article("fr", "modes-transport")).isPresent();
+        assertThat(article("en", "modes-transport")).isPresent();
+        assertThat(body("fr", "modes-transport")).contains("3 jours").contains("14 jours").contains("120 jours");
+        assertThat(body("en", "modes-transport")).contains("3 days").contains("14 days").contains("120 days");
+        assertThat(article("fr", "modes-transport").orElseThrow().keywords())
+                .contains("bateau", "route", "voiture", "car", "camion", "conteneur", "mode de transport");
+    }
+
+    @Test
+    void envoyerColis_noLongerSaysLuggage() {
+        assertThat(body("fr", "envoyer-colis")).doesNotContain("bagages");
+        assertThat(body("en", "envoyer-colis")).doesNotContain("luggage");
+    }
+
+    @Test
+    void ecranNouvelleDemande_describesTheTransportModeAndTheAiIcon() {
+        assertThat(body("fr", "ecran-nouvelle-demande")).contains("Mode de transport").contains("Peu importe")
+                .contains("Créer avec l'IA");
+        assertThat(body("en", "ecran-nouvelle-demande")).contains("Transport mode").contains("Any")
+                .contains("Create with AI");
+    }
+
+    @Test
+    void rechercherTrajet_describesTheTransportChipAndSection() {
+        assertThat(body("fr", "rechercher-trajet")).contains("« Transport »");
+        assertThat(body("en", "rechercher-trajet")).contains("\"Transport\"");
+        assertThat(body("fr", "ecran-composer-recherche")).contains("TRANSPORT").contains("Tous");
+        assertThat(body("en", "ecran-composer-recherche")).contains("TRANSPORT").contains("All");
+    }
+
+    @Test
+    void lesFichesModesDeTransport_gardentLesLimites_etSansTiretCadratin() {
+        List<String> ids = List.of("reporter-trajet", "annuler-trajet", "proposer-trajet", "ecran-creer-trajet",
+                "envoyer-colis", "ecran-nouvelle-demande", "rechercher-trajet", "ecran-composer-recherche",
+                "modes-transport");
+        for (String locale : List.of("fr", "en")) {
+            for (String id : ids) {
+                KbArticle fiche = article(locale, id).orElseThrow();
+                assertThat(fiche.body().length()).as(locale + "/" + id)
+                        .isLessThanOrEqualTo(fiche.screens().isEmpty() ? 2000 : 600);
+                assertThat(fiche.body()).as(locale + "/" + id).doesNotContain("\u2014");
+            }
+        }
+    }
+
+    @Test
+    void laQuestionSurLesModesDeTransportTrouveSaFiche() {
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Quels modes de transport existent sur Yadony ?")).isEqualTo("modes-transport");
+        assertThat(firstHit(kb, "en", "Which transport modes exist on Yadony?")).isEqualTo("modes-transport");
+    }
 }

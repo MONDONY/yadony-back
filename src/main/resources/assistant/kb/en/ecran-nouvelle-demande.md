@@ -12,4 +12,4 @@ routes:
   - path: /package-requests/me
     label: My requests
 ---
-You are filling in a shipping request in three steps: "The trip" (where from, where to, optional date and flexibility), "The parcel" (weight, content, description, photos) then "The budget": "I'm open to offers" or "I set my price", and the accepted payment methods. "Preview" lets you check everything before "Post my request" or "Save as draft". Without a date, the request is "Flexible date": every traveler on the route can offer, and it closes on its own 60 days after it was posted. Once posted, travelers on this trip are notified.
+You are filling in a shipping request in three steps: "The trip" (where from, where to, optional date and flexibility, then "Transport mode": Any, Air, and Boat or Road when offered; only travelers of that mode see the request), "The parcel" (weight, content, description, photos) then "The budget" ("I'm open to offers" or "I set my price", payment methods). "Create with AI" is the icon in the title bar. "Preview" lets you check everything before "Post my request". Without a date, the request is "Flexible date" and closes on its own 60 days after it was posted.

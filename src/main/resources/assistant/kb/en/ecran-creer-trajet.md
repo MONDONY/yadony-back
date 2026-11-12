@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-You are on the trip form, in three steps: "Trip" (cities, date, time, means of transport, drop-off deadline), "Locations & capacity", then "Price & conditions", where you also choose the trip currency, at the top of the step. Tap "Continue" at each step, then "Preview" to check the listing and "Post the listing". The "Save as draft" icon keeps what you entered for later, and "My templates" pre-fills the trip if you have any. The same screen is used to "Edit trip".
+You are on the trip form, in up to five steps: "Mode" (if several modes are offered), "Trip" (cities, dates, drop-off deadline), "Capacity" (handover places and capacity), "Price" (currency at the top, price, payments) and "Terms" (optional, "Skip"). The multi-leg trip is at the bottom of "Terms". Tap "Continue" at each step, then "Preview" and "Post the listing". "Save as draft" keeps what you entered and "My templates" pre-fills the trip. When editing, the mode is changed at the top of "Trip".

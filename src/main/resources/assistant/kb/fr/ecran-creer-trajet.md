@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: Mes trajets
 ---
-Vous êtes sur le formulaire d'un trajet, en trois étapes : « Trajet » (villes, date, heure, moyen de transport, date limite de dépôt), « Lieux & capacité », puis « Prix & conditions », où vous choisissez aussi la devise du trajet, en haut de l'étape. Touchez « Continuer » à chaque étape, puis « Aperçu » pour relire l'annonce et « Publier l'annonce ». L'icône « Enregistrer en brouillon » garde votre saisie pour plus tard, et « Mes modèles » pré-remplit le trajet si vous en avez. Le même écran sert à « Modifier le trajet ».
+Vous êtes sur le formulaire d'un trajet, en jusqu'à cinq étapes : « Mode » (si plusieurs modes sont proposés), « Trajet » (villes, dates, date limite de dépôt), « Capacité » (lieux de remise et capacité), « Prix » (devise en haut, prix, paiements) et « Conditions » (facultative, « Passer »). Le voyage à plusieurs étapes est en bas de « Conditions ». Touchez « Continuer » à chaque étape, puis « Aperçu » et « Publier l'annonce ». « Enregistrer en brouillon » garde votre saisie et « Mes modèles » pré-remplit le trajet. En modification, le mode se change en tête de « Trajet ».
