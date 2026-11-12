@@ -167,6 +167,10 @@ public class BidNegotiationService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
         }
 
+        // Taille et poids max par colis du trajet : même règle que l'offre ferme, avant tout fil.
+        ItemSize itemSize = ItemSize.parseOrNull(request.itemSize());
+        ParcelFitRules.assertFits(announcement, request.weightKg(), itemSize);
+
         PaymentMethod paymentMethod =
                 bidService.resolvePaymentMethodFor(announcement, request.paymentMethod());
 
@@ -189,6 +193,7 @@ public class BidNegotiationService {
         bid.setAnnouncementId(announcementId);
         bid.setSenderId(sender.getId());
         bid.setWeightKg(request.weightKg());
+        bid.setItemSize(itemSize);
         bid.setPricingMode(hasItems && hasKg ? BidPricingMode.MIXED
                          : hasItems          ? BidPricingMode.GRID
                          :                     BidPricingMode.KG);

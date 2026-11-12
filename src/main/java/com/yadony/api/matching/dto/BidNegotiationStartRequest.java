@@ -58,5 +58,21 @@ public record BidNegotiationStartRequest(
         @Size(max = 10, message = "{validation.bid.custom-items.max}")
         @Valid List<BidCustomItemRequest> customItems,
 
-        @Valid List<BidGridItemRequest> gridItems
-) {}
+        @Valid List<BidGridItemRequest> gridItems,
+
+        /** Taille du colis (S, M, L, XL), facultative : absente = acceptée comme avant. */
+        @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}")
+        String itemSize
+) {
+    /** Constructeur de compatibilité (sans taille) : la forme d'avant le contrôle de taille. */
+    public BidNegotiationStartRequest(BigDecimal weightKg, String description, String contentCategory,
+                                      String recipientName, String recipientPhone, Boolean disclaimerSigned,
+                                      String paymentMethod, String phoneNumber, String countryCode,
+                                      List<String> photoKeys, BigDecimal proposedTotalEur,
+                                      List<BidCustomItemRequest> customItems,
+                                      List<BidGridItemRequest> gridItems) {
+        this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
+                paymentMethod, phoneNumber, countryCode, photoKeys, proposedTotalEur, customItems,
+                gridItems, null);
+    }
+}

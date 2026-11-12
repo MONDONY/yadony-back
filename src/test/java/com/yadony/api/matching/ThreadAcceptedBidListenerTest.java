@@ -142,6 +142,33 @@ class ThreadAcceptedBidListenerTest {
         }
 
         @Test
+        @DisplayName("D8 : la taille de la demande portée par l'événement est écrite sur le bid matérialisé")
+        void threadAccepted_bidInheritsRequestItemSize() {
+            listener.onPackageRequestAccepted(new PackageRequestAcceptedEvent(
+                    THREAD_ID, PACKAGE_REQUEST_ID, SENDER_ID, TRAVELER_ID,
+                    BigDecimal.valueOf(50), ANNOUNCEMENT_ID, BigDecimal.valueOf(1200),
+                    "Vêtements", "CLOTHING", "pi_test", "Fatou Diop", "+221771234567",
+                    DISCLAIMER_AT, "1.2.3.4",
+                    com.yadony.api.payments.cash.PaymentMethod.STRIPE, java.util.List.of(),
+                    null, null, null, "EUR", null, null, ItemSize.L));
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getItemSize()).isEqualTo(ItemSize.L);
+            assertThat(captor.getValue().getWeightKg()).isEqualByComparingTo("1200");
+        }
+
+        @Test
+        @DisplayName("demande sans taille (ou événement d'avant) → bid sans taille")
+        void threadAccepted_requestWithoutItemSize_bidWithoutItemSize() {
+            listener.onPackageRequestAccepted(buildEvent());
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getItemSize()).isNull();
+        }
+
+        @Test
         @DisplayName("promoCode présent → redeem appelé avec le bid_id fraîchement matérialisé, rate stampé sur le bid")
         void promoCodePresent_redeemsAndStampsRate() {
             UUID bidId = UUID.randomUUID();

@@ -276,6 +276,78 @@ class BidCheckoutServiceTest {
         assertThat(resp.clientSecret()).isEqualTo("secret_xyz");
     }
 
+    private BidCheckoutRequest checkoutRequest(String weightKg, String itemSize) {
+        return new BidCheckoutRequest(announcement.getId(), new BigDecimal(weightKg),
+            "test", "OTHER", "Recipient", "+221771234567", true, null, null, null, itemSize);
+    }
+
+    @Test
+    void checkout_appliesSameRule_parcelTooHeavy() {
+        announcement.setAvailableKg(new BigDecimal("100.00"));
+        announcement.setTotalKg(new BigDecimal("100.00"));
+        announcement.setMaxParcelWeightKg(new BigDecimal("20.00"));
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", checkoutRequest("25.00", null), httpRequest))
+            .isInstanceOfSatisfying(YadonyBusinessException.class,
+                ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-heavy"));
+
+        // Refus AVANT toute écriture et tout paiement : ni bid, ni escrow.
+        verify(bidRepository, never()).save(any());
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void checkout_appliesSameRule_parcelTooBig() {
+        announcement.setMaxItemSize(ItemSize.M);
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", checkoutRequest("2.00", "L"), httpRequest))
+            .isInstanceOfSatisfying(YadonyBusinessException.class,
+                ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-big"));
+
+        verify(bidRepository, never()).save(any());
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void checkout_withoutItemSize_onSizedTrip_acceptedAndBidHasNoSize() {
+        announcement.setMaxItemSize(ItemSize.M);
+        announcement.setMaxParcelWeightKg(new BigDecimal("20.00"));
+        ArgumentCaptor<BidEntity> savedBid = ArgumentCaptor.forClass(BidEntity.class);
+        when(bidRepository.save(savedBid.capture())).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", req, httpRequest);
+
+        assertThat(savedBid.getAllValues().get(0).getItemSize()).isNull();
+    }
+
+    @Test
+    void checkout_recordsItemSizeOnTheBid_andAcceptsTonnes() {
+        announcement.setTransportMode(TransportMode.CAR);
+        announcement.setMaxItemSize(ItemSize.XL);
+        announcement.setAvailableKg(new BigDecimal("1500.00"));
+        announcement.setTotalKg(new BigDecimal("1500.00"));
+        ArgumentCaptor<BidEntity> savedBid = ArgumentCaptor.forClass(BidEntity.class);
+        when(bidRepository.save(savedBid.capture())).thenAnswer(inv -> {
+            BidEntity b = inv.getArgument(0);
+            if (b.getId() == null) ReflectionTestUtils.setField(b, "id", UUID.randomUUID());
+            return b;
+        });
+        when(paymentService.createEscrow(any(CreatePaymentRequest.class), eq("uid-sender")))
+            .thenReturn(stubPaymentResponse());
+
+        service.checkout("uid-sender", checkoutRequest("1200", "l"), httpRequest);
+
+        BidEntity bid = savedBid.getAllValues().get(0);
+        assertThat(bid.getWeightKg()).isEqualByComparingTo("1200");
+        assertThat(bid.getItemSize()).isEqualTo(ItemSize.L);
+    }
+
     @Test
     void rejects_existing_in_progress_bid() {
         when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(

@@ -877,6 +877,60 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("demande route 1 200 kg taille L : le trajet dédié reprend le poids (total 1 200) et la taille (max L)")
+        void dedicatedRoadTrip_takesRequestSizeAndWeight() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(com.yadony.api.matching.TransportMode.CAR);
+            request.setWeightKg(new BigDecimal("1200"));
+            request.setItemSize(com.yadony.api.matching.ItemSize.L);
+
+            var ann = startDedicatedTripAndCaptureAnnouncement(dedicatedTripPayload(request.getDesiredDate()));
+
+            assertThat(ann.getTransportMode()).isEqualTo(com.yadony.api.matching.TransportMode.CAR);
+            assertThat(ann.getTotalKg()).isEqualByComparingTo("1200");
+            assertThat(ann.getReservedKg()).isEqualByComparingTo("1200");
+            assertThat(ann.getMaxItemSize()).isEqualTo(com.yadony.api.matching.ItemSize.L);
+        }
+
+        @Test
+        @DisplayName("demande route sans taille : le trajet dédié n'a pas de taille max")
+        void dedicatedRoadTrip_requestWithoutSize_tripWithoutSize() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(com.yadony.api.matching.TransportMode.BUS);
+            request.setItemSize(null);
+
+            var ann = startDedicatedTripAndCaptureAnnouncement(dedicatedTripPayload(request.getDesiredDate()));
+
+            assertThat(ann.getMaxItemSize()).isNull();
+        }
+
+        @Test
+        @DisplayName("demande « peu importe » avec taille, offre en voiture : le trajet dédié reçoit la taille")
+        void dedicatedTrip_anyModeRequest_offerCar_takesSize() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(null);
+            request.setItemSize(com.yadony.api.matching.ItemSize.XL);
+            LocalDate departure = request.getDesiredDate();
+
+            var ann = startDedicatedTripAndCaptureAnnouncement(dedicatedTripPayload(
+                departure, departure, com.yadony.api.matching.TransportMode.CAR));
+
+            assertThat(ann.getMaxItemSize()).isEqualTo(com.yadony.api.matching.ItemSize.XL);
+        }
+
+        @Test
+        @DisplayName("trajet dédié avion : jamais de taille max, même si la demande en porte une")
+        void dedicatedPlaneTrip_neverKeepsMaxItemSize() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+            request.setItemSize(com.yadony.api.matching.ItemSize.L);
+
+            var ann = startDedicatedTripAndCaptureAnnouncement(dedicatedTripPayload(request.getDesiredDate()));
+
+            assertThat(ann.getMaxItemSize()).isNull();
+        }
+
+        @Test
         @DisplayName("la garde refuse le mode (bateau éteint) → 422 transport-mode-disabled, aucun trajet enregistré")
         void dedicatedTrip_boatRefusedByGuard_savesNothing() {
             stubDedicatedTripRequestFields();
@@ -4183,6 +4237,132 @@ class NegotiationServiceTest {
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("announcement/corridor-mismatch");
         }
+
+        private PackageRequestEntity parisDakarRequest(String weightKg) {
+            PackageRequestEntity req = new PackageRequestEntity();
+            req.setDepartureCity("Paris");
+            req.setArrivalCity("Dakar");
+            req.setDesiredDate(LocalDate.now().plusDays(5));
+            req.setDateToleranceDays((short) 1);
+            req.setWeightKg(new BigDecimal(weightKg));
+            return req;
+        }
+
+        private com.yadony.api.matching.AnnouncementEntity parisDakarTrip(UUID travelerId, String availableKg) {
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setTravelerId(travelerId);
+            ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+            ann.setAvailableKg(new BigDecimal(availableKg));
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setDepartureDate(LocalDate.now().plusDays(5));
+            return ann;
+        }
+
+        @Test
+        @DisplayName("offerWithExistingTrip_requestTooBig_refused — taille L sur un trajet de taille max M → 422 parcel-too-big")
+        void offerWithExistingTrip_requestTooBig_refused() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("10");
+            req.setItemSize(com.yadony.api.matching.ItemSize.L);
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "20");
+            ann.setMaxItemSize(com.yadony.api.matching.ItemSize.M);
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("parcel-too-big");
+                });
+        }
+
+        @Test
+        @DisplayName("offerWithExistingTrip_requestTooHeavy_refused — 25 kg sur un trajet à 20 kg max par colis → 422 parcel-too-heavy")
+        void offerWithExistingTrip_requestTooHeavy_refused() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("25");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "500");
+            ann.setMaxParcelWeightKg(new BigDecimal("20.00"));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-heavy"));
+        }
+
+        @Test
+        @DisplayName("demande sans taille sur un trajet avec taille et poids max → acceptée (inconnu ne bloque rien)")
+        void offerWithExistingTrip_requestWithoutSize_onSizedTrip_accepted() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("10");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "20");
+            ann.setMaxItemSize(com.yadony.api.matching.ItemSize.M);
+            ann.setMaxParcelWeightKg(new BigDecimal("20.00"));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThat(service.validateAndFetchExistingTrip(annId, travelerId, req)).isSameAs(ann);
+        }
+
+        @Test
+        @DisplayName("offerOnKgFreeTrip_25kg_accepted — kilo libre : availableKg technique (1) ne refuse plus une demande de 25 kg (D9)")
+        void offerOnKgFreeTrip_25kg_accepted() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("25");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "1");
+            ann.setCapacityUnit(com.yadony.api.matching.CapacityUnit.KG_FREE);
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThat(service.validateAndFetchExistingTrip(annId, travelerId, req)).isSameAs(ann);
+        }
+
+        @Test
+        @DisplayName("kilo libre avion : une demande de 40 kg est acceptée de bout en bout (même bug que la route)")
+        void offerOnKgFreePlaneTrip_40kg_accepted() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("40");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "1");
+            ann.setCapacityUnit(com.yadony.api.matching.CapacityUnit.KG_FREE);
+            ann.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThat(service.validateAndFetchExistingTrip(annId, travelerId, req)).isSameAs(ann);
+        }
+
+        @Test
+        @DisplayName("kilo libre avec 20 kg max par colis : 25 kg refusé parcel-too-heavy (le poids max reste appliqué)")
+        void offerOnKgFreeTrip_overMaxParcelWeight_refused() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("25");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "1");
+            ann.setCapacityUnit(com.yadony.api.matching.CapacityUnit.KG_FREE);
+            ann.setMaxParcelWeightKg(new BigDecimal("20.00"));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-heavy"));
+        }
+
+        @Test
+        @DisplayName("kilos exacts : la capacité insuffisante reste refusée announcement/insufficient-capacity (non-régression)")
+        void offerOnExactTrip_insufficientCapacity_stillRefused() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("25");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "20");
+            ann.setCapacityUnit(com.yadony.api.matching.CapacityUnit.KG_EXACT);
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("announcement/insufficient-capacity");
+        }
     }
 
     @Nested
@@ -5960,6 +6140,27 @@ class NegotiationServiceTest {
             assertThat(published.recipientName()).isEqualTo("Mamadou Diallo");
             assertThat(published.recipientPhone()).isEqualTo("+221771234567");
             assertThat(published.disclaimerSignedAt()).isEqualTo(request.getDisclaimerSignedAt());
+        }
+
+        @Test
+        @DisplayName("D8 : l'événement d'acceptation porte la taille de la demande (et null sans taille)")
+        void finalize_eventCarriesRequestItemSize() {
+            request.setItemSize(com.yadony.api.matching.ItemSize.XL);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findByPackageRequestId(REQUEST_ID)).thenReturn(List.of());
+            when(threadRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(requestRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID)).thenReturn(List.of());
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+
+            service.finalizeAfterPayment(SENDER_ID, THREAD_ID, "pi_real_123");
+
+            org.mockito.ArgumentCaptor<PackageRequestAcceptedEvent> captor =
+                org.mockito.ArgumentCaptor.forClass(PackageRequestAcceptedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().itemSize()).isEqualTo(com.yadony.api.matching.ItemSize.XL);
         }
 
         @Test

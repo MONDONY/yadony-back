@@ -5,6 +5,7 @@ import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -30,14 +31,25 @@ public record BidCheckoutRequest(
         @Valid List<BidGridItemRequest> gridItems,
         // null/true → carte réutilisable (setup_future_usage=off_session) ; false → non enregistrée.
         // Modifiable ensuite via PATCH /payments/intents/{id}/save-payment-method.
-        Boolean savePaymentMethod
+        Boolean savePaymentMethod,
+        // Taille du colis (S, M, L, XL), facultative (ancienne app : absente = acceptée comme avant).
+        @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}") String itemSize
 ) {
+    /** Constructeur sans taille (forme d'avant le contrôle de taille). */
+    public BidCheckoutRequest(UUID announcementId, BigDecimal weightKg,
+                              String description, String contentCategory, String recipientName,
+                              String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
+                              List<BidGridItemRequest> gridItems, Boolean savePaymentMethod) {
+        this(announcementId, weightKg, description, contentCategory,
+                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, savePaymentMethod, null);
+    }
+
     /** Constructeur historique (sans savePaymentMethod) — équivalent au défaut null. */
     public BidCheckoutRequest(UUID announcementId, BigDecimal weightKg,
                               String description, String contentCategory, String recipientName,
                               String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
                               List<BidGridItemRequest> gridItems) {
         this(announcementId, weightKg, description, contentCategory,
-                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, null);
+                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, null, null);
     }
 }

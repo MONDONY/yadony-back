@@ -83,6 +83,8 @@ public class ThreadAcceptedBidListener {
         bid.setAnnouncementId(e.travelerAnnouncementId());
         bid.setSenderId(e.senderId());
         bid.setWeightKg(e.weightKg());
+        // Taille du colis de la demande (D8) : le bid d'une négociation n'est créé qu'ici.
+        bid.setItemSize(e.itemSize());
         bid.setDescription(e.description() != null ? e.description() : e.contentCategory());
         bid.setContentCategory(e.contentCategory());
         bid.setStatus(BidStatus.ACCEPTED);
