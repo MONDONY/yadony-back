@@ -78,4 +78,19 @@ public final class GuestSession {
     public static String businessDetailOrNull(String value) {
         return isGuest() ? null : value;
     }
+
+    /**
+     * Une adresse précise de dépôt ou de remise (libellé de rue, coordonnées à 4 décimales, soit environ
+     * 10 m) telle qu'elle doit être servie au lecteur courant : {@code null} pour un invité.
+     *
+     * <p>Décision du propriétaire : un invité n'a pas à connaître l'adresse exacte d'un trajet, comme un
+     * visiteur anonyme de la page publique qui ne voit que la ville et le pays. L'app ne lit jamais ces
+     * champs en consultation (seule l'édition par le voyageur propriétaire les utilise), et ils sont déjà
+     * nullables côté client. La sérialisation étant en {@code NON_NULL}, la clé disparaît de la charge.
+     *
+     * <p>Générique pour ne pas faire dépendre {@code common/} du DTO d'adresse de {@code matching/}.
+     */
+    public static <T> T exactAddressOrNull(T address) {
+        return isGuest() ? null : address;
+    }
 }

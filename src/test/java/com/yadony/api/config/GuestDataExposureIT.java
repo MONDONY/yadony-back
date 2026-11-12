@@ -161,6 +161,10 @@ class GuestDataExposureIT {
             "phoneNumber", "recipientPhone", "recipientName", "recipientCity", "email",
             // Adresses exactes et traces
             "pickupAddressLabel", "deliveryAddressLabel", "arrivalInstructions", "disclaimerSignedIp",
+            // Adresse precise (rue + coordonnees a 4 decimales) de depot et de remise d'un TRAJET :
+            // masquee pour un invite, comme pour la page publique qui ne montre que ville et pays.
+            // Les cles filles label/lat/lng ne figurent plus dans les cles autorisees non plus.
+            "pickupAddress", "deliveryAddress",
             // Argent et secrets de paiement
             "stripeAccountId", "paymentIntentId", "paymentIntentClientSecret", "clientSecret",
             "totalNetEur", "netEur", "commissionRate",
@@ -195,7 +199,7 @@ class GuestDataExposureIT {
 
             // ── AnnouncementSearchResponse + AnnouncementDetailResponse ───────
             "id", "travelerId", "departureCity", "arrivalCity", "departureDate",
-            "departureTime", "arrivalTime", "arrivalDate", "pickupAddress", "deliveryAddress",
+            "departureTime", "arrivalTime", "arrivalDate",
             "availableKg", "totalKg",
             // Seul le BRUT est servi a un invite : c'est ce que paierait l'expediteur, donc la
             // seule information qui lui soit utile. Les trois vecteurs du net (pricePerKg,
@@ -217,10 +221,9 @@ class GuestDataExposureIT {
             // Réseaux mobile money acceptés par le voyageur (code opérateur, libellé, marque, pays) :
             // ce que l'expéditeur doit savoir pour choisir de payer, jamais un numéro ni un compte.
             "acceptedMobileMoneyNetworks", "code", "brand", "country",
-            // AddressDto : le point de retrait d'un TRAJET est public par construction, c'est
-            // sur lui qu'un expediteur decide. A ne pas confondre avec pickupAddressLabel,
-            // l'adresse exacte d'un COLIS, qui n'est renseignee qu'apres acceptation.
-            "label", "lat", "lng",
+            // Plus d'AddressDto pour un invite : pickupAddress/deliveryAddress sont en liste noire, lat et lng
+            // ne sont plus servis. « label » reste : libelle d'un reseau mobile money accepte.
+            "label",
             // TravelerProfileDto
             "displayName", "averageRating", "totalTrips", "kiloPro", "gpPro", "isProAccount",
             "kycVerified", "avatarUrl", "acceptsUnverified",
@@ -438,6 +441,45 @@ class GuestDataExposureIT {
         assertThat(corps.path("priceGridItems").get(0).path("unitPriceDisplay").decimalValue())
                 .as("le brut de chaque ligne de grille doit rester servi a un visiteur")
                 .isGreaterThan(BigDecimal.ZERO);
+    }
+
+    @Test
+    @DisplayName("un invite ne recoit ni rue ni coordonnees fines du retrait et de la remise (recherche et detail)")
+    void unInviteNeRecoitPasLAdresseExacteDUnTrajet() throws Exception {
+        JsonNode recherche = lire(get("/announcements").param("page", "0").param("size", "20"), "adresse-recherche");
+        JsonNode detail = lire(get("/announcements/" + trajetId), "adresse-detail");
+
+        JsonNode premier = recherche.path("content").get(0);
+        assertThat(premier).as("la fixture doit ressortir").isNotNull();
+        for (JsonNode corps : List.of(premier, detail)) {
+            assertThat(corps.has("pickupAddress")).isFalse();
+            assertThat(corps.has("deliveryAddress")).isFalse();
+        }
+        for (JsonNode corps : List.of(recherche, detail)) {
+            String texte = corps.toString();
+            assertThat(texte).doesNotContain("Gare du Nord", "Blaise Diagne", "48.88", "2.354", "14.74", "-17.49");
+        }
+    }
+
+    @Test
+    @DisplayName("un compte connecte recoit toujours l'adresse du trajet, inchangee")
+    void unConnecteRecoitToujoursLAdresseDuTrajet() throws Exception {
+        var inscrit = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+
+        JsonNode detail = MAPPER.readTree(mockMvc.perform(get("/announcements/" + trajetId)
+                        .with(authentication(inscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(detail.path("pickupAddress").path("label").asText()).isEqualTo("Gare du Nord, Paris");
+        assertThat(detail.path("pickupAddress").path("lat").asDouble()).isEqualTo(48.880756);
+        assertThat(detail.path("deliveryAddress").path("label").asText()).isEqualTo("Aeroport Blaise Diagne, Dakar");
+        assertThat(detail.path("deliveryAddress").path("lng").asDouble()).isEqualTo(-17.49);
+
+        JsonNode premier = MAPPER.readTree(mockMvc.perform(get("/announcements")
+                        .param("page", "0").param("size", "20").with(authentication(inscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8)).path("content").path(0);
+        assertThat(premier.path("pickupAddress").path("label").asText()).isEqualTo("Gare du Nord, Paris");
+        assertThat(premier.path("deliveryAddress").path("label").asText()).isEqualTo("Aeroport Blaise Diagne, Dakar");
     }
 
     @Test
