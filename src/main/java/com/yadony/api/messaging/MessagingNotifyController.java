@@ -55,8 +55,7 @@ public class MessagingNotifyController {
 
         var conv = conversationRepository
                 .findByFirestoreConversationId(request.conversationId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "conversation-not-found", "Not Found", "Conversation introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "conversation-not-found", "problem.conversation-not-found"));
 
         // Conversation destinataire fermée (changement de destinataire) : plus aucune
         // notification ni crédit de non-lus, l'ancien destinataire n'y a plus accès.

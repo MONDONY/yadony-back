@@ -205,16 +205,12 @@ public class StorageService {
         boolean tracking = upload.purpose() == MediaPurpose.TRACKING;
         if (!tracking && mediaUploadRepository.countByOwnerIdAndPurposeNotAndCreatedAtAfter(
                 upload.ownerId(), MediaPurpose.TRACKING, since) >= settings.photoUploadDailyQuota()) {
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
-                    "photo-upload-quota-exceeded", "Too Many Requests",
-                    "Vous avez atteint la limite de photos pour aujourd'hui. Réessayez demain.");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "photo-upload-quota-exceeded", "problem.photo-upload-quota-exceeded");
         }
         if (tracking && upload.bidId() != null
                 && mediaUploadRepository.countByBidIdAndPurposeAndCreatedAtAfter(
                         upload.bidId(), MediaPurpose.TRACKING, since) >= settings.trackingPhotosMaxPerBid()) {
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
-                    "tracking-photo-limit-reached", "Too Many Requests",
-                    "Ce colis a déjà le nombre maximum de photos de suivi.");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "tracking-photo-limit-reached", "problem.tracking-photo-limit-reached");
         }
     }
 
@@ -553,8 +549,7 @@ public class StorageService {
      */
     private static void requireNoTraversal(String objectKey) {
         if (StorageKeys.hasTraversal(objectKey)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-object-key", "Invalid Object Key", "Clé de stockage invalide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-object-key", "problem.invalid-object-key");
         }
     }
 

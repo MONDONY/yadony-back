@@ -42,18 +42,11 @@ public class PublishingLimitGate {
     private static void refuseIfNotAllowed(PublishingEligibilityResponse e) {
         switch (e.reason()) {
             case OK -> { }
-            case STATUS_REQUIRED -> throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    CODE_STATUS_REQUIRED, "Traveler Status Required",
-                    "Vous avez atteint votre limite de trajets ce mois-ci. "
-                            + "Indiquez si vous voyagez à titre personnel ou en tant que GP Pro.");
-            case LIMIT_REACHED -> throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    CODE_LIMIT_REACHED, "Monthly Trip Limit Reached",
-                    "Vous avez atteint votre limite de " + e.limit() + " trajet" + (e.limit() > 1 ? "s" : "")
-                            + " ce mois-ci. Vous pourrez publier de nouveau à partir du " + e.resetsOn() + ".");
-            case GP_PRO_PENDING -> throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    CODE_GP_PRO_PENDING, "GP Pro Pending",
-                    "Votre demande GP Pro est en cours de validation. "
-                            + "Vous pourrez publier de nouveau une fois qu'elle sera validée.");
+            case STATUS_REQUIRED -> throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, CODE_STATUS_REQUIRED, "problem.traveler-status-required");
+            case LIMIT_REACHED -> throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, CODE_LIMIT_REACHED,
+                    e.limit() > 1 ? "problem.monthly-trip-limit-reached.other" : "problem.monthly-trip-limit-reached.one",
+                    e.limit(), e.resetsOn());
+            case GP_PRO_PENDING -> throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, CODE_GP_PRO_PENDING, "problem.gp-pro-pending");
         }
     }
 }

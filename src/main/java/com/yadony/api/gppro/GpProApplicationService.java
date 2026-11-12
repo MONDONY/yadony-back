@@ -68,8 +68,7 @@ public class GpProApplicationService {
     @Transactional
     public GpProStatusResponse apply(String firebaseUid, GpProApplyRequest r) {
         if (r.source() != GpProApplicationSource.SIGNUP && r.source() != GpProApplicationSource.PROFILE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-invalid-source", "Invalid Source", "Source de demande invalide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-invalid-source", "problem.gp-pro-invalid-source");
         }
         Business business = validateBusiness(r);
         UserEntity user = findUser(firebaseUid);
@@ -77,22 +76,20 @@ public class GpProApplicationService {
         userRepository.findByIdForUpdate(user.getId());
         // L'entité chargée avant le verrou peut être périmée : on relit le drapeau en base, une fois le verrou pris.
         if (userRepository.findGpProById(user.getId()).orElse(user.isGpPro())) {
-            throw conflict("gp-pro-already-active", "Already Active", "Le badge GP Pro est déjà actif");
+            throw conflict("gp-pro-already-active", "problem.gp-pro-already-active");
         }
         if (applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN).isPresent()) {
             throw openConflict();
         }
         boolean kycVerified = user.getKycStatus() == KycStatus.VERIFIED;
         if (!kycVerified && r.source() == GpProApplicationSource.PROFILE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-kyc-required", "KYC Required", "La vérification d'identité est requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-kyc-required", "problem.gp-pro-kyc-required");
         }
         List<UUID> ids = r.documentIds() == null ? List.of() : List.copyOf(new LinkedHashSet<>(r.documentIds()));
         List<GpProDocumentEntity> docs = ids.isEmpty() ? List.of()
                 : documentRepository.findByIdInAndOwnerIdAndApplicationIdIsNull(ids, user.getId());
         if (docs.size() != ids.size()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-document-invalid", "Invalid Document", "Justificatif invalide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-document-invalid", "problem.gp-pro-document-invalid");
         }
         GpProApplicationEntity app = new GpProApplicationEntity();
         app.setUserId(user.getId());
@@ -134,15 +131,12 @@ public class GpProApplicationService {
                 .filter(d -> d.getPurgedAt() == null)
                 .toList();
         if (docs.size() != ids.size()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-document-invalid", "Invalid Document", "Justificatif invalide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-document-invalid", "problem.gp-pro-document-invalid");
         }
         List<GpProDocumentEntity> existingDocs = documentRepository.findByApplicationIdAndPurgedAtIsNull(app.getId());
         int existing = existingDocs.size();
         if (existing + docs.size() > GpProDocumentService.MAX_UNATTACHED_DOCUMENTS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-too-many-documents", "Too Many Documents",
-                    "Au plus " + GpProDocumentService.MAX_UNATTACHED_DOCUMENTS + " justificatifs par demande");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-too-many-documents", "problem.gp-pro-too-many-documents", GpProDocumentService.MAX_UNATTACHED_DOCUMENTS);
         }
         for (GpProDocumentEntity d : docs) {
             d.setApplicationId(app.getId());
@@ -179,9 +173,7 @@ public class GpProApplicationService {
             }
         }
         if (!documentService.purge(doc)) {
-            throw new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "gp-pro-document-storage-unavailable", "Storage Unavailable",
-                    "Le justificatif n'a pas pu être supprimé, réessayez plus tard");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "gp-pro-document-storage-unavailable", "problem.gp-pro-document-storage-unavailable");
         }
         boolean attached = applicationId != null;
         auditService.log(attached ? "GP_PRO_APPLICATION" : "GP_PRO_DOCUMENT",
@@ -253,7 +245,7 @@ public class GpProApplicationService {
         boolean hadBadge = userRepository.findGpProById(user.getId()).orElse(user.isGpPro());
         Optional<GpProApplicationEntity> open = applicationRepository.findFirstByUserIdAndStatusIn(user.getId(), OPEN);
         if (!hadBadge && open.isEmpty()) {
-            throw conflict("gp-pro-not-active", "Not Active", "Le statut GP Pro n'est pas actif");
+            throw conflict("gp-pro-not-active", "problem.gp-pro-not-active.status");
         }
 
         boolean statusChanged = false;
@@ -306,35 +298,30 @@ public class GpProApplicationService {
                 || name.codePoints().anyMatch(Character::isISOControl)
                 || number.length() < 4 || number.length() > 40 || !REGISTRATION_NUMBER.matcher(number).matches()
                 || !COUNTRY.matcher(country).matches()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete",
-                    "Business Details Incomplete",
-                    "Renseignez la raison sociale, le numéro d'entreprise et le pays.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-business-incomplete", "problem.gp-pro-business-incomplete");
         }
         return new Business(number, country);
     }
 
     private UserEntity findUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private static YadonyBusinessException applicationNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                "gp-pro-application-not-found", "Application Not Found", "Aucune demande en cours");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "gp-pro-application-not-found", "problem.gp-pro-application-not-found.none-in-progress");
     }
 
     private static YadonyBusinessException documentNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                "gp-pro-document-not-found", "Document Not Found", "Justificatif introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "gp-pro-document-not-found", "problem.gp-pro-document-not-found");
     }
 
-    private static YadonyBusinessException conflict(String code, String title, String detail) {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, code, title, detail);
+    private static YadonyBusinessException conflict(String code, String messageKey) {
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, code, messageKey);
     }
 
     private static YadonyBusinessException openConflict() {
-        return conflict("gp-pro-application-open", "Application Open", "Une demande est déjà en cours");
+        return conflict("gp-pro-application-open", "problem.gp-pro-application-open");
     }
 
     private static String blankToNull(String s) {

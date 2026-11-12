@@ -45,6 +45,8 @@ class MessagesBundleTest {
             "problem.code-expired.le-code-de-confirmation-a-expire-demandez-a.detail",
             "problem.code-incorrect.code-incorrect-tentative-s-restante-s.detail",
             "problem.too-many-attempts.detail",
+            // Paquet 5 : refus de l'abonnement PRO offert repris mot pour mot.
+            "problem.active-stripe-subscription.admin.detail",
             // Refus auth repris mot pour mot (paquet i18n serveur n° 3).
             "problem.active-transactions.detail",
             "problem.active-transactions.impossible-utilisateur-transactions-cours.detail",

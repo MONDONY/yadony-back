@@ -35,7 +35,6 @@ public final class StripeUnavailable {
 
     /** Problème RFC 7807 {@code stripe-unavailable} (502), rendu par le handler des erreurs métier. */
     public static YadonyBusinessException exception() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, CODE, "Stripe Unavailable",
-                "Le service de paiement est momentanément injoignable, réessayez.");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, CODE, "problem.stripe-unavailable.payment-service");
     }
 }

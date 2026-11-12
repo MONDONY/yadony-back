@@ -103,11 +103,9 @@ public class NotificationService {
     private NotificationEntity requireOwned(String firebaseUid, UUID notificationId) {
         UUID userId = resolveUserId(firebaseUid);
         var entity = repository.findById(notificationId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "not-found", "Not found", "Notification introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "not-found", "problem.notification.not-found"));
         if (!entity.getUserId().equals(userId)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "forbidden", "Forbidden", "Accès refusé");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.notification.forbidden");
         }
         return entity;
     }
@@ -116,7 +114,6 @@ public class NotificationService {
     UUID resolveUserId(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(UserEntity::getId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.user-not-found"));
     }
 }

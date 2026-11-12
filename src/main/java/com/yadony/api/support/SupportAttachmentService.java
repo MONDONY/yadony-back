@@ -86,15 +86,11 @@ public class SupportAttachmentService {
             return List.of();
         }
         if (keys.size() > MAX_ATTACHMENTS_PER_MESSAGE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-too-many-attachments", "Trop de pieces jointes",
-                    "Un message accepte au maximum " + MAX_ATTACHMENTS_PER_MESSAGE + " images.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-too-many-attachments", "problem.support-too-many-attachments", MAX_ATTACHMENTS_PER_MESSAGE);
         }
         for (String key : keys) {
             if (!StorageKeys.isOwnedKey(key, expectedPrefix)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "support-attachment-not-owned", "Piece jointe invalide",
-                        "Une piece jointe ne vous appartient pas.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-attachment-not-owned", "problem.support-attachment-not-owned");
             }
         }
         return keys;

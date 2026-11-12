@@ -54,14 +54,12 @@ public class ActivationService {
     @Transactional
     public ActivationResponse declareIntent(String firebaseUid, DeclareIntentRequest request) {
         if (request.source() == IntentSource.INFERRED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-intent-source",
-                    "Invalid Intent Source", "La source INFERRED est réservée au serveur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-intent-source", "problem.invalid-intent-source");
         }
         String destination = request.destinationCountry() == null
                 ? null : request.destinationCountry().toUpperCase(Locale.ROOT);
         if (destination != null && !CountryCatalog.isSupported(destination)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "unsupported-destination-country",
-                    "Unsupported Destination Country", "Ce pays de destination n'est pas pris en charge");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "unsupported-destination-country", "problem.unsupported-destination-country");
         }
         UserEntity user = requireUser(firebaseUid);
         user.setIntent(request.intent().name());
@@ -119,8 +117,7 @@ public class ActivationService {
 
     private UserEntity requireUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private static Double toDouble(Number n) {

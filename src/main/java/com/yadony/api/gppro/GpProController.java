@@ -57,8 +57,7 @@ public class GpProController {
 
     private static String requireUid(String firebaseUid) {
         if (firebaseUid == null || firebaseUid.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return firebaseUid;
     }

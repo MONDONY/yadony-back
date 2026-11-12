@@ -51,8 +51,7 @@ public class FlightUsers {
     public Caller resolveAccount(String firebaseUid) {
         Caller caller = resolve(firebaseUid);
         if (caller.anonymous()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "flights-account-required",
-                    "Account Required", "Créez un compte pour utiliser les alertes prix.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "flights-account-required", "problem.flights-account-required");
         }
         return caller;
     }

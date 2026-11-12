@@ -96,9 +96,7 @@ public class RecipientInvitationService {
 
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(24);
         if (repository.countByInviterUserIdAndCreatedAtAfter(inviter.getId(), since) >= DAILY_QUOTA) {
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "recipient-invitation-quota",
-                    "Recipient Invitation Quota",
-                    "Vous avez envoyé trop d'invitations aujourd'hui. Réessayez demain.");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "recipient-invitation-quota", "problem.recipient-invitation-quota");
         }
 
         // Recherche faite dans tous les cas, avant tout court-circuit : la durée de la
@@ -213,9 +211,7 @@ public class RecipientInvitationService {
         }
         requirePending(invitation);
         String phone = InvitationTargets.phone(firebaseContact.getContact(me.getFirebaseUid()).phoneNumber())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "recipient-invitation-phone-required", "Recipient Invitation Phone Required",
-                        "Ajoutez un numéro de téléphone à votre profil pour accepter cette invitation."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-invitation-phone-required", "problem.recipient-invitation-phone-required"));
 
         RecipientEntity entry = upsertAddressBookEntry(invitation, me, phone);
         invitation.setRecipientId(entry.getId());
@@ -347,8 +343,7 @@ public class RecipientInvitationService {
         }
         String trimmed = raw.trim();
         if (trimmed.length() > 100) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "recipient-invitation-name-too-long",
-                    "Recipient Invitation Name Too Long", "Le nom ne peut pas dépasser 100 caractères.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "recipient-invitation-name-too-long", "problem.recipient-invitation-name-too-long");
         }
         return trimmed;
     }
@@ -372,28 +367,28 @@ public class RecipientInvitationService {
 
     private UserEntity currentUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyNotFoundException("Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
     }
 
     private static Target parse(CreateRecipientInvitationRequest request) {
         boolean hasPhone = request != null && request.phone() != null && !request.phone().isBlank();
         boolean hasEmail = request != null && request.email() != null && !request.email().isBlank();
         if (hasPhone == hasEmail) {
-            throw invalid("Indiquez soit un numéro, soit un email.");
+            throw invalid("problem.recipient-invitation-invalid-target.either");
         }
         if (hasPhone) {
             String phone = InvitationTargets.phone(request.phone())
-                    .orElseThrow(() -> invalid("Numéro invalide : format international attendu (+221…)."));
+                    .orElseThrow(() -> invalid("problem.recipient-invitation-invalid-target.phone"));
             return new Target(InvitationChannel.PHONE, phone, InvitationTargets.maskPhone(phone));
         }
         String email = InvitationTargets.email(request.email())
-                .orElseThrow(() -> invalid("Adresse email invalide."));
+                .orElseThrow(() -> invalid("problem.recipient-invitation-invalid-target.email"));
         return new Target(InvitationChannel.EMAIL, email, InvitationTargets.maskEmail(email));
     }
 
-    private static YadonyBusinessException invalid(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "recipient-invitation-invalid-target",
-                "Invalid Recipient Invitation Target", detail);
+    private static YadonyBusinessException invalid(String messageKey) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "recipient-invitation-invalid-target",
+                messageKey);
     }
 
     private record Target(InvitationChannel channel, String value, String masked) {}

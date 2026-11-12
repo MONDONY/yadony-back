@@ -48,8 +48,7 @@ public class PackageRequestInsightController {
     private UUID requireUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "unauthorized",
-                    "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return userRepository.findByFirebaseUid((String) auth.getPrincipal())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user/not-found"))

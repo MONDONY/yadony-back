@@ -269,7 +269,6 @@ public class VideoModalService {
     }
 
     static YadonyBusinessException notFound(UUID campaignId) {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "video-modal-not-found",
-                "Video Modal Not Found", "Modal vidéo introuvable : " + campaignId);
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "video-modal-not-found", "problem.video-modal-not-found", campaignId);
     }
 }

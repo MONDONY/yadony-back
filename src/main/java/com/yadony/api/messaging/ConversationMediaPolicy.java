@@ -135,9 +135,7 @@ public class ConversationMediaPolicy {
         BidEntity bid = conv.getBidId() == null ? null : bidRepository.findById(conv.getBidId()).orElse(null);
         Optional<Denial> denial = check(conv, user.getId(), bid, user);
         if (denial.isPresent()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, ERROR_CODE, "Media Not Allowed",
-                    "Les photos sont disponibles une fois la demande acceptée et payée, "
-                            + "jusqu'à " + graceDays + " jours après la livraison.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, ERROR_CODE, "problem.media-not-allowed", graceDays);
         }
     }
 

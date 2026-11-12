@@ -74,12 +74,7 @@ public class AddressController {
         try {
             return ResponseEntity.ok(
                 service.reverse(request.lat(), request.lng())
-                    .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND,
-                        "address-not-found",
-                        "Address Not Found",
-                        "Aucune adresse trouvée pour ces coordonnées."
-                    ))
+                    .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "address-not-found", "problem.address-not-found"))
             );
         } catch (RuntimeException e) {
             counter.decrementAndGet();
@@ -90,12 +85,7 @@ public class AddressController {
     private AtomicInteger checkRateLimit(String uid) {
         AtomicInteger counter = rateLimitCache.get(uid, k -> new AtomicInteger(0));
         if (counter.incrementAndGet() > props.rateLimitPerMinute()) {
-            throw new YadonyBusinessException(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "rate-limit-exceeded",
-                "Too Many Requests",
-                "Limite de recherche d'adresse atteinte. Réessayez dans 1 minute."
-            );
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "rate-limit-exceeded", "problem.rate-limit-exceeded");
         }
         return counter;
     }

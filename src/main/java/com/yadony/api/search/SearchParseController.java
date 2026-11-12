@@ -49,10 +49,8 @@ public class SearchParseController {
     public ResponseEntity<SearchParseResponse> parse(@Valid @RequestBody SearchParseRequest request) {
         LocalDate today = request.today() != null ? request.today() : LocalDate.now();
         if (today.getYear() < TODAY_MIN_YEAR || today.getYear() > TODAY_MAX_YEAR) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "search-today-out-of-range",
-                    "Date de référence hors plage",
-                    "Le paramètre 'today' doit être compris entre les années %d et %d."
-                            .formatted(TODAY_MIN_YEAR, TODAY_MAX_YEAR));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "search-today-out-of-range",
+                    "problem.search-today-out-of-range", TODAY_MIN_YEAR, TODAY_MAX_YEAR);
         }
         return ResponseEntity.ok(parser.parse(request.text(), request.mode(), today));
     }

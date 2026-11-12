@@ -131,8 +131,7 @@ public class ConversationMediaService {
                 throw business;
             }
             log.warn("Envoi de photo en échec pour {} : {}", conv.getId(), e.toString());
-            throw new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE, "media-send-failed",
-                    "Service Unavailable", "La photo n'a pas pu être envoyée, réessayez.");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "media-send-failed", "problem.media-send-failed");
         }
 
         conversationService.updateLastMessage(conv.getFirestoreConversationId(), FirestoreService.IMAGE_PREVIEW);
@@ -193,10 +192,8 @@ public class ConversationMediaService {
         boolean overConversation = conversation.incrementAndGet() > CONVERSATION_DAILY_LIMIT;
         if (overUser || overConversation) {
             taken.forEach(AtomicInteger::decrementAndGet);
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "media-rate-limited",
-                    "Too Many Requests", overUser
-                            ? "Trop de photos envoyées. Réessayez dans quelques minutes."
-                            : "Limite quotidienne de photos atteinte pour cette conversation.");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "media-rate-limited",
+                    overUser ? "problem.media-rate-limited.user" : "problem.media-rate-limited.conversation");
         }
         return taken;
     }
@@ -207,8 +204,7 @@ public class ConversationMediaService {
         }
         String trimmed = replyToId.trim();
         if (!MESSAGE_ID.matcher(trimmed).matches()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-reply-to",
-                    "Invalid Reply", "Identifiant du message cité invalide.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-reply-to", "problem.invalid-reply-to");
         }
         return trimmed;
     }
@@ -222,13 +218,11 @@ public class ConversationMediaService {
     }
 
     private static YadonyBusinessException imageNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "image-not-found", "Not Found",
-                "Photo introuvable.");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "image-not-found", "problem.image-not-found");
     }
 
     private static YadonyBusinessException imageGone() {
-        return new YadonyBusinessException(HttpStatus.GONE, "image-unavailable", "Gone",
-                "Cette photo n'est plus disponible.");
+        return YadonyBusinessException.localized(HttpStatus.GONE, "image-unavailable", "problem.image-unavailable");
     }
 
     private static String stripTrailingSlash(String url) {

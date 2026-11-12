@@ -291,9 +291,7 @@ public class PackageRequestService {
      */
     private static void assertPublishingNotSuspended(UserEntity sender) {
         if (sender.isPublishingSuspended()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "publishing-suspended",
-                    "Publishing Suspended",
-                    "La publication est suspendue. Contactez le support.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "publishing-suspended", "problem.publishing-suspended.request");
         }
     }
 
@@ -310,9 +308,7 @@ public class PackageRequestService {
         com.yadony.api.payments.currency.SupportedCurrency validated =
                 com.yadony.api.payments.currency.SupportedCurrency.fromCode(requestedCurrency);
         if (validated == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "currency-unsupported", "Currency Unsupported",
-                    "Cette devise n'est pas prise en charge par yadony.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
         }
         return validated.code().toUpperCase(java.util.Locale.ROOT);
     }

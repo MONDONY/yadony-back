@@ -79,18 +79,15 @@ public class ConversationMediaController {
         return switch (raw == null ? "" : raw.toLowerCase(Locale.ROOT)) {
             case "thumb" -> ConversationMediaService.Variant.THUMB;
             case "full" -> ConversationMediaService.Variant.FULL;
-            default -> throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-variant",
-                    "Bad Request", "variant doit valoir thumb ou full.");
+            default -> throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-variant", "problem.invalid-variant");
         };
     }
 
     private UserEntity resolve(String firebaseUid) {
         if (firebaseUid == null) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "user-not-found",
-                    "Unauthorized", "Utilisateur introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.auth.user-not-found");
         }
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "user-not-found",
-                        "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.auth.user-not-found"));
     }
 }

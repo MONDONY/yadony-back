@@ -43,15 +43,12 @@ public class GpProDocumentService {
     @Transactional
     public GpProDocumentEntity upload(String firebaseUid, MultipartFile file, GpProDocumentType type) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         // Verrou par propriétaire : sérialise comptage et insertion (limite de 4 non contournable en parallèle).
         userRepository.findByIdForUpdate(user.getId());
         if (documentRepository.countByOwnerIdAndApplicationIdIsNullAndPurgedAtIsNull(user.getId())
                 >= MAX_UNATTACHED_DOCUMENTS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-too-many-documents", "Too Many Documents",
-                    "Au plus " + MAX_UNATTACHED_DOCUMENTS + " justificatifs en attente de rattachement");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-too-many-documents", "problem.gp-pro-too-many-documents.unattached", MAX_UNATTACHED_DOCUMENTS);
         }
         String key = storageService.storeImage(file,
                 StorageService.MediaUpload.of(PREFIX + user.getId() + "/", user.getId(), MediaPurpose.GP_PRO));

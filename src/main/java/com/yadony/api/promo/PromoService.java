@@ -58,49 +58,37 @@ public class PromoService {
      */
     public PromoDiscount validateAndGetDiscount(String code, UUID userId, PromoCodeTarget target) {
         if (code == null || code.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-not-found", "Promo Not Found", "Code promo introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-not-found", "problem.promo-not-found");
         }
         PromoCodeEntity promo = promoCodeRepository.findByCode(code.toUpperCase())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "promo-not-found", "Promo Not Found",
-                        "Code promo introuvable : " + code.toUpperCase()));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "promo-not-found", "problem.promo-not-found.with-code", code.toUpperCase()));
 
         assertOwner(promo, userId);
 
         if (promo.getStatus() != PromoCodeStatus.ACTIVE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-expired", "Promo Expired", "Ce code promo n'est plus actif");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-expired", "problem.promo-expired.inactive");
         }
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (promo.getValidFrom() != null && now.isBefore(promo.getValidFrom())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-expired", "Promo Expired", "Ce code promo n'est pas encore valide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-expired", "problem.promo-expired.not-yet-valid");
         }
         if (promo.getValidTo() != null && now.isAfter(promo.getValidTo())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-expired", "Promo Expired", "Ce code promo a expiré");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-expired", "problem.promo-expired");
         }
 
         if (promo.getMaxRedemptions() != null && promo.getRedeemedCount() >= promo.getMaxRedemptions()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-limit-reached", "Promo Limit Reached",
-                    "Ce code promo a atteint son nombre maximum d'utilisations");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-limit-reached", "problem.promo-limit-reached.exhausted");
         }
 
         if (promo.getTarget() != PromoCodeTarget.ANY && promo.getTarget() != target) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "promo-not-eligible", "Promo Not Eligible",
-                    "Ce code promo n'est pas disponible pour votre profil");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "promo-not-eligible", "problem.promo-not-eligible");
         }
 
         long userRedemptions = redemptionRepository.countByPromoCodeIdAndUserIdAndReleasedAtIsNull(
                 promo.getId(), userId);
         if (userRedemptions >= promo.getPerUserLimit()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-limit-reached", "Promo Limit Reached",
-                    "Vous avez déjà utilisé ce code promo le nombre maximum de fois autorisé");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-limit-reached", "problem.promo-limit-reached");
         }
 
         return promo.toDiscount();
@@ -374,24 +362,19 @@ public class PromoService {
     /** Un code personnel ne sert qu'à son propriétaire. */
     private static void assertOwner(PromoCodeEntity promo, UUID userId) {
         if (promo.getOwnerUserId() != null && !promo.getOwnerUserId().equals(userId)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "promo-not-owner", "Promo Not Owner",
-                    "Ce code promo est personnel et réservé à un autre compte");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-not-owner", "problem.promo-not-owner");
         }
     }
 
     private PromoCodeEntity findOrThrow(String code) {
         return promoCodeRepository.findByCode(code.toUpperCase())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "promo-not-found", "Promo Not Found",
-                        "Code promo introuvable : " + code.toUpperCase()));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "promo-not-found", "problem.promo-not-found.with-code", code.toUpperCase()));
     }
 
     private static YadonyBusinessException limitReached(String exceeded) {
-        String detail = "per_user_limit".equals(exceeded)
-                ? "Vous avez déjà utilisé ce code promo le nombre maximum de fois autorisé"
-                : "Ce code promo a atteint son nombre maximum d'utilisations";
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "promo-limit-reached", "Promo Limit Reached", detail);
+        String key = "per_user_limit".equals(exceeded)
+                ? "problem.promo-limit-reached"
+                : "problem.promo-limit-reached.exhausted";
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "promo-limit-reached", key);
     }
 }

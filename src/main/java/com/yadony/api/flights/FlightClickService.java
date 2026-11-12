@@ -88,7 +88,7 @@ public class FlightClickService {
         if (marker.isEmpty()) throw FlightErrors.unavailable();
         String path = request.offerPath().trim();
         if (!SAFE_PATH.matcher(path).matches() || path.contains("//") || path.contains("..")) {
-            throw FlightErrors.invalid("flights-invalid-offer", "Offre de vol invalide.");
+            throw FlightErrors.invalid("flights-invalid-offer", "problem.flights-invalid-offer");
         }
         FlightUsers.Caller caller = users.resolve(firebaseUid);
         String subId = newSubId();

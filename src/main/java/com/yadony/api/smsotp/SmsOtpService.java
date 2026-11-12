@@ -168,9 +168,7 @@ public class SmsOtpService {
         if (eventPublisher != null) {
             eventPublisher.publishEvent(new SmsOtpNumberHoppingEvent(signedInUid, distinctNumbers, threshold));
         }
-        throw new YadonyBusinessException(
-                HttpStatus.FORBIDDEN, "account-suspended",
-                "Account Suspended", "Votre compte est suspendu ou banni");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "account-suspended", "problem.account-suspended");
     }
 
     /** Numéros visés par chaque téléphone SANS compte connecté (écran de connexion), sur 24 h. */
@@ -279,10 +277,7 @@ public class SmsOtpService {
 
         if (!properties.isCountryAllowed(phoneNumber)) {
             // Hors des marchés servis : refus avant tout envoi facturé (SMS pumping).
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "phone-country-not-supported",
-                    "Country Not Supported",
-                    "La connexion par SMS n'est pas disponible pour ce pays, utilise ton adresse email");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "phone-country-not-supported", "problem.phone-country-not-supported");
         }
 
         if (reviewCode.isEmpty()) {
@@ -309,21 +304,14 @@ public class SmsOtpService {
         int windowMinutes = properties.getRateWindowMinutes();
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(windowMinutes);
         if (smsOtpRepository.countByPhoneSince(phoneNumber, since) >= properties.getMaxSendsPerWindow()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-rate-limit",
-                    "Too Many Requests",
-                    "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "phone-otp-rate-limit", "problem.rate-limit", windowMinutes);
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         // Au-delà du quota du jour, un SMS par heure seulement (voir le canal email) : un
         // refus de 24 h laissait n'importe qui bloquer le propriétaire du numéro.
         if (smsOtpRepository.countByPhoneSince(phoneNumber, now.minusDays(1)) >= properties.getMaxSendsPerDay()
                 && smsOtpRepository.countByPhoneSince(phoneNumber, now.minusHours(1)) > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-daily-limit",
-                    "Too Many Requests",
-                    "Trop de codes demandés aujourd'hui, réessaie dans une heure",
-                    Map.of("retryAfterSeconds", 3600L));
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "phone-otp-daily-limit", "problem.otp-daily-limit", Map.of("retryAfterSeconds", 3600L));
         }
         // Inutile de facturer un SMS dont le code serait refusé à la vérification.
         ensureLoginBudget(phoneNumber, now);
@@ -335,10 +323,7 @@ public class SmsOtpService {
             // back-office, Paramètres) ou pompage réparti sur des milliers de numéros et d'IP.
             log.error("Budget global de SMS de code atteint ({} / h, {} / 24 h) : envois suspendus",
                     perHourGlobal, perDayGlobal);
-            throw new YadonyBusinessException(
-                    HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-budget-exceeded",
-                    "Service Unavailable",
-                    "L'envoi de codes par SMS est momentanément suspendu, utilise ton adresse email");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-budget-exceeded", "problem.sms-otp-budget-exceeded");
         }
 
         // Seul le dernier code envoyé reste valable.
@@ -390,10 +375,7 @@ public class SmsOtpService {
             // Le transporteur refuse le numéro lui-même : 422 au client plutôt qu'un
             // « code envoyé » qui n'arrive jamais. L'exception fait rollback de la ligne OTP
             // (elle ne doit pas compter dans la fenêtre anti-spam).
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "invalid-phone-number",
-                    "Invalid Phone Number",
-                    "Ce numéro n'est pas joignable par SMS, vérifie l'indicatif et le nombre de chiffres");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-phone-number", "problem.invalid-phone-number");
         }
         // Le SMS réel est désactivé par défaut en dev (app.sms.enabled=false) et
         // SmsService caviarde volontairement le message dans ses logs — sans ce
@@ -417,9 +399,7 @@ public class SmsOtpService {
         try {
             return firebaseAuth.createCustomToken(uid, Map.of("otp_channel", "sms"));
         } catch (FirebaseAuthException e) {
-            throw new YadonyBusinessException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                    "Firebase Error", "Erreur lors de la création du token");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.token-creation");
         }
     }
 
@@ -437,9 +417,7 @@ public class SmsOtpService {
             return firebaseAuth.getUserByPhoneNumber(phoneNumber).getUid();
         } catch (FirebaseAuthException e) {
             if (e.getAuthErrorCode() != AuthErrorCode.USER_NOT_FOUND) {
-                throw new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                        "Firebase Error", "Erreur lors de la résolution du compte");
+                throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.account-resolution");
             }
         }
         try {
@@ -453,14 +431,10 @@ public class SmsOtpService {
                 try {
                     return firebaseAuth.getUserByPhoneNumber(phoneNumber).getUid();
                 } catch (FirebaseAuthException e2) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                            "Firebase Error", "Erreur lors de la résolution du compte");
+                    throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.account-resolution");
                 }
             }
-            throw new YadonyBusinessException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                    "Firebase Error", "Erreur lors de la création du compte");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.account-creation");
         }
     }
 
@@ -479,18 +453,13 @@ public class SmsOtpService {
         log.info("attachPhoneToAccount: uid={} phone='{}'", firebaseUid, maskPhone(phoneNumber));
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         // Preuve de possession avant toute écriture : le code est consommé ici.
         consumeOtp(phoneNumber, code);
 
         if (firebaseContact.getContact(firebaseUid).phoneNumber() != null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "phone-already-set",
-                    "Phone Already Set",
-                    "Un numéro est déjà associé à ce compte et ne peut pas être remplacé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "phone-already-set", "problem.phone-already-set");
         }
 
         phoneOwnership.claimPhone(user, phoneNumber);
@@ -524,9 +493,7 @@ public class SmsOtpService {
         LocalDateTime attemptsSince =
                 LocalDateTime.now(ZoneOffset.UTC).minusMinutes(properties.getOtpValidMinutes());
         if (smsOtpRepository.sumAttemptsByPhoneSince(phoneNumber, attemptsSince) >= properties.getMaxAttempts()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-attempts-exceeded",
-                    "Too Many Attempts", "Trop de tentatives échouées");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "phone-otp-attempts-exceeded", "problem.otp-attempts-exceeded");
         }
 
         SmsOtpEntity token = smsOtpRepository
@@ -536,15 +503,11 @@ public class SmsOtpService {
             // Même coût qu'un vrai contrôle : une réponse plus rapide révélerait qu'aucun
             // code n'est en attente pour ce numéro.
             passwordEncoder.matches(code, dummyHash());
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "phone-otp-invalid",
-                    "Invalid OTP", "Code invalide ou expiré");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "phone-otp-invalid", "problem.otp-invalid");
         }
 
         if (token.getAttempts() >= properties.getMaxAttempts()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-attempts-exceeded",
-                    "Too Many Attempts", "Trop de tentatives échouées");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "phone-otp-attempts-exceeded", "problem.otp-attempts-exceeded");
         }
 
         // BCrypt appelé avant le check expiration pour éviter les timing attacks
@@ -558,17 +521,13 @@ public class SmsOtpService {
         }
 
         if (LocalDateTime.now(ZoneOffset.UTC).isAfter(token.getExpiresAt())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "phone-otp-expired",
-                    "OTP Expired", "Code expiré");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "phone-otp-expired", "problem.otp-expired");
         }
 
         if (!validCode) {
             // Transaction séparée : l'exception ci-dessous annule celle de l'appelant.
             smsOtpRepository.incrementAttempts(token.getId());
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "phone-otp-invalid",
-                    "Invalid OTP", "Code invalide");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "phone-otp-invalid", "problem.otp-invalid.short");
         }
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -605,11 +564,7 @@ public class SmsOtpService {
         int windowMinutes = properties.getLoginWindowMinutes();
         if (smsOtpRepository.countSuccessfulSince(phoneNumber, now.minusMinutes(windowMinutes))
                 >= properties.getMaxLoginsPerWindow()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "phone-otp-login-limit",
-                    "Too Many Requests",
-                    "Trop de connexions avec ce numéro, réessaie dans " + windowMinutes + " min",
-                    Map.of("retryAfterSeconds", windowMinutes * 60L));
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "phone-otp-login-limit", "problem.phone-otp-login-limit", Map.of("retryAfterSeconds", windowMinutes * 60L), windowMinutes);
         }
     }
 
@@ -645,10 +600,7 @@ public class SmsOtpService {
     }
 
     private static YadonyBusinessException verifyUnavailable() {
-        return new YadonyBusinessException(
-                HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-unavailable",
-                "SMS OTP Unavailable",
-                "L'envoi du code est momentanément indisponible, réessaie dans quelques minutes");
+        return YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "sms-otp-unavailable", "problem.sms-otp-unavailable");
     }
 
     /**
