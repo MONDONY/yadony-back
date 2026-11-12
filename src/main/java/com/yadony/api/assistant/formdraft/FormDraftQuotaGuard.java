@@ -40,9 +40,7 @@ public class FormDraftQuotaGuard {
         int used = counters.get(uid + ":" + today, k -> new AtomicInteger()).incrementAndGet();
         if (used > quota) {
             String retryAfter = today.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).toString();
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "assistant-form-draft-quota-exceeded",
-                    "Too Many Requests", "Vous avez beaucoup utilisé l'IA aujourd'hui. Réessayez demain.",
-                    Map.of("retryAfter", retryAfter));
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "assistant-form-draft-quota-exceeded", "problem.assistant.assistant-form-draft-quota-exceeded", Map.of("retryAfter", retryAfter));
         }
         return quota - used;
     }

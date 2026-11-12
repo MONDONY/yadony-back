@@ -63,16 +63,12 @@ public class TripSpaceAlertService {
         AnnouncementEntity trip = announcementRepository.findById(announcementId)
                 .filter(AnnouncementEntity::isPubliclyVisible)
                 .filter(a -> !blockVisibility.isHidden(subscriberId, a.getTravelerId()))
-                .orElseThrow(() -> new YadonyNotFoundException("Trajet introuvable"));
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.not-found.trip-single"));
         if (trip.getTravelerId().equals(subscriberId)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "trip-space-alert-own-trip", "Own Trip",
-                    "Vous ne pouvez pas vous abonner à votre propre trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-space-alert-own-trip", "problem.trip-space-alert-own-trip");
         }
         if (trip.getDepartureDate() != null && trip.getDepartureDate().isBefore(LocalDate.now(clock))) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "trip-departure-passed", "Trip Departure Passed",
-                    "Ce trajet est déjà parti.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "trip-departure-passed", "problem.trip-departure-passed");
         }
         var pending = repository.findFirstByAnnouncementIdAndSubscriberIdAndNotifiedAtIsNull(
                 announcementId, subscriberId);
@@ -81,9 +77,7 @@ public class TripSpaceAlertService {
         }
         if (trip.getStatus() != AnnouncementStatus.FULL) {
             // ACTIVE : il y a déjà de la place, la demande se fait directement.
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "trip-not-full", "Trip Not Full",
-                    "Ce trajet n'est pas complet.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "trip-not-full", "problem.trip-not-full");
         }
         TripSpaceAlertEntity alert = new TripSpaceAlertEntity();
         alert.setAnnouncementId(announcementId);

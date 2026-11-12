@@ -106,9 +106,7 @@ public class AdminBroadcastController {
         // l'historique affichait un envoi reussi que personne n'a recu.
         var targetUser = audienceService.targetUser(target);
         if (targetUser.isPresent() && !targetUser.get().reachable()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "broadcast-user-not-reachable", "Unprocessable Entity",
-                    "Ce compte est banni, en cours de suppression ou supprimé : il ne peut pas être notifié");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "broadcast-user-not-reachable", "problem.admin.broadcast-user-not-reachable");
         }
 
         AdminBroadcastEntity saved = broadcastService.record(
@@ -190,9 +188,7 @@ public class AdminBroadcastController {
         BroadcastTarget target = request.toDomain(segmentService::requireRule).target();
         long total = audienceService.count(target);
         if (total > exportMaxRows) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "broadcast-export-too-large", "Unprocessable Entity",
-                    "Export limité à " + exportMaxRows + " destinataires : affinez la règle (" + total + " trouvés)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "broadcast-export-too-large", "problem.admin.broadcast-export-too-large", String.valueOf(exportMaxRows), String.valueOf(total));
         }
         List<RecipientRow> rows = new java.util.ArrayList<>();
         int pageNumber = 0;
@@ -241,8 +237,6 @@ public class AdminBroadcastController {
         if (authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 }

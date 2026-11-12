@@ -85,7 +85,6 @@ public class BillingController {
         String firebaseUid = authentication.getName();
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(UserEntity::getId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                        "unknown-user", "Unknown User", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unknown-user", "problem.unknown-user"));
     }
 }

@@ -191,9 +191,7 @@ public class SupportTicketService {
     public void hideForUser(UserEntity user, UUID ticketId) {
         SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
         if (!ticket.isResolved()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "support-ticket-not-resolved", "Ticket en cours",
-                    "Seul un ticket resolu peut etre retire de la liste.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "support-ticket-not-resolved", "problem.support-ticket-not-resolved");
         }
         if (ticket.getHiddenByUserAt() != null) {
             return;
@@ -238,9 +236,7 @@ public class SupportTicketService {
                                           List<String> attachmentKeys) {
         SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
         if (ticket.isResolved()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-ticket-resolved", "Ticket resolu",
-                    "Ce ticket est resolu. Ouvrez-en un nouveau pour un autre probleme.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-ticket-resolved", "problem.support-ticket-resolved");
         }
         String normalized = requireContentOrAttachments(content, attachmentKeys);
         List<String> ownedKeys = attachmentService.requireOwnedKeys(
@@ -264,9 +260,7 @@ public class SupportTicketService {
             // Le point du garde-fou : deux admins ne doivent pas repondre en
             // parallele. Reprendre le ticket d'un collegue passe par /reassign,
             // qui exige SUPPORT_TICKET_MANAGE et laisse une trace distincte.
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "support-ticket-already-assigned", "Ticket deja assigne",
-                    "Ce ticket est deja assigne a un autre administrateur.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "support-ticket-already-assigned", "problem.support-ticket-already-assigned");
         }
         ticket.setAssignedAdminId(adminId);
         if (ticket.getStatus() == SupportTicketStatus.NEW) {
@@ -379,9 +373,7 @@ public class SupportTicketService {
         String normalizedMessage = requireContentOrAttachments(firstMessage, attachmentKeys);
 
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Utilisateur introuvable",
-                        "Aucun utilisateur actif ne correspond a cet identifiant"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.no-active-match"));
         List<String> ownedKeys = attachmentService.requireOwnedKeys(
                 attachmentKeys, attachmentService.adminPrefix(adminId));
 
@@ -437,9 +429,7 @@ public class SupportTicketService {
                 attachmentKeys, attachmentService.adminPrefix(adminId));
 
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Utilisateur introuvable",
-                        "Aucun utilisateur actif ne correspond a cet identifiant"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.no-active-match"));
         List<String> contextKeys = attachmentService.copyIntoUserPrefix(user.getId(), contextSourceKeys);
 
         SupportTicketEntity ticket = new SupportTicketEntity();
@@ -583,45 +573,39 @@ public class SupportTicketService {
 
     private void requireAssignedTo(SupportTicketEntity ticket, UUID adminId) {
         if (!adminId.equals(ticket.getAssignedAdminId())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "support-ticket-not-assigned", "Ticket non assigne",
-                    "Assignez-vous ce ticket avant d'y repondre ou de le resoudre.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "support-ticket-not-assigned", "problem.support-ticket-not-assigned");
         }
     }
 
     private void requireNotResolved(SupportTicketEntity ticket) {
         if (ticket.isResolved()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-ticket-resolved", "Ticket resolu",
-                    "Ce ticket est resolu et n'accepte plus d'action.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-ticket-resolved", "problem.support-ticket-resolved.no-action");
         }
     }
 
     private static YadonyBusinessException ticketNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                "support-ticket-not-found", "Ticket introuvable",
-                "Ticket support introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "support-ticket-not-found", "problem.support-ticket-not-found.single");
     }
 
     private static String normalizeCategory(String category) {
         if (category == null || category.isBlank()) {
-            throw invalidField("category", "La categorie est obligatoire");
+            throw invalidField("category", "problem.support-invalid-field.category-required");
         }
         String upper = category.trim().toUpperCase(Locale.ROOT);
         try {
             return SupportCategory.valueOf(upper).name();
         } catch (IllegalArgumentException e) {
-            throw invalidField("category", "Categorie de support inconnue: " + category);
+            throw invalidField("category", "problem.support-invalid-field.category-unknown", category);
         }
     }
 
     private static String requireText(String value, String field, int maxLength) {
         if (value == null || value.isBlank()) {
-            throw invalidField(field, "Le champ " + field + " est obligatoire");
+            throw invalidField(field, "problem.support-invalid-field.required", field);
         }
         String trimmed = value.trim();
         if (trimmed.length() > maxLength) {
-            throw invalidField(field, "Le champ " + field + " depasse " + maxLength + " caracteres");
+            throw invalidField(field, "problem.support-invalid-field.too-long", field, maxLength);
         }
         return trimmed;
     }
@@ -634,14 +618,14 @@ public class SupportTicketService {
         boolean hasText = content != null && !content.isBlank();
         boolean hasImage = keys != null && !keys.isEmpty();
         if (!hasText && !hasImage) {
-            throw invalidField("message", "Ecrivez un message ou joignez une image");
+            throw invalidField("message", "problem.support-invalid-field.message-required");
         }
         if (!hasText) {
             return "";
         }
         String trimmed = content.trim();
         if (trimmed.length() > MAX_MESSAGE_LENGTH) {
-            throw invalidField("message", "Le champ message depasse " + MAX_MESSAGE_LENGTH + " caracteres");
+            throw invalidField("message", "problem.support-invalid-field.message-too-long", MAX_MESSAGE_LENGTH);
         }
         return trimmed;
     }
@@ -664,10 +648,9 @@ public class SupportTicketService {
         return "image/jpeg";
     }
 
-    private static YadonyBusinessException invalidField(String field, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "support-invalid-field", "Champ invalide", detail,
-                Map.of("field", field));
+    private static YadonyBusinessException invalidField(String field, String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                "support-invalid-field", messageKey, Map.of("field", field), args);
     }
 
     private static Map<String, Object> payload(Object... keyValues) {

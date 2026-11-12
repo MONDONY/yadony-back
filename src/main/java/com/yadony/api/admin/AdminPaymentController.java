@@ -366,8 +366,7 @@ public class AdminPaymentController {
     @GetMapping("/{id}/timeline")
     public ResponseEntity<List<AdminPaymentTimeline.Entry>> timeline(@PathVariable UUID id) {
         PaymentEntity p = paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
         return ResponseEntity.ok(timeline.of(p));
     }
 
@@ -375,8 +374,7 @@ public class AdminPaymentController {
     @GetMapping("/{id}")
     public ResponseEntity<AdminPaymentDetailResponse> getById(@PathVariable UUID id, Authentication authentication) {
         PaymentEntity p = paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
         // Alerte, n° de suivi, liens, alertes ouvertes et litige bancaire : chaque identifiant n'est rendu que
         // si l'admin a la permission de sa destination (AdminPaymentLinks), sinon il est absent du JSON.
         AdminPaymentLinks.Result sheet = paymentLinks.of(p, LocalDateTime.now(clock), authentication);
@@ -424,11 +422,7 @@ public class AdminPaymentController {
             try {
                 capturedChargeId = escrowCapture.ensureCaptured(id, "admin-force-release").chargeId();
             } catch (EscrowCaptureService.EscrowCaptureException e) {
-                throw new YadonyBusinessException(
-                        HttpStatus.UNPROCESSABLE_ENTITY, "escrow-capture-failed",
-                        "Escrow Capture Failed",
-                        "Capture du paiement carte impossible (" + e.getMessage()
-                                + ") : aucun versement n'est parti, le paiement reste en séquestre");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "escrow-capture-failed", "problem.admin.escrow-capture-failed", String.valueOf(e.getMessage()));
             }
         }
 
@@ -440,9 +434,7 @@ public class AdminPaymentController {
 
         StripeReleaseExecutor.Execution execution = releaseExecutor.execute(claim.intent(), claim.payment());
         switch (execution.result()) {
-            case NOT_OWNED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "release-in-progress",
-                    "Release In Progress",
-                    "Ce versement est déjà pris en charge par un autre traitement : rechargez la fiche avant toute action");
+            case NOT_OWNED -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "release-in-progress", "problem.admin.release-in-progress");
             case RELEASED, REALIGNED -> {
                 // Resolve any open ESCROW_J48_TIMEOUT alerts for this payment
                 resolveRelatedAlerts(id);
@@ -452,28 +444,15 @@ public class AdminPaymentController {
             }
             case PENDING_RETRY -> {
                 if (execution.error() != null && execution.error().startsWith(IdempotencyException.class.getSimpleName())) {
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "transfer-already-attempted",
-                            "Transfer Already Attempted",
-                            "Un Transfer a déjà été tenté pour ce paiement avec d'autres paramètres : le versement "
-                                    + "est réservé et la reprise automatique le réconcilie, vérifier dans Stripe "
-                                    + "avant toute autre action");
+                    throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "transfer-already-attempted", "problem.admin.transfer-already-attempted");
                 }
-                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-release-pending",
-                        "Stripe Release Pending",
-                        "Stripe n'a pas confirmé le versement : il est réservé et sera repris automatiquement "
-                                + "avec la même clé, ne relancez pas la libération");
+                throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-release-pending", "problem.admin.stripe-release-pending");
             }
-            case BLOCKED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed",
-                    "Payout Guard Changed",
-                    "Une garde est apparue avant le versement (" + execution.error()
-                            + ") : rien n'est parti, le paiement reste en séquestre");
+            case BLOCKED -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payout-guard-changed", "problem.admin.payout-guard-changed", String.valueOf(execution.error()));
             default -> {
                 log.error("Admin force-release: Stripe refused payment {} (PI={}): {}",
                         id, plan.piId(), execution.error());
-                throw new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "stripe-release-failed",
-                        "Stripe Error",
-                        "Impossible de libérer le paiement Stripe. Veuillez réessayer.");
+                throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "stripe-release-failed", "problem.admin.stripe-release-failed");
             }
         }
     }
@@ -491,8 +470,7 @@ public class AdminPaymentController {
 
     private PaymentEntity reload(UUID id) {
         return paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
     }
 
     /**
@@ -501,9 +479,7 @@ public class AdminPaymentController {
      */
     private ForceReleasePlan checkForceRelease(UUID id, PayoutReleaseRequest request) {
         PaymentEntity payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found",
-                        "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
 
         // Resolve the bid (classic or negotiation-materialised) → announcement → traveler.
         // Negotiation payments carry a null bid_id, so the bid is found via its linked thread id.
@@ -528,7 +504,7 @@ public class AdminPaymentController {
         // Lecture non atomique, seulement pour l'ordre des erreurs : un paiement déjà sorti
         // d'ESCROW répond 422 comme avant, pas 409 « gelé ». Le claim reste la garde.
         if (payment.getStatus() != PaymentStatus.ESCROW) {
-            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+            throw notInEscrow("problem.admin.escrow-release-only");
         }
 
         // Litige ouvert par l'administration (fiche colis) : le versement est gelé jusqu'à sa
@@ -543,15 +519,11 @@ public class AdminPaymentController {
             requireUsableStripeAccount(payment, traveler, travelerId);
             if (traveler == null || traveler.getStripeAccountId() == null
                     || traveler.getStripeAccountId().isBlank()) {
-                throw new YadonyBusinessException(
-                        HttpStatus.UNPROCESSABLE_ENTITY, "traveler-no-connect",
-                        "Invalid Traveler",
-                        "Voyageur introuvable ou sans compte Stripe Connect — transfert impossible");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-no-connect", "problem.admin.traveler-no-connect");
             }
         }
         if (payment.getRail() == PaymentRail.PAWAPAY && travelerId == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-not-found",
-                    "Invalid Traveler", "Voyageur introuvable pour ce paiement");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "traveler-not-found", "problem.admin.traveler-not-found");
         }
         return new ForceReleasePlan(bidId, travelerId, bid != null ? bid.getSenderId() : null,
                 traveler != null ? traveler.getStripeAccountId() : null, payment.getRail(),
@@ -569,8 +541,7 @@ public class AdminPaymentController {
             requireReleasableBid(bidRepository.findById(plan.bidId()).orElse(null));
         }
         PaymentEntity payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
         requireNotPartiallyRefunded(payment);
         // Gardes revérifiées sous verrou (colis verrouillé, paiement relu après) : litige bancaire et
         // voyageur gelé (sauf dérogation déjà auditée), compte Connect. Les lire avant la capture ne
@@ -581,8 +552,7 @@ public class AdminPaymentController {
         boolean heldNow = plan.travelerId() != null && holdOf(plan.travelerId()).held()
                 && !plan.overriddenGuards().contains(StripeReleaseIntentEntity.GUARD_BENEFICIARY_HELD);
         if (disputedNow || heldNow) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-guard-changed", "Payout Guard Changed",
-                    "Paiement en litige ou voyageur gelé depuis la vérification : versement refusé sans dérogation");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payout-guard-changed", "problem.admin.payout-guard-changed-2");
         }
         if (payment.getRail() != PaymentRail.PAWAPAY && !payment.isLegacyDestinationCharge() && plan.travelerId() != null) {
             requireUsableStripeAccount(payment, userRepository.findById(plan.travelerId()).orElse(null), plan.travelerId());
@@ -591,7 +561,7 @@ public class AdminPaymentController {
         // Atomic ESCROW → RELEASED transition — prevents a double release/transfer race.
         int updated = paymentRepository.markReleasedIfEscrow(id, LocalDateTime.now(ZoneOffset.UTC));
         if (updated == 0) {
-            throw notInEscrow("Seuls les paiements en statut ESCROW peuvent faire l'objet d'une libération forcée");
+            throw notInEscrow("problem.admin.escrow-release-only");
         }
         // Litige admin revérifié après le claim (verrou de ligne tenu) : un litige ouvert entre la
         // lecture plus haut et le claim est vu ici ; l'exception annule le claim.
@@ -618,7 +588,7 @@ public class AdminPaymentController {
                 }
             } catch (IllegalStateException e) {
                 // L'exception annule le claim, le paiement reste ESCROW.
-                throw payoutFailed("Versement mobile money impossible : " + e.getMessage());
+                throw payoutFailed("problem.admin.payout-failed", String.valueOf(e.getMessage()));
             }
             // Le claim a posé status/escrowReleasedAt par une écriture ciblée : refresh relit la
             // ligne réelle, aucun flush ultérieur ne réécrit un état périmé.
@@ -657,37 +627,26 @@ public class AdminPaymentController {
         // Safety guard: a CANCELLED trip's escrow must be REFUNDED to the sender (cancellation
         // flow), never transferred to the traveler.
         if (bid != null && bid.getStatus() == BidStatus.CANCELLED) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "bid-cancelled",
-                    "Bid Cancelled",
-                    "Le colis est annulé — l'escrow doit être remboursé à l'expéditeur, pas transféré au voyageur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-cancelled", "problem.admin.bid-cancelled");
         }
         // Même règle pour les autres fins de colis où l'argent revient à l'expéditeur : refusé
         // par le voyageur, expiré, voyageur absent (NoShowService), colis refusé à la remise.
         if (bid != null && SENDER_REFUND_STATUSES.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-releasable",
-                    "Bid Not Releasable",
-                    "Le colis est " + bid.getStatus() + " — l'escrow revient à l'expéditeur, pas au voyageur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-releasable", "problem.admin.bid-not-releasable", String.valueOf(bid.getStatus()));
         }
     }
 
     /** Remboursement partiel déjà passé : le net part du montant TOTAL, montant à trancher à la main. */
     private static void requireNotPartiallyRefunded(PaymentEntity payment) {
         if (payment.getRefundedAmount() != null && payment.getRefundedAmount().signum() > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "payment-partially-refunded",
-                    "Payment Partially Refunded",
-                    "Ce paiement a déjà été partiellement remboursé (" + payment.getRefundedAmount().toPlainString()
-                            + " " + payment.getCurrency() + ") — la libération forcée verserait le montant total");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-partially-refunded", "problem.admin.payment-partially-refunded", payment.getRefundedAmount().toPlainString(), String.valueOf(payment.getCurrency()));
         }
     }
 
     private void requireNoAdminDispute(UUID bidId) {
         if (bidId != null && disputeRepository != null && disputeRepository.existsByBidIdAndStatusAndTypeStartingWith(
                 bidId, com.yadony.api.disputes.DisputeTypes.STATUS_OPEN, com.yadony.api.disputes.DisputeTypes.ADMIN_PREFIX)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dispute-open", "Dispute Open",
-                    "Un litige ouvert par l'administration gèle ce versement : résolvez-le d'abord dans Incidents.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dispute-open", "problem.admin.dispute-open");
         }
     }
 
@@ -708,9 +667,7 @@ public class AdminPaymentController {
     @Transactional
     public ResponseEntity<AdminPaymentDetailResponse> refund(@PathVariable UUID id) {
         PaymentEntity payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found",
-                        "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
 
         // Rail mobile money — délègue à RefundProcessor#processRefund AVANT tout claim ambiant
         // (pas de markRefundedIfEscrow ici pour ce rail). processRefund est
@@ -730,7 +687,7 @@ public class AdminPaymentController {
                 acted = refundProcessor.processRefund(id, "ESCROW_FORCE_REFUNDED", currentAdminId(),
                         Map.of("bidId", String.valueOf(payment.getBidId())));
             } catch (IllegalStateException e) {
-                throw refundFailed("Remboursement mobile money impossible : " + e.getMessage());
+                throw refundFailed("problem.admin.mm-refund-failed", String.valueOf(e.getMessage()));
             }
             if (!acted) {
                 // Race perdue entre notre lecture ci-dessus et le claim interne de processRefund
@@ -783,10 +740,7 @@ public class AdminPaymentController {
             } else {
                 log.error("Admin refund: Stripe refund failed for payment {} (PI={}): {}",
                         id, payment.getStripePaymentIntentId(), e.getMessage(), e);
-                throw new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "stripe-refund-failed",
-                        "Stripe Error",
-                        "Impossible de rembourser le paiement Stripe. Veuillez réessayer.");
+                throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "stripe-refund-failed", "problem.admin.stripe-refund-failed");
             }
         }
 
@@ -835,16 +789,16 @@ public class AdminPaymentController {
             @RequestBody(required = false) PayoutReleaseRequest request) {
         PaymentEntity payment = requirePawapayPayment(id);
         if (payment.getStatus() != PaymentStatus.RELEASED) {
-            throw retryNotAllowed("Le paiement doit être RELEASED pour relancer le versement");
+            throw retryNotAllowed("problem.admin.retry-payout-needs-released");
         }
         PawapayOperationEntity deadPayout = requireDeadLastOperation(id, PawapayOperationKind.PAYOUT,
-                "Un versement est encore en cours, déjà abouti, ou introuvable");
+                "problem.admin.retry-payout-not-dead");
         BidEntity bid = resolveBid(payment);
         AnnouncementEntity announcement = bid != null
                 ? announcementRepository.findById(bid.getAnnouncementId()).orElse(null)
                 : null;
         if (bid == null || announcement == null) {
-            throw retryNotAllowed("Colis ou trajet introuvable");
+            throw retryNotAllowed("problem.admin.retry-parcel-or-trip-missing");
         }
         // ARGENT : reprend le montant de la tentative MORTE plutôt que de le recalculer. Le
         // chemin de livraison majore le net d'une part de commission quand le voyageur détient
@@ -863,7 +817,7 @@ public class AdminPaymentController {
                     ? payoutInitiator.release(payment, bid.getId(), announcement.getTravelerId(), net, "admin-retry", true)
                     : payoutInitiator.release(payment, bid.getId(), announcement.getTravelerId(), net, "admin-retry");
         } catch (IllegalStateException e) {
-            throw payoutFailed("Versement mobile money impossible : " + e.getMessage());
+            throw payoutFailed("problem.admin.payout-failed", String.valueOf(e.getMessage()));
         }
         auditMobileMoneyAction(id, "MM_PAYOUT_RETRIED",
                 Map.of("operationId", op.getId().toString(), "bidId", bid.getId().toString()));
@@ -890,19 +844,19 @@ public class AdminPaymentController {
     public ResponseEntity<AdminPaymentDetailResponse> retryMobileMoneyRefund(@PathVariable UUID id) {
         PaymentEntity payment = requirePawapayPayment(id);
         if (payment.getStatus() != PaymentStatus.REFUNDED && payment.getStatus() != PaymentStatus.CANCELLED) {
-            throw retryNotAllowed("Le paiement doit être REFUNDED ou CANCELLED pour relancer le remboursement");
+            throw retryNotAllowed("problem.admin.retry-refund-needs-refunded");
         }
         requireDeadLastOperation(id, PawapayOperationKind.REFUND,
-                "Un remboursement est encore en cours, déjà abouti, ou introuvable");
+                "problem.admin.retry-refund-not-dead");
         PawapayOperationEntity deposit = pawapayOperations.findLatest(id, PawapayOperationKind.DEPOSIT)
                 .filter(d -> d.getStatus() == PawapayOperationStatus.COMPLETED)
-                .orElseThrow(() -> retryNotAllowed("Aucun deposit abouti à rembourser"));
+                .orElseThrow(() -> retryNotAllowed("problem.admin.retry-no-completed-deposit"));
         // Montant du DEPOSIT d'origine, jamais payment.getAmount() — même alignement que
         // RefundProcessor#refundEscrowedMobileMoney (les deux se valent aujourd'hui, sans
         // garantie contractuelle demain).
         PawapayOperationEntity refund = pawapaySubmission.submitRefund(id, deposit, deposit.getAmount());
         if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
-            throw refundFailed("Remboursement refusé : " + refund.getFailureCode());
+            throw refundFailed("problem.admin.refund-rejected", String.valueOf(refund.getFailureCode()));
         }
         auditMobileMoneyAction(id, "MM_REFUND_RETRIED", Map.of("operationId", refund.getId().toString()));
         publishRefunded(payment);
@@ -920,7 +874,7 @@ public class AdminPaymentController {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static final String REFUND_REQUIRES_ESCROW = "Seuls les paiements en statut ESCROW peuvent être remboursés";
+    private static final String REFUND_REQUIRES_ESCROW = "problem.admin.escrow-refund-only";
 
     /**
      * Détail d'un paiement. Pour le rail PAWAPAY, les identifiants d'opération sont lus dans
@@ -975,10 +929,7 @@ public class AdminPaymentController {
             String reason = request.trimmedReason();
             if (reason == null || reason.length() < PayoutReleaseRequest.REASON_MIN
                     || reason.length() > PayoutReleaseRequest.REASON_MAX) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "override-reason-invalid",
-                        "Invalid Override Reason",
-                        "Le motif de dérogation est obligatoire : entre " + PayoutReleaseRequest.REASON_MIN
-                                + " et " + PayoutReleaseRequest.REASON_MAX + " caractères");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "override-reason-invalid", "problem.admin.override-reason-invalid", String.valueOf(PayoutReleaseRequest.REASON_MIN), String.valueOf(PayoutReleaseRequest.REASON_MAX));
             }
         }
         if (blockers.isEmpty()) {
@@ -987,15 +938,12 @@ public class AdminPaymentController {
         List<String> holdReasons = hold.reasons().stream().map(Enum::name).toList();
         if (!override) {
             boolean disputed = payment.isDisputed();
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT,
                     disputed ? "payment-disputed" : "payout-beneficiary-held",
-                    disputed ? "Payment Disputed" : "Payout Beneficiary Held",
-                    disputed
-                            ? "Paiement en litige (chargeback) : versement refusé sans dérogation motivée"
-                            : "Les versements de ce voyageur sont gelés (" + String.join(", ", holdReasons)
-                                    + ") : versement refusé sans dérogation motivée",
+                    disputed ? "problem.admin.payment-disputed" : "problem.admin.payout-beneficiary-held",
                     Map.of("blockers", List.copyOf(blockers), "holdReasons", holdReasons,
-                            "travelerId", String.valueOf(travelerId)));
+                            "travelerId", String.valueOf(travelerId)),
+                    String.join(", ", holdReasons));
         }
         UUID adminId = currentAdminId();
         Map<String, Object> payload = Map.of(
@@ -1028,10 +976,7 @@ public class AdminPaymentController {
                         "travelerId", String.valueOf(travelerId),
                         "stripeAccountStatus", status.name(),
                         "source", "admin-force-release")));
-        throw new YadonyBusinessException(HttpStatus.CONFLICT, "stripe-account-unusable",
-                "Stripe Account Unusable",
-                "Le compte Stripe du voyageur est " + status + " : aucun Transfer possible, le paiement reste en séquestre",
-                Map.of("stripeAccountStatus", status.name()));
+        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "stripe-account-unusable", "problem.admin.stripe-account-unusable", Map.of("stripeAccountStatus", status.name()), String.valueOf(status));
     }
 
     private PayoutHoldStatus holdOf(UUID travelerId) {
@@ -1082,10 +1027,9 @@ public class AdminPaymentController {
     /** Charge le paiement et vérifie qu'il s'agit bien d'un paiement mobile money (rail PAWAPAY). */
     private PaymentEntity requirePawapayPayment(UUID id) {
         PaymentEntity payment = paymentRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "payment-not-found", "Not Found", "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
         if (payment.getRail() != PaymentRail.PAWAPAY) {
-            throw retryNotAllowed("Ce paiement n'est pas un paiement mobile money");
+            throw retryNotAllowed("problem.admin.retry-not-mobile-money");
         }
         return payment;
     }
@@ -1114,24 +1058,24 @@ public class AdminPaymentController {
                 auditService.log("PAYMENT", paymentId, action, adminId, payload));
     }
 
-    private static YadonyBusinessException notInEscrow(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "payment-not-in-escrow",
-                "Invalid Status", detail);
+    private static YadonyBusinessException notInEscrow(String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-not-in-escrow",
+                messageKey, args);
     }
 
-    private static YadonyBusinessException payoutFailed(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payout-failed",
-                "Mobile Money Payout Failed", detail);
+    private static YadonyBusinessException payoutFailed(String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payout-failed",
+                messageKey, args);
     }
 
-    private static YadonyBusinessException refundFailed(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-refund-failed",
-                "Mobile Money Refund Failed", detail);
+    private static YadonyBusinessException refundFailed(String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-refund-failed",
+                messageKey, args);
     }
 
-    private static YadonyBusinessException retryNotAllowed(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-retry-not-allowed",
-                "Retry Not Allowed", detail);
+    private static YadonyBusinessException retryNotAllowed(String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-retry-not-allowed",
+                messageKey, args);
     }
 
     /**
@@ -1156,9 +1100,7 @@ public class AdminPaymentController {
         if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 
     /**

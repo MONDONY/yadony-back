@@ -336,8 +336,7 @@ public class AdminUserController {
      *  ce contrôleur a besoin de l'entité complète avant de construire une réponse. */
     private UserEntity requireUser(UUID userId) {
         return userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
     }
 
     /**
@@ -351,9 +350,7 @@ public class AdminUserController {
         if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 
     record SuspendBanRequest(String reason) {}

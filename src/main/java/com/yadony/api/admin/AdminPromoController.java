@@ -48,9 +48,7 @@ public class AdminPromoController {
     @PostMapping
     public ResponseEntity<PromoCodeResponse> create(@Valid @RequestBody CreatePromoRequest request) {
         if (promoCodeRepository.findByCode(request.code().toUpperCase()).isPresent()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "promo-code-exists", "Promo Code Exists",
-                    "Un code promo avec ce code existe déjà : " + request.code().toUpperCase());
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "promo-code-exists", "problem.admin.promo-code-exists", String.valueOf(request.code().toUpperCase()));
         }
 
         PromoCodeEntity promo = new PromoCodeEntity();
@@ -120,8 +118,7 @@ public class AdminPromoController {
 
     private PromoCodeEntity findOrThrow(UUID id) {
         return promoCodeRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "promo-not-found", "Promo Not Found", "Code promo introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "promo-not-found", "problem.promo-not-found"));
     }
 
     private UUID adminId() {

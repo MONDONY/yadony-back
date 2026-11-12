@@ -69,9 +69,7 @@ public class AdminRecetteTesterController {
                                      Authentication authentication) {
         UUID adminId = adminId(authentication);
         if (!recetteMode.isEnabled()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "recette-disabled",
-                    "Recette Disabled",
-                    "Le mode recette n'est pas activé dans cet environnement");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "recette-disabled", "problem.admin.recette-disabled");
         }
         UserEntity user = requireUser(userId);
         boolean enabled = request.enabled();
@@ -90,16 +88,13 @@ public class AdminRecetteTesterController {
 
     private UserEntity requireUser(UUID userId) {
         return userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
     }
 
     private static UUID adminId(Authentication authentication) {
         if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 }

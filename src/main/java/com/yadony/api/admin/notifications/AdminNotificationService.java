@@ -149,8 +149,7 @@ public class AdminNotificationService {
     public void markRead(UUID adminId, String notificationId) {
         var matcher = notificationId == null ? null : NOTIFICATION_ID.matcher(notificationId);
         if (matcher == null || !matcher.matches() || !isKnownType(matcher.group(1))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "notification-id-invalid",
-                    "Unprocessable Entity", "Identifiant de notification invalide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "notification-id-invalid", "problem.admin.notification-id-invalid");
         }
         if (reads.existsByAdminIdAndNotificationId(adminId, notificationId)) {
             return;

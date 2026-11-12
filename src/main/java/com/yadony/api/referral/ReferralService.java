@@ -101,9 +101,7 @@ public class ReferralService {
     @Transactional
     public ReferralCodeEntity generateCodeForUser(UUID userId) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable : " + userId));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.utilisateur-introuvable", userId));
 
         String prefix = buildPrefix(user);
         String code = generateUniqueCode(prefix);
@@ -181,18 +179,12 @@ public class ReferralService {
         UserEntity referee = loadUserByFirebaseUid(firebaseUid);
 
         ReferralCodeEntity referralCode = referralCodeRepository.findByCode(code)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "referral-code-not-found",
-                        "Code de parrainage introuvable",
-                        "Le code " + code + " n'existe pas"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "referral-code-not-found", "problem.referral-code-not-found", code));
 
         UUID referrerId = referralCode.getUserId();
 
         if (referrerId.equals(referee.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "self-referral",
-                    "Auto-parrainage interdit",
-                    "Vous ne pouvez pas utiliser votre propre code de parrainage");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "self-referral", "problem.self-referral");
         }
 
         // Un compte n'est parrainé qu'une fois, quel que soit l'avancement de l'invitation. Le
@@ -201,10 +193,7 @@ public class ReferralService {
         // L'index unique partiel V358 tient la même règle en base.
         userRepository.lockForUpdate(referee.getId());
         if (referralInvitationRepository.existsByRefereeUserId(referee.getId())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "already-referred",
-                    "Parrainage déjà effectué",
-                    "Vous avez déjà utilisé un code de parrainage");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-referred", "problem.already-referred");
         }
 
         ReferralInvitationEntity invitation = new ReferralInvitationEntity();
@@ -246,11 +235,7 @@ public class ReferralService {
             LocalDateTime cooldownBoundary = LocalDateTime.now(ZoneOffset.UTC)
                     .minusDays(config.getCodeRegenerationCooldownDays());
             if (existing.get().getCreatedAt().isAfter(cooldownBoundary)) {
-                throw new YadonyBusinessException(
-                        HttpStatus.TOO_MANY_REQUESTS, "regeneration-cooldown",
-                        "Délai de régénération non écoulé",
-                        "Vous ne pouvez régénérer votre code qu'une fois tous les "
-                                + config.getCodeRegenerationCooldownDays() + " jours");
+                throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "regeneration-cooldown", "problem.regeneration-cooldown", config.getCodeRegenerationCooldownDays());
             }
             referralCodeRepository.delete(existing.get());
         }
@@ -304,26 +289,18 @@ public class ReferralService {
     public ReferralRefereeResponse chooseReward(String firebaseUid, UUID invitationId, ReferralRewardChoice choice) {
         UserEntity user = loadUserByFirebaseUid(firebaseUid);
         if (choice == null || !choice.isSelectable()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "referral-reward-choice-invalid", "Récompense invalide",
-                    "Choisissez WALLET_CREDIT ou DISCOUNT_CODE");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "referral-reward-choice-invalid", "problem.referral-reward-choice-invalid");
         }
 
         ReferralInvitationEntity inv = referralInvitationRepository.findByIdForUpdate(invitationId)
                 .filter(i -> user.getId().equals(i.getReferrerUserId()))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "referral-invitation-not-found", "Filleul introuvable",
-                        "Ce filleul est introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "referral-invitation-not-found", "problem.referral-invitation-not-found"));
 
         if (inv.getRewardStatus() == ReferralRewardStatus.CHOSEN) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "referral-reward-already-chosen", "Récompense déjà choisie",
-                    "La récompense de ce filleul a déjà été choisie");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "referral-reward-already-chosen", "problem.referral-reward-already-chosen");
         }
         if (inv.getRewardStatus() != ReferralRewardStatus.AVAILABLE) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "referral-reward-not-available", "Récompense pas encore disponible",
-                    "La récompense sera disponible après le premier envoi livré de votre filleul");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "referral-reward-not-available", "problem.referral-reward-not-available");
         }
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -411,10 +388,7 @@ public class ReferralService {
 
     private UserEntity loadUserByFirebaseUid(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found",
-                        "Utilisateur introuvable",
-                        "Aucun compte associé à cet identifiant Firebase"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.firebase-uid"));
     }
 
     private String buildPrefix(UserEntity user) {

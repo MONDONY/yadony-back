@@ -80,10 +80,7 @@ public class ImageProcessingService {
 
             return new ProcessedImage(mainOut.toByteArray(), thumbOut.toByteArray());
         } catch (Exception e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "image/processing-failed",
-                    "Image Processing Failed",
-                    "Échec du traitement de l'image : " + e.getMessage());
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "image/processing-failed", "problem.image-processing-failed", e.getMessage());
         }
     }
 
@@ -105,9 +102,7 @@ public class ImageProcessingService {
             builder.outputFormat("jpg").outputQuality(quality).toOutputStream(out);
             return out.toByteArray();
         } catch (Exception e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "image/processing-failed", "Image Processing Failed",
-                    "Échec du traitement de l'image : " + e.getMessage());
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "image/processing-failed", "problem.image-processing-failed", e.getMessage());
         }
     }
 
@@ -133,28 +128,19 @@ public class ImageProcessingService {
 
     private BufferedImage decodeImage(byte[] input) {
         if (input == null || input.length == 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "image/invalid",
-                    "Invalid Image",
-                    "Le fichier est vide ou absent");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "image/invalid", "problem.image-invalid.empty");
         }
         rejectOversizedDimensions(input);
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(input));
             if (img == null) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "image/invalid",
-                        "Invalid Image",
-                        "Le fichier n'est pas une image valide");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "image/invalid", "problem.image-invalid.not-an-image");
             }
             return img;
         } catch (YadonyBusinessException e) {
             throw e;
         } catch (Exception e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "image/invalid",
-                    "Invalid Image",
-                    "Le fichier n'est pas une image valide");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "image/invalid", "problem.image-invalid.not-an-image");
         }
     }
 
@@ -184,10 +170,7 @@ public class ImageProcessingService {
             return;
         }
         if (pixels > MAX_PIXELS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "image/too-large",
-                    "Image Too Large",
-                    "Image trop grande (dimensions)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "image/too-large", "problem.image-too-large");
         }
     }
 }

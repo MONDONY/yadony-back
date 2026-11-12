@@ -123,8 +123,7 @@ public class NotificationFeedService {
     @Transactional
     public int markGroupRead(String firebaseUid, String groupKey) {
         if (groupKey == null || groupKey.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "validation", "Validation Error",
-                    "groupKey est requis");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "validation", "problem.notification-group-key.required");
         }
         if (groupKey.startsWith("notif:")) {
             notificationService.markRead(firebaseUid, parseId(groupKey.substring("notif:".length())));
@@ -138,8 +137,7 @@ public class NotificationFeedService {
         try {
             return UUID.fromString(raw);
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "validation", "Validation Error",
-                    "groupKey invalide");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "validation", "problem.notification-group-key.invalid");
         }
     }
 }

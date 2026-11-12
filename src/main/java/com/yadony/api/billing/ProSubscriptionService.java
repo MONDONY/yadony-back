@@ -143,10 +143,7 @@ public class ProSubscriptionService {
                 .orElseGet(ProSubscriptionEntity::new);
 
         if (sub.isStripeManaged()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "active-stripe-subscription", "Active Stripe Subscription",
-                    "Cet utilisateur a un abonnement PRO payant en cours — orientez-le vers "
-                            + "le Customer Portal Stripe pour le résilier avant d'offrir un accès.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "active-stripe-subscription", "problem.active-stripe-subscription.admin");
         }
 
         // La source change : les traces d'un cycle Stripe précédent ne doivent pas
@@ -193,19 +190,14 @@ public class ProSubscriptionService {
     @Transactional
     public ProSubscriptionEntity revokeAdminGrant(UUID userId, UUID adminId) {
         ProSubscriptionEntity sub = repository.findByUserId(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "no-subscription", "Not Found", "Aucun abonnement PRO sur ce compte"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "no-subscription", "problem.no-subscription"));
 
         if (sub.getSource() != ProSubscriptionSource.ADMIN_GRANT) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "not-an-admin-grant", "Not An Admin Grant",
-                    "Cet abonnement n'est pas un accès offert : il se résilie depuis Stripe.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "not-an-admin-grant", "problem.not-an-admin-grant");
         }
 
         if (!sub.getStatus().grantsProAccess()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "already-revoked", "Already Revoked",
-                    "Cet accès offert a déjà été révoqué.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-revoked", "problem.already-revoked");
         }
 
         sub.setStatus(ProSubscriptionStatus.CANCELED);

@@ -109,8 +109,7 @@ public class AdminPhotoStorageController {
     private ResponseEntity<Map<String, Boolean>> launch(String action, Authentication authentication,
                                                          boolean allowBulk, Runnable job) {
         if (runner.isRunning()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "photo-purge-running", "Conflict",
-                    "Une purge est déjà en cours, réessayez dans quelques minutes.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "photo-purge-running", "problem.admin.photo-purge-running");
         }
         audit.log("photo_storage", null, action, adminId(authentication),
                 Map.of("purgeEnabled", settings.photoPurgeEnabled(), "allowBulk", allowBulk));
@@ -128,8 +127,6 @@ public class AdminPhotoStorageController {
         if (authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 }

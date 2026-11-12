@@ -126,9 +126,7 @@ public class SmsOtpController {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())
                 || !(auth.getPrincipal() instanceof String uid)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthorized",
-                    "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return uid;
     }

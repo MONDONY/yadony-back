@@ -104,9 +104,7 @@ public class AdminConversationToolsService {
     public ConversationAdminNoteEntity addNote(ConversationEntity conversation, UUID adminId, String content) {
         String text = content == null ? "" : content.strip();
         if (text.length() < NOTE_MIN || text.length() > NOTE_MAX) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "conversation-note-invalid", "Note invalide",
-                    "La note doit faire entre " + NOTE_MIN + " et " + NOTE_MAX + " caracteres");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "conversation-note-invalid", "problem.support-note-invalid", String.valueOf(NOTE_MIN), String.valueOf(NOTE_MAX));
         }
         ConversationAdminNoteEntity note = new ConversationAdminNoteEntity();
         note.setConversationId(conversation.getId());

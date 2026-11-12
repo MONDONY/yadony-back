@@ -69,9 +69,7 @@ public class AssistantQuotaGuard {
         }
         if (used == AssistantUserDailyUsageStore.REFUSED) {
             String retryAfter = today.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).toString();
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "assistant-quota-exceeded",
-                    "Too Many Requests", "Vous avez posé beaucoup de questions aujourd'hui. Réessayez demain.",
-                    Map.of("retryAfter", retryAfter));
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "assistant-quota-exceeded", "problem.assistant.assistant-quota-exceeded", Map.of("retryAfter", retryAfter));
         }
         return quota - used;
     }

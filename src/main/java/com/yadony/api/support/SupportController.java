@@ -207,12 +207,10 @@ public class SupportController {
 
     private UserEntity requireUser(String firebaseUid) {
         if (firebaseUid == null || firebaseUid.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private String attachmentLabel() {

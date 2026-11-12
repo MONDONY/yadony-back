@@ -66,7 +66,7 @@ public class RecipientController {
 
     private UUID userId(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyNotFoundException("Utilisateur introuvable"))
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"))
                 .getId();
     }
 }

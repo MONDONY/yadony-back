@@ -109,12 +109,10 @@ public class RecipientConversationService {
     @Transactional
     public ConversationEntity getOrCreate(UUID bidId, UUID callerId) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "bid-not-found",
-                        "Bid Not Found", "Bid introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.introuvable"));
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
                 .map(AnnouncementEntity::getTravelerId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         BidRecipientLinkEntity link = linkRepository.findByBidId(bidId)
                 .filter(l -> l.getStatus() == ReceptionLinkStatus.CONFIRMED)
@@ -144,9 +142,7 @@ public class RecipientConversationService {
         }
 
         if (!OPENABLE.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "recipient-conversation-unavailable",
-                    "Recipient Conversation Unavailable",
-                    "Ce colis n'est plus en cours : la conversation avec le destinataire ne peut pas s'ouvrir");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-conversation-unavailable", "problem.recipient-conversation-unavailable");
         }
         return create(bid, recipientId, travelerId, callerId);
     }
@@ -235,7 +231,6 @@ public class RecipientConversationService {
     }
 
     private static YadonyBusinessException forbidden() {
-        return new YadonyBusinessException(HttpStatus.FORBIDDEN, "recipient-conversation-forbidden",
-                "Forbidden", "Vous n'avez pas accès à la conversation avec le destinataire de ce colis");
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "recipient-conversation-forbidden", "problem.recipient-conversation-forbidden");
     }
 }

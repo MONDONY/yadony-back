@@ -81,9 +81,7 @@ public class AdminSettingsController {
         PlatformSettingKey settingKey = PlatformSettingKey.fromKey(key);
         // Vide permis pour une liste d'indicatifs seulement (« aucun pays bloqué »).
         if (request.value().isBlank() && !settingKey.acceptsEmptyValue()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "platform-setting-invalid", "Unprocessable Entity",
-                    "La valeur du reglage est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "platform-setting-invalid", "problem.admin.platform-setting-invalid");
         }
         PlatformSettingView view = settingsService.updateOne(
                 settingKey, request.value(), adminId(authentication));
@@ -114,8 +112,6 @@ public class AdminSettingsController {
         if (authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 }

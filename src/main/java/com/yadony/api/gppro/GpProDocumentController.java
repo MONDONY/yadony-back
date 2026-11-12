@@ -30,8 +30,7 @@ public class GpProDocumentController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void remove(@AuthenticationPrincipal String firebaseUid, @PathVariable java.util.UUID documentId) {
         if (firebaseUid == null || firebaseUid.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         applicationService.removeDocument(firebaseUid, documentId);
     }
@@ -42,8 +41,7 @@ public class GpProDocumentController {
                                               @RequestParam("file") MultipartFile file,
                                               @RequestParam("type") GpProDocumentType type) {
         if (firebaseUid == null || firebaseUid.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         GpProDocumentEntity doc = documentService.upload(firebaseUid, file, type);
         return new GpProDocumentUploadResponse(doc.getId(), doc.getDocType());

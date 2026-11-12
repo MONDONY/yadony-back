@@ -34,8 +34,7 @@ public class AdminIncidentContextController {
     @GetMapping("/admin/disputes/{id}/context")
     public ResponseEntity<AdminIncidentContextResponse> disputeContext(@PathVariable UUID id) {
         return ResponseEntity.ok(contextService.forDispute(disputeRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "dispute-not-found",
-                        "Not Found", "Litige introuvable"))));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "dispute-not-found", "problem.admin.dispute-not-found"))));
     }
 
     /** Seules les déclarations d'absence sont des incidents : une autre annulation reste introuvable ici. */
@@ -44,7 +43,6 @@ public class AdminIncidentContextController {
     public ResponseEntity<AdminIncidentContextResponse> noShowContext(@PathVariable UUID id) {
         return ResponseEntity.ok(contextService.forCancellation(cancellationRepo.findById(id)
                 .filter(c -> NoShowReasons.ALL.contains(c.getReason()))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "noshow-not-found",
-                        "Not Found", "Déclaration introuvable"))));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "noshow-not-found", "problem.admin.noshow-not-found"))));
     }
 }

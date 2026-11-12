@@ -32,16 +32,12 @@ public class AutomationHistoryController {
     public ResponseEntity<List<AutomationHistoryResponse>> listHistory() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         UserEntity user = userRepository.findByFirebaseUid(auth.getName())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Historique réservé aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.automation.pro-required");
         }
         return ResponseEntity.ok(ruleService.listHistory(user.getId()));
     }
@@ -50,16 +46,12 @@ public class AutomationHistoryController {
     public ResponseEntity<Map<String, Long>> getTodayCount() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         UserEntity user = userRepository.findByFirebaseUid(auth.getName())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Historique réservé aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.automation.pro-required");
         }
         return ResponseEntity.ok(Map.of("count", ruleService.countTodayActions(user.getId())));
     }

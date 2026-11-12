@@ -44,16 +44,12 @@ public class AdminUserDeletionService {
     @Transactional
     public void delete(UUID userId, UUID adminId, String reasonCode, String reason) {
         UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
 
         // Recalcul, et non relecture d'un rapport transmis par le client : entre l'écran de
         // confirmation et ce clic, un escrow a pu s'ouvrir. Le front ne fait jamais autorité.
         if (impactService.hasBlocking(userId)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "deletion-blocked", "Unprocessable",
-                    "Suppression impossible — des engagements financiers sont encore en cours");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "deletion-blocked", "problem.admin.deletion-blocked");
         }
 
         finalizationService.finalize(user, FinalizationReason.ADMIN_INITIATED);

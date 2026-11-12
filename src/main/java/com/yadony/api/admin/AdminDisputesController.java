@@ -198,11 +198,9 @@ public class AdminDisputesController {
         requireMoneyAuthorities(authentication);
         DisputeEntity entity = findDisputeOrThrow(id);
         var split = splitService.findForDispute(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "split-not-found",
-                        "Not Found", "Aucun partage pour ce litige"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "split-not-found", "problem.admin.split-not-found"));
         if (split.getStatus() == com.yadony.api.payments.split.PaymentSplitStatus.COMPLETED) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "split-already-completed",
-                    "Split Already Completed", "Ce partage est déjà entièrement exécuté");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "split-already-completed", "problem.admin.split-already-completed");
         }
         auditService.log("DISPUTE", id, "SPLIT_RETRY", adminId,
                 Map.of("splitId", split.getId().toString(), "status", split.getStatus().name()));
@@ -216,9 +214,7 @@ public class AdminDisputesController {
                         .map(org.springframework.security.core.GrantedAuthority::getAuthority)
                         .collect(Collectors.toSet());
         if (!granted.contains("PAYMENT_RELEASE") || !granted.contains("PAYMENT_REFUND")) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "split-permission-required",
-                    "Permission Required",
-                    "Partager un paiement exige les droits de libération et de remboursement");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "split-permission-required", "problem.admin.split-permission-required");
         }
     }
 
@@ -245,14 +241,10 @@ public class AdminDisputesController {
         // Un versement sans bénéficiaire était enregistré tel quel : personne à payer, et le
         // montant restait invisible de l'export comptable. Le back-office envoyait un champ vide.
         if (request.beneficiaryUserId() == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guarantee-beneficiary-required", "Guarantee Beneficiary Required",
-                    "Indiquez à qui verser le fonds de garantie");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guarantee-beneficiary-required", "problem.admin.guarantee-beneficiary-required");
         }
         if (request.amountCents() <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guarantee-amount-invalid", "Guarantee Amount Invalid",
-                    "Le montant du fonds de garantie doit être positif");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guarantee-amount-invalid", "problem.admin.guarantee-amount-invalid");
         }
         String currency = resolveGuaranteeCurrency(entity, request.currency());
         entity.setStatus("RESOLVED");
@@ -314,32 +306,24 @@ public class AdminDisputesController {
         String normalizedRequested = requested != null && !requested.isBlank()
                 ? requested.trim().toUpperCase(java.util.Locale.ROOT) : null;
         if (normalizedRequested != null && SupportedCurrency.fromCode(normalizedRequested) == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "currency-unsupported", "Currency Unsupported",
-                    "Cette devise n'est pas prise en charge par yadony.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
         }
         if (bidCurrency != null) {
             String normalizedBid = bidCurrency.toUpperCase(java.util.Locale.ROOT);
             if (normalizedRequested != null && !normalizedRequested.equals(normalizedBid)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "guarantee-currency-mismatch", "Guarantee Currency Mismatch",
-                        "Le fonds de garantie se verse dans la devise du colis (" + normalizedBid + ")");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guarantee-currency-mismatch", "problem.admin.guarantee-currency-mismatch", String.valueOf(normalizedBid));
             }
             return normalizedBid;
         }
         if (normalizedRequested == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "guarantee-currency-required", "Guarantee Currency Required",
-                    "Indiquez la devise du fonds de garantie");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "guarantee-currency-required", "problem.admin.guarantee-currency-required");
         }
         return normalizedRequested;
     }
 
     private void requireNotResolved(DisputeEntity entity) {
         if ("RESOLVED".equals(entity.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "dispute-already-resolved", "Dispute Already Resolved",
-                    "Ce litige est déjà résolu");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dispute-already-resolved", "problem.admin.dispute-already-resolved");
         }
     }
 
@@ -352,8 +336,7 @@ public class AdminDisputesController {
 
     private DisputeEntity findDisputeOrThrow(UUID id) {
         return disputeRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "dispute-not-found", "Not Found", "Litige introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "dispute-not-found", "problem.admin.dispute-not-found"));
     }
 
     private String userName(UUID userId, Map<UUID, UserEntity> users) {

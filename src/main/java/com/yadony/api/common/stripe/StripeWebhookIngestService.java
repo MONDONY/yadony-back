@@ -59,8 +59,7 @@ public class StripeWebhookIngestService {
             event = source == StripeWebhookSource.PAYMENTS ? constructWithConnectSecret(payload, sigHeader) : null;
             if (event == null) {
                 log.warn("Invalid Stripe webhook signature for source={}: {}", source, e.getMessage());
-                throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
-                        "invalid-webhook-signature", "Webhook Error", "Signature webhook invalide");
+                throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-webhook-signature", "problem.invalid-webhook-signature");
             }
             // Signé par l'endpoint des comptes connectés : il ne porte que la vie des comptes
             // voyageurs et leurs virements. Tout autre type (un paiement encaissé par le voyageur

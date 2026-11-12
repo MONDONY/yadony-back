@@ -104,8 +104,7 @@ public class AdminUserWalletController {
                                                 Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "idempotency-key-required", "Bad Request",
-                    "L'en-tête " + IDEMPOTENCY_HEADER + " est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "idempotency-key-required", "problem.admin.idempotency-key-required", String.valueOf(IDEMPOTENCY_HEADER));
         }
         requireUser(userId);
 
@@ -154,8 +153,7 @@ public class AdminUserWalletController {
     private void requireUser(UUID userId) {
         userRepository.findById(userId)
                 .filter(user -> user.getDeletedAt() == null)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                        "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
     }
 
     /** E-mail d'admins, en une seule lecture. */

@@ -48,15 +48,13 @@ public class TravelerTaxInfoController {
 
     private void requireEnabled() {
         if (!properties.enabledOrDefault()) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "dac7-disabled", "Not Found",
-                    "Les informations fiscales ne sont pas disponibles.");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "dac7-disabled", "problem.dac7.dac7-disabled");
         }
     }
 
     private static String requireUid(String firebaseUid) {
         if (firebaseUid == null || firebaseUid.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return firebaseUid;
     }

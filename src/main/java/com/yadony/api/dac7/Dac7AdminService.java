@@ -124,29 +124,22 @@ public class Dac7AdminService {
 
     public void remind(UUID userId, UUID adminId) {
         if (!declarations.collectionEnabled()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-collection-disabled", "DAC7 Disabled",
-                    "La collecte DAC7 est éteinte : aucune demande n'est envoyée aux voyageurs.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-collection-disabled", "problem.dac7.dac7-collection-disabled");
         }
         Dac7ReminderService.Outcome outcome = reminders.remindByAdmin(userId, adminId, clock.instant());
         switch (outcome) {
             case SENT -> audit.log("USER", userId, "DAC7_REMINDER_SENT", adminId, Map.of("channel", "ADMIN"));
-            case NOT_FOUND -> throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found",
-                    "User Not Found", "Utilisateur introuvable");
-            case TOO_SOON -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-remind-too-soon",
-                    "Remind Too Soon", "Un message a déjà été envoyé à ce voyageur il y a moins de 7 jours.");
-            case EXHAUSTED -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-reminders-exhausted",
-                    "Reminders Exhausted", "La demande et les deux rappels ont déjà été envoyés : la suite est une "
-                    + "décision de l'équipe.");
-            default -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-not-solicitable",
-                    "Not Solicitable", "Ce voyageur n'est pas à solliciter (déjà fourni, hors périmètre ou jamais payé).");
+            case NOT_FOUND -> throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found");
+            case TOO_SOON -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-remind-too-soon", "problem.dac7.dac7-remind-too-soon");
+            case EXHAUSTED -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-reminders-exhausted", "problem.dac7.dac7-reminders-exhausted");
+            default -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-not-solicitable", "problem.dac7.dac7-not-solicitable");
         }
     }
 
     public void decision(UUID userId, UUID adminId, String note) {
         String cleaned = note == null ? "" : note.strip();
         if (cleaned.isEmpty() || cleaned.length() > Dac7DueDiligenceService.MAX_NOTE_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-invalid", "Invalid Note",
-                    "La note doit compter de 1 à " + Dac7DueDiligenceService.MAX_NOTE_LENGTH + " caractères.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-invalid", "problem.dac7.dac7-note-invalid", String.valueOf(Dac7DueDiligenceService.MAX_NOTE_LENGTH));
         }
         if (looksSensitive(cleaned)) {
             // Jamais recopiée : elle pourrait contenir un NIF ou un numéro de compte.
@@ -154,8 +147,7 @@ public class Dac7AdminService {
                     "Sensitive Note", NOTE_SENSITIVE_MESSAGE);
         }
         if (!reads.userExists(userId)) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
-                    "Utilisateur introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found");
         }
         diligence.record(userId, Dac7DueDiligenceAction.TEAM_DECISION, Dac7DueDiligenceChannel.ADMIN, adminId, cleaned);
         // Le fait seulement : la note reste au registre, jamais dans l'audit.
@@ -220,8 +212,7 @@ public class Dac7AdminService {
         try {
             return SellerFilter.valueOf(value.strip().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-filter-invalid",
-                    "Invalid Filter", "Filtre inconnu.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-filter-invalid", "problem.dac7.dac7-filter-invalid");
         }
     }
 }

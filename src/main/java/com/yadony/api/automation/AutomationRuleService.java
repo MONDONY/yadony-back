@@ -150,9 +150,7 @@ public class AutomationRuleService {
 
     private AutomationRuleEntity findOwned(UUID travelerId, UUID ruleId) {
         return ruleRepository.findByIdAndTravelerId(ruleId, travelerId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "rule-not-found",
-                        "Rule Not Found", "Règle introuvable."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "rule-not-found", "problem.automation.rule-not-found"));
     }
 
     private AutomationRuleEntity initPresetRule(UUID travelerId, String presetRuleId) {

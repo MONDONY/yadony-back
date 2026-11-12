@@ -47,8 +47,7 @@ public class RecipientConversationController {
             @AuthenticationPrincipal String firebaseUid,
             @PathVariable UUID bidId) {
         UserEntity caller = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNAUTHORIZED, "user-not-found",
-                        "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.auth.user-not-found"));
         ConversationEntity conv = recipientConversationService.getOrCreate(bidId, caller.getId());
         return ResponseEntity.ok(conversationService.toResponse(conv, caller.getId()));
     }

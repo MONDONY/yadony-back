@@ -205,8 +205,7 @@ public class ConversationService {
      * alors qu'un 410 tomberait dans son message réseau générique.
      */
     private static YadonyBusinessException counterpartDeleted() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "conversation-counterpart-deleted",
-            "Not Found", "Ce membre a supprimé son compte : la conversation n'est plus disponible.");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "conversation-counterpart-deleted", "problem.conversation-counterpart-deleted");
     }
 
     /**

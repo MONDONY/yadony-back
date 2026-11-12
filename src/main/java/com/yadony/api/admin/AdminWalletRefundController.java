@@ -89,15 +89,12 @@ public class AdminWalletRefundController {
                 try {
                     statuses.add(WalletRefundRequestStatus.valueOf(part.trim().toUpperCase(Locale.ROOT)));
                 } catch (IllegalArgumentException e) {
-                    throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
-                            "wallet-refund-status-invalid", "Invalid Status",
-                            "Statut de remboursement inconnu : " + part.trim());
+                    throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "wallet-refund-status-invalid", "problem.admin.wallet-refund-status-invalid", String.valueOf(part.trim()));
                 }
             }
         }
         if (statuses.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
-                    "wallet-refund-status-invalid", "Invalid Status", "Aucun statut demandé");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "wallet-refund-status-invalid", "problem.admin.wallet-refund-status-invalid-2");
         }
         return statuses;
     }
@@ -152,8 +149,6 @@ public class AdminWalletRefundController {
         if (authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 }

@@ -279,25 +279,19 @@ public class FavoriteService {
         switch (type) {
             case TRIP -> {
                 AnnouncementEntity trip = announcementRepository.findById(targetId)
-                        .orElseThrow(() -> new YadonyNotFoundException("Trajet introuvable: " + targetId));
+                        .orElseThrow(() -> YadonyNotFoundException.localized("problem.not-found.trip-id", targetId));
                 if (trip.getStatus() == AnnouncementStatus.DRAFT) {
-                    throw new YadonyNotFoundException("Trajet introuvable: " + targetId);
+                    throw YadonyNotFoundException.localized("problem.not-found.trip-id", targetId);
                 }
                 if (userId.equals(trip.getTravelerId())) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.UNPROCESSABLE_ENTITY,
-                            "favorites/own-resource",
-                            "Cannot Favorite Own Resource",
-                            "Impossible de mettre son propre trajet en favori"
-                    );
+                    throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "favorites/own-resource", "problem.favorites-own-resource");
                 }
             }
             case PACKAGE_REQUEST -> {
                 var request = packageRequestRepository.findById(targetId)
-                        .orElseThrow(() -> new YadonyNotFoundException(
-                                "Demande d'envoi introuvable: " + targetId));
+                        .orElseThrow(() -> YadonyNotFoundException.localized("problem.not-found.package-request-id", targetId));
                 if (request.getStatus() == PackageRequestStatus.DRAFT) {
-                    throw new YadonyNotFoundException("Demande d'envoi introuvable: " + targetId);
+                    throw YadonyNotFoundException.localized("problem.not-found.package-request-id", targetId);
                 }
             }
         }

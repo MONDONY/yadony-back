@@ -11,22 +11,19 @@ final class FlightErrors {
 
     /** Token Travelpayouts absent de la configuration : la fonctionnalité est coupée, pas cassée. */
     static YadonyBusinessException unavailable() {
-        return new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE, "flights-unavailable",
-                "Flights Unavailable", "La recherche de vols est momentanément indisponible.");
+        return YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "flights-unavailable", "problem.flights-unavailable");
     }
 
     static YadonyBusinessException providerError() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "flights-provider-error",
-                "Flights Provider Error", "Le service de prix des vols ne répond pas. Réessayez dans un instant.");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "flights-provider-error", "problem.flights-provider-error");
     }
 
     /** Alerte absente ou à un autre utilisateur : même réponse, on ne révèle pas son existence. */
     static YadonyBusinessException alertNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "flight-alert-not-found",
-                "Flight Alert Not Found", "Cette alerte prix n'existe pas.");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "flight-alert-not-found", "problem.flight-alert-not-found");
     }
 
-    static YadonyBusinessException invalid(String code, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, "Invalid Flight Query", detail);
+    static YadonyBusinessException invalid(String code, String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, code, messageKey, args);
     }
 }

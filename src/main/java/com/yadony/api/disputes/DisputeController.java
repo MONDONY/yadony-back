@@ -39,18 +39,14 @@ public class DisputeController {
     private UUID resolveUserId() {
         String firebaseUid = requireFirebaseUid();
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         return user.getId();
     }
 
     private String requireFirebaseUid() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthorized", "Unauthorized",
-                    "Un token Firebase valide est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         return (String) auth.getPrincipal();
     }

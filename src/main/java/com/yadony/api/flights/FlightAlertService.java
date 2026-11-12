@@ -54,8 +54,7 @@ public class FlightAlertService {
 
         List<FlightPriceAlertEntity> existing = alerts.findAllByOwnerIdOrderByCreatedAtDesc(owner);
         if (existing.size() >= MAX_ALERTS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "flight-alert-limit-reached",
-                    "Flight Alert Limit Reached", "Vous avez atteint la limite de " + MAX_ALERTS + " alertes prix.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "flight-alert-limit-reached", "problem.flight-alert-limit-reached", MAX_ALERTS);
         }
         boolean duplicate = existing.stream().anyMatch(a -> a.getOriginCode().equals(query.origin())
                 && a.getDestinationCode().equals(query.destination())
@@ -65,8 +64,7 @@ public class FlightAlertService {
                 // au 12 aujourd'hui couvre la même période.
                 && a.window().from(today).key().equals(window.key()));
         if (duplicate) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "flight-alert-duplicate",
-                    "Duplicate Flight Alert", "Une alerte identique existe déjà pour ce trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "flight-alert-duplicate", "problem.flight-alert-duplicate");
         }
 
         FlightPriceAlertEntity alert = new FlightPriceAlertEntity();
@@ -121,30 +119,33 @@ public class FlightAlertService {
      * une borne de départ déjà passée est ramenée à aujourd'hui.
      */
     private FlightAlertWindow window(FlightAlertRequest r, LocalDate today) {
-        LocalDate[] departure = period(r.departureFrom(), r.departureTo(), "départ", today);
-        LocalDate[] back = period(r.returnFrom(), r.returnTo(), "retour", today);
+        LocalDate[] departure = period(r.departureFrom(), r.departureTo(), true, today);
+        LocalDate[] back = period(r.returnFrom(), r.returnTo(), false, today);
         if (departure[0] != null && back[0] != null && back[1].isBefore(departure[0])) {
-            throw FlightErrors.invalid("flights-return-before-departure", "Le retour ne peut pas précéder le départ.");
+            throw FlightErrors.invalid("flights-return-before-departure", "problem.flights-return-before-departure");
         }
         return new FlightAlertWindow(departure[0], departure[1], back[0], back[1]);
     }
 
-    private static LocalDate[] period(LocalDate from, LocalDate to, String label, LocalDate today) {
+    private static LocalDate[] period(LocalDate from, LocalDate to, boolean departure, LocalDate today) {
         if (from == null && to == null) return new LocalDate[] {null, null};
         if (from == null || to == null) {
-            throw FlightErrors.invalid("flights-invalid-period", "La période de " + label + " est incomplète.");
+            throw FlightErrors.invalid("flights-invalid-period", departure
+                    ? "problem.flights-period.incomplete.departure" : "problem.flights-period.incomplete.return");
         }
         if (to.isBefore(from)) {
-            throw FlightErrors.invalid("flights-invalid-period", "La fin de la période de " + label
-                    + " précède son début.");
+            throw FlightErrors.invalid("flights-invalid-period", departure
+                    ? "problem.flights-period.reversed.departure" : "problem.flights-period.reversed.return");
         }
         if (to.isBefore(today)) {
-            throw FlightErrors.invalid("flights-date-past", "La période de " + label + " est déjà passée.");
+            throw FlightErrors.invalid("flights-date-past", departure
+                    ? "problem.flights-period.past.departure" : "problem.flights-period.past.return");
         }
         LocalDate start = from.isBefore(today) ? today : from;
         if (ChronoUnit.DAYS.between(start, to) + 1 > FlightAlertWindow.MAX_DAYS) {
-            throw FlightErrors.invalid("flights-period-too-long", "La période de " + label
-                    + " ne peut pas dépasser " + FlightAlertWindow.MAX_DAYS + " jours.");
+            throw FlightErrors.invalid("flights-period-too-long", departure
+                    ? "problem.flights-period.too-long.departure" : "problem.flights-period.too-long.return",
+                    FlightAlertWindow.MAX_DAYS);
         }
         return new LocalDate[] {start, to};
     }

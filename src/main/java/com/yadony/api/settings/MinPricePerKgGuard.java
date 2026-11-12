@@ -95,10 +95,7 @@ public class MinPricePerKgGuard {
                 ? minInTripCurrency.multiply(BigDecimal.ONE.add(commissionRate))
                 : minInTripCurrency;
         shown = shown.setScale(decimals, RoundingMode.UP);
-        throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE,
-                "Bid Below Min Price",
-                "Ce voyageur n'accepte pas moins de " + shown.toPlainString() + " " + currency + "/kg",
-                Map.of("minPricePerKg", shown, "currency", currency));
+        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, ERROR_CODE, "problem.bid-below-min-price", Map.of("minPricePerKg", shown, "currency", currency), shown.toPlainString(), currency);
     }
 
     private static String normalize(String currency) {

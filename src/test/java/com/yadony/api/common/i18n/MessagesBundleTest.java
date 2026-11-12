@@ -33,6 +33,12 @@ class MessagesBundleTest {
      * cadratin — le français ne change pas, seul l'anglais suit la règle D10.
      */
     private static final Set<String> EM_DASH_FR_HISTORIQUE = Set.of(
+            // Paquet 6 : refus d'administration repris mot pour mot (le français existant ne change pas).
+            "problem.admin.traveler-no-connect.detail",
+            "problem.admin.bid-cancelled.detail",
+            "problem.admin.bid-not-releasable.detail",
+            "problem.admin.payment-partially-refunded.detail",
+            "problem.admin.deletion-blocked.detail",
             "tracking.step.payment-escrowed",
             "tracking.step.accepted",
             "tracking.step.payment-secured",
@@ -45,6 +51,8 @@ class MessagesBundleTest {
             "problem.code-expired.le-code-de-confirmation-a-expire-demandez-a.detail",
             "problem.code-incorrect.code-incorrect-tentative-s-restante-s.detail",
             "problem.too-many-attempts.detail",
+            // Paquet 5 : refus de l'abonnement PRO offert repris mot pour mot.
+            "problem.active-stripe-subscription.admin.detail",
             // Refus auth repris mot pour mot (paquet i18n serveur n° 3).
             "problem.active-transactions.detail",
             "problem.active-transactions.impossible-utilisateur-transactions-cours.detail",

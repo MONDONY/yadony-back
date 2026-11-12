@@ -192,12 +192,7 @@ public class GoogleAddressService {
             log.error("[Places quota] {} : 95% atteint — blocage imminent ({}/{})", type, count, limit);
         if (count > limit) {
             log.error("[Places quota] {} : quota journalier EPUISE ({}/{})", type, count, limit);
-            throw new YadonyBusinessException(
-                HttpStatus.TOO_MANY_REQUESTS,
-                "daily-quota-exceeded",
-                "Service temporairement indisponible",
-                "Le service de recherche d'adresse est suspendu jusqu'a demain. Utilisez le bouton GPS pour indiquer votre position."
-            );
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "daily-quota-exceeded", "problem.daily-quota-exceeded");
         }
     }
 
@@ -205,16 +200,14 @@ public class GoogleAddressService {
     private PlaceDetailsResponse parsePlaceDetailsNew(Map<String, Object> result) {
         if (result == null) {
             log.error("Google Places (New) details: empty body");
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "google-invalid-response", "Bad Gateway", "Réponse Google incomplète");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-invalid-response", "problem.google-invalid-response");
         }
         String formattedAddress = (String) result.get("formattedAddress");
         Map<String, Object> location = (Map<String, Object>) result.get("location");
         if (formattedAddress == null || location == null
                 || location.get("latitude") == null || location.get("longitude") == null) {
             log.error("Google Places (New) details: missing formattedAddress or location");
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "google-invalid-response", "Bad Gateway", "Réponse Google incomplète");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-invalid-response", "problem.google-invalid-response");
         }
 
         List<Map<String, Object>> components =
@@ -273,20 +266,17 @@ public class GoogleAddressService {
     private PlaceDetailsResponse parseGeocodeResult(Map<String, Object> result) {
         if (result == null) {
             log.error("Geocoding API result is null — response malformed");
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "google-invalid-response", "Bad Gateway", "Réponse Google incomplète");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-invalid-response", "problem.google-invalid-response");
         }
         Map<String, Object> geometry = (Map<String, Object>) result.get("geometry");
         if (geometry == null) {
             log.error("Geocoding API result missing geometry field");
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "google-invalid-response", "Bad Gateway", "Réponse Google incomplète");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-invalid-response", "problem.google-invalid-response");
         }
         Map<String, Object> location = (Map<String, Object>) geometry.get("location");
         if (location == null) {
             log.error("Geocoding API result missing geometry.location field");
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "google-invalid-response", "Bad Gateway", "Réponse Google incomplète");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-invalid-response", "problem.google-invalid-response");
         }
         return new PlaceDetailsResponse(
             (String) result.get("formatted_address"),
@@ -310,8 +300,7 @@ public class GoogleAddressService {
             Map<String, Object> result = response.getBody();
             if (result == null) {
                 log.error("Google Places (New) {} returned empty body", operation);
-                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "google-empty-response", "Bad Gateway", "Réponse Google vide");
+                throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-empty-response", "problem.google-empty-response");
             }
             return result;
         } catch (HttpClientErrorException | HttpServerErrorException e) {
@@ -336,8 +325,7 @@ public class GoogleAddressService {
             Map<String, Object> result = response.getBody();
             if (result == null) {
                 log.error("Google Places (New) {} returned empty body", operation);
-                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "google-empty-response", "Bad Gateway", "Réponse Google vide");
+                throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-empty-response", "problem.google-empty-response");
             }
             return result;
         } catch (HttpClientErrorException | HttpServerErrorException e) {
@@ -353,24 +341,18 @@ public class GoogleAddressService {
         int code = status.value();
         log.error("Google Places (New) {} HTTP {} : {}", operation, code, body);
         if (code == 400) {
-            return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "google-invalid-request", "Invalid Request", "Requête Google invalide");
+            return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "google-invalid-request", "problem.google-invalid-request");
         }
         if (code == 401 || code == 403) {
-            return new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                "google-request-denied", "Bad Gateway", "Accès Google Places refusé");
+            return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-request-denied", "problem.google-request-denied.places");
         }
         if (code == 404) {
-            return new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                "google-not-found", "Not Found", "Lieu introuvable");
+            return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "google-not-found", "problem.google-not-found");
         }
         if (code == 429) {
-            return new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
-                "google-quota-exceeded", "Too Many Requests", "Quota Google dépassé");
+            return YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "google-quota-exceeded", "problem.google-quota-exceeded");
         }
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-            "google-unexpected-status", "Bad Gateway",
-            "Statut Google inattendu: " + code);
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-unexpected-status", "problem.google-unexpected-status", code);
     }
 
     /** GET Geocoding API (legacy URL — distinct API, still standard for reverse geocoding). */
@@ -380,8 +362,7 @@ public class GoogleAddressService {
             Map<String, Object> body = restTemplate.getForObject(url, Map.class);
             if (body == null) {
                 log.error("Geocoding API returned empty body");
-                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "google-empty-response", "Bad Gateway", "Réponse Google vide");
+                throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-empty-response", "problem.google-empty-response");
             }
             return body;
         } catch (ResourceAccessException e) {
@@ -401,24 +382,19 @@ public class GoogleAddressService {
             case "OK", "ZERO_RESULTS" -> { /* normal */ }
             case "INVALID_REQUEST" -> {
                 log.warn("Geocoding INVALID_REQUEST on {}", operation);
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "google-invalid-request", "Invalid Request", "Requête Google invalide");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "google-invalid-request", "problem.google-invalid-request");
             }
             case "REQUEST_DENIED" -> {
                 log.error("Geocoding REQUEST_DENIED on {} — check API key restrictions", operation);
-                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "google-request-denied", "Bad Gateway", "Accès Google Geocoding refusé");
+                throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-request-denied", "problem.google-request-denied.geocoding");
             }
             case "OVER_QUERY_LIMIT" -> {
                 log.error("Geocoding OVER_QUERY_LIMIT on {} — quota exceeded", operation);
-                throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS,
-                    "google-quota-exceeded", "Too Many Requests", "Quota Google dépassé");
+                throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "google-quota-exceeded", "problem.google-quota-exceeded");
             }
             default -> {
                 log.error("Unexpected Geocoding status {} on {} — treating as bad gateway", status, operation);
-                throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY,
-                    "google-unexpected-status", "Bad Gateway",
-                    "Statut Google inattendu: " + status);
+                throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "google-unexpected-status", "problem.google-unexpected-status", status);
             }
         }
     }

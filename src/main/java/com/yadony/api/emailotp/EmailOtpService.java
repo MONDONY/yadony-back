@@ -69,10 +69,7 @@ public class EmailOtpService {
         int windowMinutes = properties.getRateWindowMinutes();
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(windowMinutes);
         if (emailOtpRepository.countByEmailSince(email, since) >= properties.getMaxSendsPerWindow()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "rate-limit",
-                    "Too Many Requests",
-                    "Trop de codes demandés, réessaie dans " + windowMinutes + " min");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "rate-limit", "problem.rate-limit", windowMinutes);
         }
         LocalDateTime nowUtc = LocalDateTime.now(ZoneOffset.UTC);
         // Au-delà du quota du jour, un code par heure seulement, et non plus aucun : un
@@ -80,11 +77,7 @@ public class EmailOtpService {
         // propriétaire (10 demandes suffisaient). Le harcèlement reste borné (~34/jour).
         if (emailOtpRepository.countByEmailSince(email, nowUtc.minusDays(1)) >= properties.getMaxSendsPerDay()
                 && emailOtpRepository.countByEmailSince(email, nowUtc.minusHours(1)) > 0) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "otp-daily-limit",
-                    "Too Many Requests",
-                    "Trop de codes demandés aujourd'hui, réessaie dans une heure",
-                    java.util.Map.of("retryAfterSeconds", 3600L));
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "otp-daily-limit", "problem.otp-daily-limit", java.util.Map.of("retryAfterSeconds", 3600L));
         }
         LocalDateTime hourAgo = LocalDateTime.now(ZoneOffset.UTC).minusHours(1);
         long sentLastHour = emailOtpRepository.countAllSince(hourAgo);
@@ -94,10 +87,7 @@ public class EmailOtpService {
             // quota Resend et la réputation du domaine d'envoi.
             alertThrottled("Plafond dur d'envoi de codes email atteint ({} / h) : envois suspendus",
                     properties.getHardMaxSendsPerHourGlobal());
-            throw new YadonyBusinessException(
-                    HttpStatus.SERVICE_UNAVAILABLE, "email-otp-budget-exceeded",
-                    "Service Unavailable",
-                    "L'envoi de codes est momentanément suspendu, réessaie dans quelques minutes");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "email-otp-budget-exceeded", "problem.email-otp-budget-exceeded");
         }
         if (sentLastHour >= properties.getMaxSendsPerHourGlobal()) {
             alertThrottled("Seuil d'envoi de codes email dépassé ({} / h) : pic d'inscriptions ou arrosage",
@@ -138,9 +128,7 @@ public class EmailOtpService {
             // l'UID à l'email du body, ni à réécrire l'adresse.
             return firebaseAuth.createCustomToken(uid, java.util.Map.of("otp_channel", "email"));
         } catch (FirebaseAuthException e) {
-            throw new YadonyBusinessException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                    "Firebase Error", "Erreur lors de la création du token");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.token-creation");
         }
     }
 
@@ -164,9 +152,7 @@ public class EmailOtpService {
             return firebaseAuth.getUserByEmail(email).getUid();
         } catch (FirebaseAuthException e) {
             if (e.getAuthErrorCode() != AuthErrorCode.USER_NOT_FOUND) {
-                throw new YadonyBusinessException(
-                        HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                        "Firebase Error", "Erreur lors de la résolution du compte");
+                throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.account-resolution");
             }
         }
         try {
@@ -180,14 +166,10 @@ public class EmailOtpService {
                 try {
                     return firebaseAuth.getUserByEmail(email).getUid();
                 } catch (FirebaseAuthException e2) {
-                    throw new YadonyBusinessException(
-                            HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                            "Firebase Error", "Erreur lors de la résolution du compte");
+                    throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.account-resolution");
                 }
             }
-            throw new YadonyBusinessException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error",
-                    "Firebase Error", "Erreur lors de la création du compte");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "problem.firebase-error.account-creation");
         }
     }
 
@@ -204,24 +186,17 @@ public class EmailOtpService {
         log.info("attachEmailToAccount: uid={} email='{}'", firebaseUid, maskEmail(email));
 
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found",
-                        "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         // Preuve de possession avant toute écriture : le code est consommé ici.
         consumeOtp(email, code);
 
         if (firebaseContact.getContact(firebaseUid).email() != null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "email-already-set",
-                    "Email Already Set",
-                    "Une adresse est déjà associée à ce compte et ne peut pas être remplacée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "email-already-set", "problem.email-already-set");
         }
 
         if (firebaseContact.isEmailTakenByAnother(email, firebaseUid)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT, "email-already-exists",
-                    "Email Already Registered", "Cet email est déjà associé à un compte");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "email-already-exists", "problem.email-already-exists");
         }
 
         firebaseContact.updateEmail(firebaseUid, email);
@@ -250,9 +225,7 @@ public class EmailOtpService {
         LocalDateTime attemptsSince =
                 LocalDateTime.now(ZoneOffset.UTC).minusMinutes(properties.getOtpValidMinutes());
         if (emailOtpRepository.sumAttemptsByEmailSince(email, attemptsSince) >= properties.getMaxAttempts()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "otp-attempts-exceeded",
-                    "Too Many Attempts", "Trop de tentatives échouées");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "otp-attempts-exceeded", "problem.otp-attempts-exceeded");
         }
 
         EmailOtpEntity token = emailOtpRepository
@@ -262,32 +235,24 @@ public class EmailOtpService {
             // Même coût qu'un vrai contrôle : une réponse plus rapide révélerait qu'aucun
             // code n'est en attente pour cette adresse.
             passwordEncoder.matches(code, dummyHash());
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "otp-invalid",
-                    "Invalid OTP", "Code invalide ou expiré");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "otp-invalid", "problem.otp-invalid");
         }
 
         if (token.getAttempts() >= properties.getMaxAttempts()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.TOO_MANY_REQUESTS, "otp-attempts-exceeded",
-                    "Too Many Attempts", "Trop de tentatives échouées");
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "otp-attempts-exceeded", "problem.otp-attempts-exceeded");
         }
 
         // BCrypt appelé avant le check expiration pour éviter les timing attacks
         boolean validCode = passwordEncoder.matches(code, token.getCodeHash());
 
         if (LocalDateTime.now(ZoneOffset.UTC).isAfter(token.getExpiresAt())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "otp-expired",
-                    "OTP Expired", "Code expiré");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "otp-expired", "problem.otp-expired");
         }
 
         if (!validCode) {
             // Transaction séparée : l'exception ci-dessous annule celle de l'appelant.
             emailOtpRepository.incrementAttempts(token.getId());
-            throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "otp-invalid",
-                    "Invalid OTP", "Code invalide");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "otp-invalid", "problem.otp-invalid.short");
         }
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);

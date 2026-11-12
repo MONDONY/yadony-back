@@ -86,8 +86,7 @@ public class CallService {
             stream.createRingingCall(callId, caller.getId(), List.of(caller.getId(), callee.getId()));
         } catch (StreamClient.StreamUnavailableException ex) {
             calls.discard(call.getId(), LocalDateTime.now(ZoneOffset.UTC));
-            throw new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE, "call-provider-unavailable",
-                    "Call Provider Unavailable", "L'appel est momentanément indisponible. Réessayez dans un instant.");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "call-provider-unavailable", "problem.call-provider-unavailable");
         }
 
         audit.log("CALL", call.getId(), "CALL_STARTED", caller.getId(),
@@ -96,8 +95,7 @@ public class CallService {
     }
 
     private static YadonyBusinessException alreadyInProgress() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "call-already-in-progress",
-                "Call Already In Progress", "Un appel est déjà en cours dans cette conversation.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "call-already-in-progress", "problem.call-already-in-progress");
     }
 
     /** Nom affiché sur l'écran d'appel de l'autre : le nom public (prénom + initiale), jamais le nom complet. */
@@ -111,27 +109,20 @@ public class CallService {
         return switch (reason) {
             case CALLS_DISABLED -> disabled();
             case NOT_FOUND -> new YadonyNotFoundException("Conversation", conversationId);
-            case NOT_PARTICIPANT -> new YadonyBusinessException(HttpStatus.FORBIDDEN, "call-not-participant",
-                    "Call Not Participant", "Vous ne participez pas à cette conversation.");
-            case CONVERSATION_CLOSED -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "call-conversation-closed", "Call Conversation Closed", "Cette conversation est fermée.");
-            case OUT_OF_WINDOW -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "call-out-of-window", "Call Out Of Window",
-                    "L'appel est possible de l'acceptation de la commande jusqu'à 3 jours après la livraison.");
-            case BLOCKED -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "call-blocked",
-                    "Call Blocked", "Vous ne pouvez pas appeler cette personne.");
-            case CALLEE_UNAVAILABLE -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "call-callee-unavailable", "Call Callee Unavailable", "Cette personne n'est pas joignable.");
+            case NOT_PARTICIPANT -> YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "call-not-participant", "problem.call-not-participant");
+            case CONVERSATION_CLOSED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-conversation-closed", "problem.call-conversation-closed");
+            case OUT_OF_WINDOW -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-out-of-window", "problem.call-out-of-window");
+            case BLOCKED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-blocked", "problem.call-blocked");
+            case CALLEE_UNAVAILABLE -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-callee-unavailable", "problem.call-callee-unavailable");
         };
     }
 
     private static YadonyBusinessException disabled() {
-        return new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE, "calls-disabled",
-                "Calls Disabled", "Les appels ne sont pas disponibles pour le moment.");
+        return YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "calls-disabled", "problem.calls-disabled");
     }
 
     private UserEntity currentUser(String firebaseUid) {
         return users.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyNotFoundException("Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
     }
 }

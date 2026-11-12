@@ -78,8 +78,7 @@ public class AdminMaintenanceController {
     public AdminMaintenanceResponse addExemption(@Valid @RequestBody AdminMaintenanceExemptionRequest request,
                                                  Authentication authentication) {
         if (!userRepository.existsById(request.userId())) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "user-not-found", "Not Found",
-                    "Utilisateur introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user");
         }
         service.addExemption(request.userId(), request.note(), AdminPrincipal.requireAdminId(authentication));
         return response();

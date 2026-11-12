@@ -50,21 +50,15 @@ public class StorageController {
         try {
             bidUuid = UUID.fromString(bidId);
         } catch (IllegalArgumentException ex) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-bid-id", "Invalid Bid Id", "bidId doit être un UUID");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-id", "problem.invalid-bid-id");
         }
 
-        var bid = bidRepository.findById(bidUuid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Bid introuvable"));
+        var bid = bidRepository.findById(bidUuid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.not-found.bid"));
         var announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Not Found", "Annonce introuvable"));
-        var user = userRepository.findByFirebaseUid(uid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.not-found.announcement"));
+        var user = userRepository.findByFirebaseUid(uid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.auth.user-not-found"));
         if (!announcement.getTravelerId().equals(user.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "not-bid-traveler", "Forbidden",
-                    "Seul le voyageur de l'annonce peut uploader une photo de suivi");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "not-bid-traveler", "problem.not-bid-traveler");
         }
 
         String key = storageService.storeImage(file, StorageService.MediaUpload.tracking(bidUuid, user.getId()));
@@ -88,11 +82,9 @@ public class StorageController {
         // (findByFirebaseUid) sans imposer UID_PATTERN, qui rejetait à tort certains
         // UID Firebase valides (ex. environnements dev / UID non strictement alphanum).
         if (uid == null) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthenticated", "Unauthorized", "Non authentifié");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated.not-authenticated");
         }
-        var user = userRepository.findByFirebaseUid(uid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthorized", "Utilisateur introuvable"));
+        var user = userRepository.findByFirebaseUid(uid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.auth.user-not-found"));
 
         String key = storageService.storeImage(file, StorageService.MediaUpload.of(
                 "package_requests/" + user.getId() + "/", user.getId(), MediaPurpose.PACKAGE_REQUEST));

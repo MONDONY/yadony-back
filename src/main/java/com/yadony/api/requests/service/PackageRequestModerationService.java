@@ -156,8 +156,7 @@ public class PackageRequestModerationService {
         PackageRequestEntity request = requestRepository.findById(requestId)
                 .orElseThrow(PackageRequestModerationService::notFound);
         if (request.getStatus() != PackageRequestStatus.REMOVED_BY_ADMIN) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, NOT_REMOVED,
-                    "Package Request Not Removed", "Cette demande n'a pas été retirée par la modération.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, NOT_REMOVED, "problem.package-request-not-removed");
         }
 
         PackageRequestStatus target = request.getStatusBeforeRemoval() != null
@@ -184,18 +183,16 @@ public class PackageRequestModerationService {
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, NOT_FOUND,
-                "Package Request Not Found", "Demande d'envoi introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, NOT_FOUND, "problem.package-request-not-found");
     }
 
     private static YadonyBusinessException conflict(String code) {
-        String detail = switch (code) {
-            case ALREADY_REMOVED -> "Cette demande a déjà été retirée par la modération.";
-            case DRAFT -> "Un brouillon n'est pas publié : il n'y a rien à retirer.";
-            case COMPLETED -> "Cette demande est terminée : le colis a été livré.";
-            default -> "Un envoi est engagé sur cette demande (paiement, commission ou colis). "
-                    + "Traitez-le par un litige plutôt que par un retrait.";
+        String key = switch (code) {
+            case ALREADY_REMOVED -> "problem.package-request-not-removable.already-removed";
+            case DRAFT -> "problem.package-request-not-removable.draft";
+            case COMPLETED -> "problem.package-request-not-removable.completed";
+            default -> "problem.package-request-not-removable.engaged";
         };
-        return new YadonyBusinessException(HttpStatus.CONFLICT, code, "Package Request Not Removable", detail);
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, code, key);
     }
 }

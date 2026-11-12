@@ -27,8 +27,7 @@ enum FlightAlertOffersScope {
         return switch (raw.trim().toLowerCase(Locale.ROOT)) {
             case "below" -> BELOW;
             case "all" -> ALL;
-            default -> throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "flights-invalid-scope",
-                    "Invalid Flight Alert Scope", "Valeur de scope inconnue : utilisez below ou all.");
+            default -> throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "flights-invalid-scope", "problem.flights-invalid-scope");
         };
     }
 }

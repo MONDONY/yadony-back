@@ -102,9 +102,7 @@ public class BroadcastSegmentService {
     // ── interne ───────────────────────────────────────────────────────────────
 
     private BroadcastSegmentEntity require(UUID id) {
-        return repository.findById(id).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "broadcast-segment-not-found", "Not Found",
-                "Segment introuvable"));
+        return repository.findById(id).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "broadcast-segment-not-found", "problem.admin.broadcast-segment-not-found"));
     }
 
     /** Forme (parse) puis sens (compilation) : même double contrôle que l'envoi. */
@@ -132,8 +130,7 @@ public class BroadcastSegmentService {
     }
 
     private static YadonyBusinessException nameTaken() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "broadcast-segment-name-taken",
-                "Conflict", "Un segment porte déjà ce nom");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "broadcast-segment-name-taken", "problem.admin.broadcast-segment-name-taken");
     }
 
     private void audit(String action, UUID id, AudienceRule.Group rule, UUID adminId) {

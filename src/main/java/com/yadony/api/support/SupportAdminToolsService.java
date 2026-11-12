@@ -52,9 +52,7 @@ public class SupportAdminToolsService {
         requireTicket(ticketId);
         String text = content == null ? "" : content.strip();
         if (text.length() < NOTE_MIN || text.length() > NOTE_MAX) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-note-invalid", "Note invalide",
-                    "La note doit faire entre " + NOTE_MIN + " et " + NOTE_MAX + " caracteres");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-note-invalid", "problem.support-note-invalid", NOTE_MIN, NOTE_MAX);
         }
         SupportTicketNoteEntity note = new SupportTicketNoteEntity();
         note.setTicketId(ticketId);
@@ -106,10 +104,7 @@ public class SupportAdminToolsService {
         String l = label == null ? "" : label.strip();
         String c = content == null ? "" : content.strip();
         if (l.isEmpty() || l.length() > LABEL_MAX || c.isEmpty() || c.length() > CONTENT_MAX) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-template-invalid", "Reponse type invalide",
-                    "Le libelle (" + LABEL_MAX + " caracteres au plus) et le texte (" + CONTENT_MAX
-                            + " caracteres au plus) sont obligatoires");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-template-invalid", "problem.support-template-invalid", LABEL_MAX, CONTENT_MAX);
         }
         template.setLabel(l);
         template.setContent(c);
@@ -117,13 +112,11 @@ public class SupportAdminToolsService {
 
     private SupportTicketEntity requireTicket(UUID ticketId) {
         return ticketRepository.findById(ticketId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "support-ticket-not-found", "Ticket introuvable", "Aucun ticket ne correspond"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "support-ticket-not-found", "problem.support-ticket-not-found"));
     }
 
     private SupportReplyTemplateEntity requireTemplate(UUID templateId) {
         return templateRepository.findById(templateId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "support-template-not-found", "Reponse type introuvable", "Aucune reponse type ne correspond"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "support-template-not-found", "problem.support-template-not-found"));
     }
 }

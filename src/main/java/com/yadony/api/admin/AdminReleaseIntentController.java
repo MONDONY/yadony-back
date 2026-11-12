@@ -55,16 +55,10 @@ public class AdminReleaseIntentController {
             case CANCELLED, REALIGNED -> ResponseEntity.ok(new ReleaseIntentCancelResponse(id,
                     outcome.result().name(), outcome.transferId(),
                     paymentRepository.findStatusById(id).map(PaymentStatus::name).orElse(null)));
-            case NOT_PENDING -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "no-pending-release",
-                    "No Pending Release", "Aucun versement réservé en attente pour ce paiement");
-            case IN_PROGRESS -> throw new YadonyBusinessException(HttpStatus.CONFLICT, "release-in-progress",
-                    "Release In Progress", "Un appel Stripe est en cours pour ce versement : réessayez dans quelques minutes");
-            case UNSUPPORTED -> throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "release-intent-unsupported", "Release Intent Unsupported",
-                    "Capture legacy : vérifiez le PaymentIntent dans Stripe et traitez à la main");
-            case LOOKUP_FAILED -> throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-unavailable",
-                    "Stripe Unavailable",
-                    "Recherche Stripe impossible : rien n'a été modifié, réessayez dans un instant");
+            case NOT_PENDING -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "no-pending-release", "problem.admin.no-pending-release");
+            case IN_PROGRESS -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "release-in-progress", "problem.admin.release-in-progress-2");
+            case UNSUPPORTED -> throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "release-intent-unsupported", "problem.admin.release-intent-unsupported");
+            case LOOKUP_FAILED -> throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-unavailable", "problem.admin.stripe-unavailable");
         };
     }
 }
