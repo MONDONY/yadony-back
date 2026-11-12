@@ -1,5 +1,6 @@
 package com.yadony.api.requests.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.entity.ParcelSize;
@@ -16,7 +17,8 @@ public record PackageRequestResponse(
     String departureCity, String arrivalCity,
     LocalDate desiredDate, int dateToleranceDays,
     BigDecimal weightKg, ParcelSize parcelSize,
-    TransportMode transportMode,
+    /** Toujours sérialisé, null compris : null = « peu importe », clé absente = ancienne donnée (avion). */
+    @JsonInclude(JsonInclude.Include.ALWAYS) TransportMode transportMode,
     String contentCategory,
     String description, BigDecimal targetPriceEur, String photoUrl,
     String pickupNeighborhood, String deliveryNeighborhood,
