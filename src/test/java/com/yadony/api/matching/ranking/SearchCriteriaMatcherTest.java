@@ -106,6 +106,26 @@ class SearchCriteriaMatcherTest {
     }
 
     @Test
+    void transportMode_roadCoversCarAndBus_otherModesStayStrict() {
+        AnnouncementEntity bus = trip();
+        bus.setTransportMode(TransportMode.BUS);
+        SearchCriteria car = new SearchCriteria(null, null, null, null, "CAR", null, null,
+                null, false, false, null, false);
+        assertThat(SearchCriteriaMatcher.unmet(bus, null, false, car)).isEmpty();
+
+        AnnouncementEntity carTrip = trip();
+        carTrip.setTransportMode(TransportMode.CAR);
+        SearchCriteria busWanted = new SearchCriteria(null, null, null, null, "bus", null, null,
+                null, false, false, null, false);
+        assertThat(SearchCriteriaMatcher.unmet(carTrip, null, false, busWanted)).isEmpty();
+
+        SearchCriteria boat = new SearchCriteria(null, null, null, null, "BOAT", null, null,
+                null, false, false, null, false);
+        assertThat(SearchCriteriaMatcher.unmet(bus, null, false, boat))
+                .containsExactly(new UnmetCriterion("TRANSPORT_MODE", "BOAT", "BUS"));
+    }
+
+    @Test
     void transportMode_invalidValueIgnored() {
         SearchCriteria c = new SearchCriteria(null, null, null, null, "ROCKET", null, null,
                 null, false, false, null, false);

@@ -286,8 +286,17 @@ public class AnnouncementSpecification {
         return root.get("travelerId").in(sq);
     }
 
+    /**
+     * Trajets dont le mode convient à la recherche. Même règle que {@link TransportMode#accepts} :
+     * voiture et bus sont interchangeables (« Route »), les autres modes exigent l'égalité stricte.
+     */
     public static Specification<AnnouncementEntity> hasTransportMode(TransportMode mode) {
-        return (root, query, cb) -> cb.equal(root.get("transportMode"), mode);
+        List<TransportMode> accepted = Arrays.stream(TransportMode.values())
+                .filter(offered -> TransportMode.accepts(mode, offered))
+                .toList();
+        return (root, query, cb) -> accepted.size() == 1
+                ? cb.equal(root.get("transportMode"), accepted.get(0))
+                : root.get("transportMode").in(accepted);
     }
 
     /**
