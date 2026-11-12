@@ -90,6 +90,26 @@ class PublicAnnouncementSearchServiceTest {
     }
 
     @Test
+    void transmetTailleMinimaleEtVilleDePassageDansLaVuePublique() {
+        PublicAnnouncementQuery q = PublicAnnouncementQuery.of(
+                null, null, null, null, null, null, null, null, null, null, "L", "Tanger", 0, TODAY);
+        when(announcementService.searchAnnouncements(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(Page.empty(PageRequest.of(0, 20)));
+
+        service.search(q);
+
+        ArgumentCaptor<AnnouncementSearchExtras> extras = ArgumentCaptor.forClass(AnnouncementSearchExtras.class);
+        verify(announcementService).searchAnnouncements(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), extras.capture());
+        assertThat(extras.getValue().publicView()).isTrue();
+        assertThat(extras.getValue().minItemSize()).isEqualTo(ItemSize.L);
+        assertThat(extras.getValue().viaCity()).isEqualTo("tanger");
+    }
+
+    @Test
     void convertitChaqueResultatEnCartePublique() {
         PublicAnnouncementQuery q = PublicAnnouncementQuery.of(
                 "Paris", "Dakar", null, null, null, null, null, null, null, null, null, TODAY);

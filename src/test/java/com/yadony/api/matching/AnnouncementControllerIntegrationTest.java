@@ -41,6 +41,7 @@ class AnnouncementControllerIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired ObjectMapper objectMapper;
     @Autowired PlatformSettingsService platformSettings;
+    @Autowired org.springframework.cache.CacheManager cacheManager;
 
     /**
      * Reuse the same traveler UUID across all tests (no UserEntity needed;
@@ -60,6 +61,11 @@ class AnnouncementControllerIntegrationTest {
 
     @BeforeEach
     void cleanDb() {
+        // Recherche mise en cache 5 min : deux tests qui lancent la même requête se verraient l'un l'autre.
+        var searchCache = cacheManager.getCache("announcements-search");
+        if (searchCache != null) {
+            searchCache.clear();
+        }
         announcementRepository.deleteAll();
         userRepository.deleteAll();
         // Le bateau est fermé par défaut : ces tests créent des trajets BOAT, il faut l'ouvrir.
@@ -128,6 +134,80 @@ class AnnouncementControllerIntegrationTest {
             // THEN: only the Paris one (AND semantics — city filter AND radius filter)
             .andExpect(jsonPath("$.content.length()").value(1))
             .andExpect(jsonPath("$.content[0].departureCity").value("Paris"));
+    }
+
+    // ─── taille minimale et ville de passage (route) ─────────────────────────
+
+    @Test
+    void searchAnnouncements_minItemSize_keepsLargeEnoughTripsOnly_andIgnoresUnknownValue() throws Exception {
+        sizedTrip("Paris", "Dakar", ItemSize.M, null);
+        sizedTrip("Paris", "Dakar", ItemSize.L, null);
+        sizedTrip("Paris", "Dakar", null, null);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("minItemSize", "l"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(1));
+        // Valeur inconnue : filtre ignoré (ancienne app, saisie libre), les 3 trajets reviennent.
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("minItemSize", "XXL"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(3));
+    }
+
+    @Test
+    void searchAnnouncements_viaCity_keepsLegsOfVoyagesStoppingThere_andBlankIsIgnored() throws Exception {
+        UUID voyage = UUID.randomUUID();
+        sizedTrip("Paris", "Tanger", null, voyage);
+        sizedTrip("Tanger", "Dakar", null, voyage);
+        sizedTrip("Paris", "Dakar", null, null);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("viaCity", "TANGER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(2));
+        // Même requête sans le paramètre juste après : la clé de cache distingue les deux.
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(3));
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("viaCity", "  "))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(3));
+    }
+
+    @Test
+    void searchAnnouncements_viaCityWithDepartureAndArrival_appliesEachToTheLeg() throws Exception {
+        UUID voyage = UUID.randomUUID();
+        sizedTrip("Paris", "Tanger", null, voyage);
+        sizedTrip("Tanger", "Dakar", null, voyage);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("departureCity", "Paris")
+                .param("viaCity", "Tanger"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(1))
+            .andExpect(jsonPath("$.content[0].arrivalCity").value("Tanger"));
+    }
+
+    @Test
+    void searchAnnouncements_minAvailableKg1000_returnsTonneTrip() throws Exception {
+        AnnouncementEntity tonne = sizedTrip("Paris", "Dakar", ItemSize.XL, null);
+        tonne.setAvailableKg(new BigDecimal("1000"));
+        tonne.setTotalKg(new BigDecimal("1000"));
+        announcementRepository.save(tonne);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("minAvailableKg", "1000"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(1));
     }
 
     // ─── urgent filter ──────────────────────────────────────────────────────
@@ -937,6 +1017,16 @@ class AnnouncementControllerIntegrationTest {
         user.setKycStatus(com.yadony.api.auth.KycStatus.PENDING);
         user.setRoles(new java.util.HashSet<>(List.of(com.yadony.api.auth.Role.TRAVELER)));
         return userRepository.save(user);
+    }
+
+    private AnnouncementEntity sizedTrip(String dep, String arr, ItemSize maxSize, UUID tripGroupId) {
+        AnnouncementEntity e = seedAnnouncement(48.8566, 2.3522, dep, arr);
+        e.setMaxItemSize(maxSize);
+        e.setTripGroupId(tripGroupId);
+        if (tripGroupId != null) {
+            e.setTripLegIndex(1);
+        }
+        return announcementRepository.save(e);
     }
 
     private AnnouncementEntity seedAnnouncement(double lat, double lng, String dep, String arr) {

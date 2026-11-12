@@ -296,7 +296,8 @@ public class AnnouncementService {
      * servie en deux blocs (spec 2026-10-21-classement-annonces).
      *
      * <p><b>Filtres stricts</b>, jamais relâchés : villes, {@code kycVerifiedOnly}, prix max,
-     * escales, moyens de paiement, plus la visibilité (statut, public ou surplus ouvert, date
+     * escales, moyens de paiement, taille minimale ({@code minItemSize}), ville de passage
+     * ({@code viaCity}), plus la visibilité (statut, public ou surplus ouvert, date
      * limite de remise, comptes bloqués). <b>Filtres souples</b> : dates (et {@code urgent}),
      * kilos, mode de transport, note minimale, type de contenu, rayon, week-end, GP Pro.
      *
@@ -385,6 +386,12 @@ public class AnnouncementService {
             strict = strict.and(AnnouncementSpecification.maxStops(stopsBound));
         if (!filters.paymentMethods().isEmpty())
             strict = strict.and(AnnouncementSpecification.offersAnyPaymentMethod(filters.paymentMethods()));
+        // Taille minimale et ville de passage : stricts (jamais relâchés au bloc 2). Un trajet qui
+        // les rate n'a pas d'écart à expliquer, il ne correspond simplement pas à la recherche.
+        if (filters.minItemSize() != null)
+            strict = strict.and(AnnouncementSpecification.minItemSize(filters.minItemSize()));
+        if (filters.viaCity() != null)
+            strict = strict.and(AnnouncementSpecification.voyageStopsAt(filters.viaCity()));
 
         // ── Critères souples : filtres SQL du bloc 1, écarts expliqués au bloc 2 ──
         Specification<AnnouncementEntity> exact = strict;
