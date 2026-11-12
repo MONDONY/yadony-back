@@ -8,6 +8,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -96,8 +97,38 @@ public record AnnouncementRequest(
         // Escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1, 2 = deux ou plus.
         // Optionnel ; validé et ignoré hors avion par TripStops. Absent à la modification =
         // valeur conservée (client antérieur).
-        Integer stopsCount
+        Integer stopsCount,
+        // Taille maximale d'un colis (S, M, L, XL), route (voiture, bus) seulement : facultative,
+        // jamais exigée ; ignorée hors route (ParcelFitRules). Chaîne et non enum : minuscule ou
+        // valeur inconnue donnent un 422 avec « violations », pas une erreur de désérialisation.
+        @Pattern(regexp = "S|M|L|XL", message = "{validation.trip.max-item-size.pattern}")
+        String maxItemSize,
+        // Poids maximal par colis en kg, route et bateau seulement : facultatif ; ignoré ailleurs.
+        @DecimalMin(value = "0.5", message = "{validation.trip.max-parcel-weight.min}")
+        @DecimalMax(value = "999999.99", message = "{validation.trip.max-parcel-weight.max}")
+        BigDecimal maxParcelWeightKg
 ) {
+    /** Arité d'avant la taille et le poids maximaux, conservée pour les appels existants. */
+    public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
+                               LocalTime departureTime, LocalTime arrivalTime,
+                               AddressDto pickupAddress, AddressDto deliveryAddress,
+                               BigDecimal availableKg, BigDecimal pricePerKg,
+                               com.yadony.api.matching.TransportMode transportMode, String description,
+                               List<String> acceptedContentTypes, List<String> refusedTypes,
+                               Set<PaymentMethod> acceptedPaymentMethods,
+                               com.yadony.api.matching.CapacityUnit capacityUnit,
+                               com.yadony.api.matching.PricingMode pricingMode,
+                               String departureCountryCode, String arrivalCountryCode,
+                               LocalDateTime handoverDeadline, Boolean saveAsDraft,
+                               Boolean negotiable, String currency, LocalDate arrivalDate,
+                               Integer stopsCount) {
+        this(departureCity, arrivalCity, departureDate, departureTime, arrivalTime, pickupAddress,
+                deliveryAddress, availableKg, pricePerKg, transportMode, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
+                departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
+                currency, arrivalDate, stopsCount, null, null);
+    }
+
     /** Arité sans escales, conservée pour les appels existants. */
     public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
                                LocalTime departureTime, LocalTime arrivalTime,
@@ -115,7 +146,7 @@ public record AnnouncementRequest(
                 deliveryAddress, availableKg, pricePerKg, transportMode, description,
                 acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
                 departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
-                currency, arrivalDate, null);
+                currency, arrivalDate, null, null, null);
     }
 
     /** Arité historique (sans date d'arrivée), conservée pour les appels existants. */
@@ -135,7 +166,7 @@ public record AnnouncementRequest(
                 deliveryAddress, availableKg, pricePerKg, transportMode, description,
                 acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
                 departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
-                currency, null, null);
+                currency, null, null, null, null);
     }
 
     public boolean isDraft() {

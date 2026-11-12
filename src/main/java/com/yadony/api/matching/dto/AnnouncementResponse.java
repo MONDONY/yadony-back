@@ -1,6 +1,7 @@
 package com.yadony.api.matching.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yadony.api.payments.cash.PaymentMethod;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -78,5 +79,10 @@ public record AnnouncementResponse(
         /** Suivi approximatif : la fenêtre d'envoi de position est ouverte maintenant pour ce trajet
          * (30 min avant le départ, au moins un colis pris en charge). Champ ajouté, optionnel pour les
          * anciens clients. */
-        boolean trackingActive
+        boolean trackingActive,
+        /** Taille maximale d'un colis (S, M, L, XL), route seulement ; null = non renseignée. Toujours
+         *  sérialisée (null explicite), champ ajouté. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) String maxItemSize,
+        /** Poids maximal par colis en kg, route et bateau ; null = non renseigné. Toujours sérialisé. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg
 ) {}

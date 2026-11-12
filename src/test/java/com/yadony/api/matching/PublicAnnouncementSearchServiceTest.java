@@ -163,6 +163,6 @@ class PublicAnnouncementSearchServiceTest {
                 LocalDateTime.of(2026, 12, 19, 18, 0),
                 false, true, "EUR", true, Set.of(PaymentMethod.CASH),
                 new BigDecimal("5250.00"), "XOF", new BigDecimal("6500.00"),
-                42L, "Europe/Paris");
+                42L, "Europe/Paris", null, null);
     }
 }

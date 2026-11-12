@@ -74,6 +74,7 @@ class ServerMessagesGuardTest {
             "matching/BidPhotoService.java",
             "matching/BidService.java",
             "matching/HandoverDeadlineRules.java",
+            "matching/ParcelFitRules.java",
             "matching/PriceGridController.java",
             "matching/PriceGridService.java",
             "matching/TravelerStatsController.java",

@@ -139,7 +139,9 @@ public class AnnouncementSearchMapper {
                 null, null, null,
                 // Audience : posée par AnnouncementService pour les seuls trajets du lecteur.
                 null,
-                entity.getTimezone()
+                entity.getTimezone(),
+                entity.getMaxItemSize() == null ? null : entity.getMaxItemSize().name(),
+                entity.getMaxParcelWeightKg()
         );
     }
 
@@ -214,7 +216,9 @@ public class AnnouncementSearchMapper {
                 null, null, null,
                 // Audience : posée par AnnouncementService pour les seuls trajets du lecteur.
                 null,
-                entity.getTimezone()
+                entity.getTimezone(),
+                entity.getMaxItemSize() == null ? null : entity.getMaxItemSize().name(),
+                entity.getMaxParcelWeightKg()
         );
     }
 

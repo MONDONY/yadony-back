@@ -131,6 +131,7 @@ public class TripSeriesService {
                 b.transportMode(), b.description(), b.acceptedContentTypes(), b.refusedTypes(),
                 b.acceptedPaymentMethods(), b.capacityUnit(), b.pricingMode(),
                 b.departureCountryCode(), b.arrivalCountryCode(), deadline, draft,
-                b.negotiable(), b.currency(), arrivalDate, b.stopsCount());
+                b.negotiable(), b.currency(), arrivalDate, b.stopsCount(),
+                b.maxItemSize(), b.maxParcelWeightKg());
     }
 }

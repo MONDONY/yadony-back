@@ -344,7 +344,9 @@ public class TripRecurrenceService {
                 // Vol de nuit mémorisé dans la récurrence : la date d'arrivée suit chaque
                 // occurrence. Nulle le même jour, comme un trajet saisi à la main.
                 rec.getArrivalDayOffset() > 0 ? date.plusDays(rec.getArrivalDayOffset()) : null,
-                rec.getStopsCount()
+                rec.getStopsCount(),
+                rec.getMaxItemSize(),
+                rec.getMaxParcelWeightKg() == null ? null : BigDecimal.valueOf(rec.getMaxParcelWeightKg())
         );
     }
 

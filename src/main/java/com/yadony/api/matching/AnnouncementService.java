@@ -945,7 +945,9 @@ public class AnnouncementService {
                 source.isNegotiable(),
                 source.getCurrency(),
                 source.getArrivalDate(),
-                source.getStopsCount());
+                source.getStopsCount(),
+                source.getMaxItemSize() == null ? null : source.getMaxItemSize().name(),
+                source.getMaxParcelWeightKg());
         return new TripSeriesStart(seriesId, source.getDepartureDate(),
                 TripTimezones.zoneOf(source.getTimezone()), base);
     }
@@ -1063,6 +1065,11 @@ public class AnnouncementService {
                 exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
         announcement.setTransportMode(request.transportMode());
         announcement.setStopsCount(TripStops.normalize(request.stopsCount(), request.transportMode()));
+        // Taille et poids maximaux par colis : gardés selon le mode, effacés sinon (ParcelFitRules).
+        announcement.setMaxItemSize(ParcelFitRules.normalizeMaxItemSize(
+                ItemSize.parseOrNull(request.maxItemSize()), request.transportMode()));
+        announcement.setMaxParcelWeightKg(ParcelFitRules.normalizeMaxParcelWeight(
+                request.maxParcelWeightKg(), request.transportMode()));
         announcement.setStatus(isDraft ? AnnouncementStatus.DRAFT : AnnouncementStatus.ACTIVE);
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
@@ -1072,8 +1079,10 @@ public class AnnouncementService {
             announcement.setRefusedTypes(ContentCategoryNormalizer.normalizeList(request.refusedTypes()));
         announcement.setAcceptedPaymentMethods(paymentMethods);
         announcement.setCardDeclined(declinesCard(request.acceptedPaymentMethods(), user, currency));
+        // Absent : kilo exact en route, valise de 23 kg ailleurs (comportement d'avant en avion).
         announcement.setCapacityUnit(
-            request.capacityUnit() != null ? request.capacityUnit() : CapacityUnit.SUITCASE_23KG
+            request.capacityUnit() != null ? request.capacityUnit()
+                    : ParcelFitRules.defaultCapacityUnit(request.transportMode())
         );
         PricingMode pricingMode = request.pricingMode() != null ? request.pricingMode() : PricingMode.KG;
         announcement.setPricingMode(pricingMode);
@@ -1435,7 +1444,10 @@ public class AnnouncementService {
                         ? TripRescheduleRules.remaining(announcement) : null,
                 announcement.getDepartureCountryCode(),
                 announcement.getArrivalCountryCode()
-        ).withDepartureTimezone(announcement.getTimezone());
+        ).withDepartureTimezone(announcement.getTimezone())
+                .withMaxParcelLimits(
+                        announcement.getMaxItemSize() == null ? null : announcement.getMaxItemSize().name(),
+                        announcement.getMaxParcelWeightKg());
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
             detail = detail.withParcelsSummary(parcelsSummary(announcement));
@@ -1633,6 +1645,11 @@ public class AnnouncementService {
         announcement.setStopsCount(TripStops.normalizeOnUpdate(
                 request.stopsCount(), announcement.getStopsCount(), request.transportMode()));
         announcement.setTransportMode(request.transportMode());
+        // Taille et poids maximaux selon le mode APRÈS modification : un passage à l'avion les efface.
+        announcement.setMaxItemSize(ParcelFitRules.normalizeMaxItemSize(
+                ItemSize.parseOrNull(request.maxItemSize()), request.transportMode()));
+        announcement.setMaxParcelWeightKg(ParcelFitRules.normalizeMaxParcelWeight(
+                request.maxParcelWeightKg(), request.transportMode()));
         announcement.setDescription(request.description());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         if (request.acceptedContentTypes() != null)
@@ -1781,7 +1798,10 @@ public class AnnouncementService {
                 TripRescheduleRules.remaining(saved),
                 saved.getDepartureCountryCode(),
                 saved.getArrivalCountryCode()
-        ).withDepartureTimezone(saved.getTimezone());
+        ).withDepartureTimezone(saved.getTimezone())
+                .withMaxParcelLimits(
+                        saved.getMaxItemSize() == null ? null : saved.getMaxItemSize().name(),
+                        saved.getMaxParcelWeightKg());
     }
 
     /**
@@ -2571,7 +2591,9 @@ public class AnnouncementService {
                         () -> counts != null
                                 ? counts.carried().contains(entity.getId())
                                 : bidRepository.existsByAnnouncementIdAndStatusIn(entity.getId(),
-                                        com.yadony.api.tracking.TripPositionService.carriedStatuses()))
+                                        com.yadony.api.tracking.TripPositionService.carriedStatuses())),
+                entity.getMaxItemSize() == null ? null : entity.getMaxItemSize().name(),
+                entity.getMaxParcelWeightKg()
         );
     }
 
@@ -2600,7 +2622,9 @@ public class AnnouncementService {
                 a.getPricingMode() != null ? a.getPricingMode().name() : PricingMode.KG.name(),
                 a.getPricingMode() == PricingMode.MIXED
                         ? priceGridService.minAnnouncementGridDisplay(a.getId(), a.getTravelerId())
-                        : null))
+                        : null,
+                a.getMaxItemSize() == null ? null : a.getMaxItemSize().name(),
+                a.getMaxParcelWeightKg()))
             .toList();
     }
 

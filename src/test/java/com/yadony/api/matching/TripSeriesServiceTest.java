@@ -82,6 +82,20 @@ class TripSeriesServiceTest {
     }
 
     @Test
+    void shiftTo_keepsMaxItemSizeAndMaxParcelWeight() {
+        AnnouncementRequest road = new AnnouncementRequest("Paris", "Dakar", SOURCE_DATE, LocalTime.of(10, 0), null,
+                new AddressDto("Orly", 48.72, 2.37), new AddressDto("Dakar", 14.69, -17.44),
+                BigDecimal.valueOf(800), BigDecimal.valueOf(3), TransportMode.CAR, null,
+                null, null, null, CapacityUnit.KG_EXACT, PricingMode.KG,
+                "FR", "SN", null, Boolean.FALSE, false, "EUR", null, null, "L", new BigDecimal("20"));
+
+        AnnouncementRequest shifted = service.shiftTo(start(road), SOURCE_DATE.plusDays(7), false);
+
+        assertThat(shifted.maxItemSize()).isEqualTo("L");
+        assertThat(shifted.maxParcelWeightKg()).isEqualByComparingTo("20");
+    }
+
+    @Test
     void shiftTo_earlierDate_withDeadlineAlreadyPast_fallsBackToDepartureTime() {
         // Copie vers le 16/10 : la date limite décalée (13/10) est déjà passée le 15/10.
         LocalDate tomorrow = LocalDate.of(2026, 10, 16);
