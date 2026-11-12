@@ -551,6 +551,14 @@ class KnowledgeBaseFichesTest {
         return article(locale, id).orElseThrow(() -> new AssertionError(locale + "/" + id)).body();
     }
 
+    private static List<String> allBodies() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        return List.of("fr", "en").stream()
+                .flatMap(locale -> corpus.articles(locale).stream())
+                .map(KbArticle::body)
+                .toList();
+    }
+
     @Test
     void reporterTrajet_listsModeAwareReasons() {
         assertThat(body("fr", "reporter-trajet")).contains("Panne ou contretemps").contains("Vol annulé")
@@ -618,7 +626,7 @@ class KnowledgeBaseFichesTest {
     void lesFichesModesDeTransport_gardentLesLimites_etSansTiretCadratin() {
         List<String> ids = List.of("reporter-trajet", "annuler-trajet", "proposer-trajet", "ecran-creer-trajet",
                 "envoyer-colis", "ecran-nouvelle-demande", "rechercher-trajet", "ecran-composer-recherche",
-                "modes-transport");
+                "modes-transport", "kilos-prix", "preparer-colis", "trajets-recurrents", "modeles-trajet");
         for (String locale : List.of("fr", "en")) {
             for (String id : ids) {
                 KbArticle fiche = article(locale, id).orElseThrow();
@@ -627,6 +635,66 @@ class KnowledgeBaseFichesTest {
                 assertThat(fiche.body()).as(locale + "/" + id).doesNotContain("\u2014");
             }
         }
+    }
+
+    @Test
+    void ecranCreerTrajet_describesRoadSize() {
+        assertThat(body("fr", "ecran-creer-trajet")).contains("Taille max d'un colis").contains("Autre date")
+                .doesNotContain("Mes modèles");
+        assertThat(body("en", "ecran-creer-trajet")).contains("Max parcel size");
+    }
+
+    @Test
+    void proposerTrajet_describesRoadCapacityAndAirCap() {
+        assertThat(body("fr", "proposer-trajet")).contains("14 jours").contains("tonnes")
+                .contains("Poids max par colis").contains("999 kg");
+        assertThat(body("en", "proposer-trajet")).contains("14 days").contains("tons")
+                .contains("Max weight per parcel").contains("999 kg");
+    }
+
+    @Test
+    void envoyerColis_roadHasNo32kgCap() {
+        assertThat(body("fr", "envoyer-colis")).contains("999 999 kg").contains("32 kg").contains("560 €")
+                .contains("1 000 000");
+        assertThat(body("en", "envoyer-colis")).contains("999,999 kg").contains("32 kg").contains("560 €")
+                .contains("1,000,000");
+        assertThat(body("fr", "preparer-colis")).contains("999 999 kg").contains("32 kg");
+        assertThat(body("en", "preparer-colis")).contains("999,999 kg").contains("32 kg");
+    }
+
+    @Test
+    void kilosPrix_describesMaxParcelWeightAndSize() {
+        assertThat(body("fr", "kilos-prix")).contains("Poids max par colis").contains("Taille max d'un colis");
+        assertThat(body("en", "kilos-prix")).contains("Max weight per parcel").contains("Max parcel size");
+    }
+
+    @Test
+    void composerRecherche_mentionsPassePar() {
+        assertThat(body("fr", "ecran-composer-recherche")).contains("PASSE PAR").contains("TAILLE DU COLIS");
+        assertThat(body("en", "ecran-composer-recherche")).contains("PASSES THROUGH").contains("PARCEL SIZE");
+        assertThat(body("fr", "rechercher-trajet")).contains("« Taille »").contains("Passe par");
+        assertThat(body("en", "rechercher-trajet")).contains("\"Size\"").contains("Passes through");
+    }
+
+    @Test
+    void modesTransport_roadIsTonsAndSize() {
+        assertThat(body("fr", "modes-transport")).contains("tonnes").contains("14 jours").doesNotContain("Récupération chez moi");
+        assertThat(body("en", "modes-transport")).contains("tons").contains("14 days");
+    }
+
+    @Test
+    void modelesEtSeries_gardentModeCapaciteTailleEtPoidsMax() {
+        assertThat(body("fr", "modeles-trajet")).contains("Partir d'un modèle ?").contains("14 jours")
+                .contains("poids max");
+        assertThat(body("en", "modeles-trajet")).contains("Start from a template?").contains("14 days")
+                .contains("max weight");
+        assertThat(body("fr", "trajets-recurrents")).contains("40 kg");
+        assertThat(body("en", "trajets-recurrents")).contains("40 kg");
+    }
+
+    @Test
+    void fiches_noEmDash() {
+        assertThat(allBodies()).isNotEmpty().noneMatch(b -> b.contains("\u2014"));
     }
 
     @Test

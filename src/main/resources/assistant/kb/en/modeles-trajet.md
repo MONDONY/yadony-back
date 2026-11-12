@@ -1,12 +1,12 @@
 ---
 id: modeles-trajet
 title: Create and use a trip template
-keywords: template, trip templates, usual trip, save as template, menu, save time, pre-fill, republish, regular trip
+keywords: template, trip templates, usual trip, save as template, menu, save time, pre-fill, republish, regular trip, size, max weight, ton
 routes:
   - path: /trip-templates
     label: My trip templates
 ---
 A template pre-fills a usual trip: you only have to pick the date.
 After publishing a trip, the app offers "Turn it into a trip template?". You can also open a published or completed trip, tap the ⋮ menu then "Save as template", or create one in Activity › Trip templates › New template.
-A template keeps the name, cities, times, handover deadline and places.
+A template keeps the name, cities, times, handover deadline and places, plus the mode, arrival day (up to 14 days by road), capacity, max size and max weight per parcel.
 To use it, tap "Post a trip": the "Start from a template?" sheet opens, then tap "Use" on the template. The form opens pre-filled, only the date is left. "Create a new trip" opens an empty form.
