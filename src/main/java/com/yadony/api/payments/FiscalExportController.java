@@ -42,16 +42,13 @@ public class FiscalExportController {
 
         int currentYear = Year.now().getValue();
         if (year < 2020 || year > currentYear) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-year",
-                    "Invalid Year", "Année invalide. Plage autorisée: 2020–" + currentYear);
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-year", "problem.invalid-year", String.valueOf(currentYear));
         }
         if (!VALID_FORMATS.contains(format)) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-format",
-                    "Invalid Format", "Format invalide. Valeurs acceptées: pdf, csv.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-format", "problem.invalid-format");
         }
         if (!VALID_TYPES.contains(type)) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-type",
-                    "Invalid Type", "Type invalide. Valeurs acceptées: summary, transactions, dac7.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-type", "problem.invalid-type");
         }
 
         UserEntity traveler = requireProTraveler();
@@ -83,16 +80,12 @@ public class FiscalExportController {
     private UserEntity requireProTraveler() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         UserEntity user = userRepository.findByFirebaseUid(auth.getName())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Export fiscal réservé aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.pro-required.export-fiscal-reserve-aux-voyageurs-pro");
         }
         return user;
     }

@@ -213,8 +213,7 @@ public class WalletController {
     private UUID currentUserId() {
         return userRepository.findByFirebaseUid(currentFirebaseUid())
             .map(UserEntity::getId)
-            .orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "user-not-found", "Utilisateur introuvable", ""));
+            .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.title-only"));
     }
 
     private String currentFirebaseUid() {

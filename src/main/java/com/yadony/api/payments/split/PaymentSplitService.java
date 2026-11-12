@@ -155,14 +155,13 @@ public class PaymentSplitService {
     @Transactional(readOnly = true)
     public SplitPlan plan(UUID bidId, BigDecimal senderRefund, BigDecimal travelerPayout) {
         if (senderRefund == null || travelerPayout == null) {
-            throw unprocessable("split-amounts-required", "Split Amounts Required",
-                    "Indiquez la part remboursée à l'expéditeur et la part versée au voyageur (0 possible).");
+            throw unprocessable("split-amounts-required", "problem.split-amounts-required");
         }
         if (senderRefund.signum() < 0 || travelerPayout.signum() < 0) {
-            throw unprocessable("split-amount-negative", "Negative Split Amount", "Les montants ne peuvent pas être négatifs.");
+            throw unprocessable("split-amount-negative", "problem.split-amount-negative");
         }
         if (senderRefund.add(travelerPayout).signum() == 0) {
-            throw unprocessable("split-amount-zero", "Empty Split", "Au moins un des deux montants doit être positif.");
+            throw unprocessable("split-amount-zero", "problem.split-amount-zero");
         }
         SplitAvailability a = availability(bidId);
         if (!a.splittable()) {
@@ -171,14 +170,10 @@ public class PaymentSplitService {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(a.currency());
         if (senderRefund.stripTrailingZeros().scale() > currency.minorUnit()
                 || travelerPayout.stripTrailingZeros().scale() > currency.minorUnit()) {
-            throw unprocessable("split-amount-precision", "Invalid Precision",
-                    "Montant trop précis pour la devise " + currency.code() + ".");
+            throw unprocessable("split-amount-precision", "problem.split-amount-precision", String.valueOf(currency.code()));
         }
         if (senderRefund.add(travelerPayout).compareTo(a.netAvailable()) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "split-exceeds-net",
-                    "Split Exceeds Net", "La somme des deux parts dépasse le net disponible ("
-                    + a.netAvailable().toPlainString() + " " + a.currency() + ").",
-                    Map.of("netAvailable", a.netAvailable().toPlainString(), "currency", a.currency()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "split-exceeds-net", "problem.split-exceeds-net", Map.of("netAvailable", a.netAvailable().toPlainString(), "currency", a.currency()), String.valueOf(a.netAvailable().toPlainString()), String.valueOf(a.currency()));
         }
 
         PaymentEntity payment = paymentRepository.findForBid(bidId).orElseThrow();
@@ -194,11 +189,9 @@ public class PaymentSplitService {
             String status = stripe.retrievePaymentIntent(payment.getStripePaymentIntentId()).status();
             if ("succeeded".equals(status)) mode = PaymentSplitMode.REFUND_TRANSFER;
             else if ("requires_capture".equals(status)) mode = PaymentSplitMode.PARTIAL_CAPTURE;
-            else throw unprocessable("split-payment-intent-state", "Unexpected Payment State",
-                        "État Stripe du paiement inattendu (" + status + ") : partage impossible.");
+            else throw unprocessable("split-payment-intent-state", "problem.split-payment-intent-state", String.valueOf(status));
         } catch (StripeException e) {
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de lire le paiement chez Stripe, réessayez.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error.impossible-de-lire-le-paiement-chez-stripe-reessayez");
         }
         return new SplitPlan(payment.getId(), bidId, travelerId, senderRefund, travelerPayout,
                 payment.getCurrency(), mode, a.netAvailable());
@@ -218,8 +211,7 @@ public class PaymentSplitService {
                 travelerPaid ? LocalDateTime.now(ZoneOffset.UTC) : null,
                 refundedBefore.add(plan.senderRefund()));
         if (claimed == 0) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "payment-not-in-escrow", "Invalid Status",
-                    "Le paiement a quitté le séquestre entre-temps : partage refusé.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payment-not-in-escrow", "problem.payment-not-in-escrow");
         }
         PaymentSplitEntity split = new PaymentSplitEntity();
         split.setPaymentId(plan.paymentId());
@@ -373,19 +365,16 @@ public class PaymentSplitService {
 
     private void requirePayableTraveler(UUID travelerId) {
         if (travelerId == null) {
-            throw unprocessable("traveler-not-found", "Invalid Traveler", "Voyageur introuvable pour ce colis.");
+            throw unprocessable("traveler-not-found", "problem.traveler-not-found.split");
         }
         if (holdPolicy.isHeld(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "payout-beneficiary-held",
-                    "Payout Beneficiary Held",
-                    "Les versements de ce voyageur sont gelés : part voyageur impossible (mettez-la à 0).");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "payout-beneficiary-held", "problem.payout-beneficiary-held");
         }
         UserEntity traveler = userRepository.findById(travelerId).orElse(null);
         if (traveler == null || traveler.getStripeAccountId() == null || traveler.getStripeAccountId().isBlank()
                 || traveler.getStripeAccountStatus() == StripeAccountStatus.DISABLED
                 || traveler.getStripeAccountStatus() == StripeAccountStatus.REJECTED) {
-            throw unprocessable("traveler-no-connect", "Invalid Traveler",
-                    "Le voyageur n'a pas de compte Stripe utilisable : part voyageur impossible.");
+            throw unprocessable("traveler-no-connect", "problem.traveler-no-connect");
         }
     }
 
@@ -412,26 +401,18 @@ public class PaymentSplitService {
 
     private static YadonyBusinessException refusal(String code) {
         return switch (code) {
-            case "split-not-applicable-cash" -> unprocessable(code, "Not Applicable",
-                    "Envoi payé en espèces : Yadony ne détient pas le prix du transport, rien à répartir.");
-            case "split-mobile-money-unsupported" -> unprocessable(code, "Mobile Money Unsupported",
-                    "Partage non pris en charge pour un paiement mobile money : utilisez le remboursement ou la "
-                            + "libération intégrale depuis la fiche paiement.");
-            case "split-legacy-unsupported" -> unprocessable(code, "Legacy Payment Unsupported",
-                    "Paiement carte ancien modèle (destination charge) : partage non pris en charge.");
-            case "payment-not-in-escrow" -> unprocessable(code, "Invalid Status",
-                    "Le paiement n'est plus en séquestre : rien à répartir.");
-            case "payment-disputed" -> new YadonyBusinessException(HttpStatus.CONFLICT, code, "Payment Disputed",
-                    "Chargeback en cours sur ce paiement : partage refusé.");
-            case "split-already-exists" -> new YadonyBusinessException(HttpStatus.CONFLICT, code,
-                    "Split Already Exists", "Un partage existe déjà pour ce paiement.");
-            case "split-nothing-available" -> unprocessable(code, "Nothing Available",
-                    "Aucun net restant à répartir sur ce paiement.");
-            default -> unprocessable(code, "Split Unavailable", "Aucun paiement à répartir pour ce litige.");
+            case "split-not-applicable-cash" -> unprocessable(code, "problem.split-refusal.envoi-paye-en-especes-yadony-ne");
+            case "split-mobile-money-unsupported" -> unprocessable(code, "problem.split-refusal.partage-non-pris-en-charge-pour");
+            case "split-legacy-unsupported" -> unprocessable(code, "problem.split-refusal.paiement-carte-ancien-modele-destination-charge");
+            case "payment-not-in-escrow" -> unprocessable(code, "problem.split-refusal.le-paiement-n-est-plus-en");
+            case "payment-disputed" -> YadonyBusinessException.localized(HttpStatus.CONFLICT, code, "problem.payment-disputed");
+            case "split-already-exists" -> YadonyBusinessException.localized(HttpStatus.CONFLICT, code, "problem.split-already-exists");
+            case "split-nothing-available" -> unprocessable(code, "problem.split-refusal.aucun-net-restant-a-repartir-sur");
+            default -> unprocessable(code, "problem.split-refusal.aucun-paiement-a-repartir-pour-ce");
         };
     }
 
-    private static YadonyBusinessException unprocessable(String code, String title, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, title, detail);
+    private static YadonyBusinessException unprocessable(String code, String key, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, code, key, args);
     }
 }

@@ -187,18 +187,15 @@ public class TripPositionService {
 
     private UUID travelerIdOf(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"))
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"))
                 .getId();
     }
 
     private AnnouncementEntity loadOwned(UUID announcementId, UUID travelerId) {
         AnnouncementEntity announcement = announcementRepository.findById(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         if (!announcement.getTravelerId().equals(travelerId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas autorisé à modifier ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.modifier-ce-trajet");
         }
         return announcement;
     }

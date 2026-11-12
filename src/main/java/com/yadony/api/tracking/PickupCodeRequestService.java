@@ -93,30 +93,25 @@ public class PickupCodeRequestService {
     @Transactional
     public PickupCodeRequestResponse requestNewCode(UUID bidId, String firebaseUid) {
         UserEntity caller = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
         BidEntity bid = bidRepository.findByIdForUpdate(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
                 .map(AnnouncementEntity::getTravelerId)
                 .orElse(null);
         if (travelerId == null || !travelerId.equals(caller.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul le voyageur du colis peut demander un nouveau code de retrait");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-le-voyageur-du-colis-peut-demander-un");
         }
         var m = messagesResolver.forRequest();
         if (!PickupCodes.IN_TRAVELER_HANDS.contains(bid.getStatus())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "code-request-not-allowed",
-                    "Code Request Not Allowed", m.get("problem.code-request-not-allowed"));
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "code-request-not-allowed",
+                    "problem.code-request-not-allowed.resolved", m.get("problem.code-request-not-allowed"));
         }
 
         LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
         if (!PickupCodes.renewalNeeded(bid, now)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "code-still-valid",
-                    "Code Still Valid", m.get("problem.code-still-valid"));
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "code-still-valid",
+                    "problem.code-still-valid.resolved", m.get("problem.code-still-valid"));
         }
 
         Optional<LocalDateTime> last = auditLogRepository.findLastActionAt(AUDIT_ENTITY, bidId, AUDIT_ACTION);
@@ -124,10 +119,11 @@ public class PickupCodeRequestService {
             LocalDateTime nextAllowed = last.get().plus(COOLDOWN);
             long seconds = Math.max(1, Duration.between(now, nextAllowed).toSeconds());
             long minutes = (seconds + 59) / 60;
-            throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "code-request-too-soon",
-                    "Code Request Too Soon", m.get("problem.code-request-too-soon", minutes),
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "code-request-too-soon",
+                    "problem.code-request-too-soon.resolved",
                     Map.of("nextRequestAllowedAt", nextAllowed.atOffset(ZoneOffset.UTC).toString(),
-                            "retryAfterSeconds", seconds));
+                            "retryAfterSeconds", seconds),
+                    m.get("problem.code-request-too-soon", minutes));
         }
 
         auditService.log(AUDIT_ENTITY, bidId, AUDIT_ACTION, caller.getId(),

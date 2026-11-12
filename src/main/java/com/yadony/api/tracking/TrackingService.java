@@ -131,14 +131,10 @@ public class TrackingService {
 
     public QrCodeResponse getQrCode(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         // Le destinataire qui a confirmé le colis peut aussi le montrer au voyageur
         // (FLUTTER-7Y). Le QR n'identifie que le colis : la remise exige toujours
@@ -146,15 +142,11 @@ public class TrackingService {
         boolean isSender = currentUser.getId().equals(bid.getSenderId());
         if (!isSender && !recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(
                 bidId, currentUser.getId(), ReceptionLinkStatus.CONFIRMED)) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Accès interdit à ce QR code");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.acces-interdit-a-ce-qr-code");
         }
 
         if (bid.getQrToken() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY, "qr-not-ready", "QR Not Ready",
-                    "Le QR code n'est pas encore disponible pour cette transaction");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "qr-not-ready", "problem.qr-not-ready");
         }
 
         String scanUrl = appBaseUrl + "/api/v1/tracking/" + bidId + "/scan";
@@ -166,29 +158,21 @@ public class TrackingService {
     public TrackingSearchResponse searchByTrackingNumber(String trackingNumber, String firebaseUid) {
         String normalized = trackingNumber.trim().toUpperCase();
         BidEntity bid = bidRepository.findByTrackingNumber(normalized)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "tracking-not-found", "Tracking Not Found",
-                        "Aucun colis trouvé avec le numéro : " + normalized));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "tracking-not-found", "problem.tracking-not-found", String.valueOf(normalized)));
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         // Le numéro de suivi n'est pas un secret : sans contrôle de propriété, n'importe
         // qui pourrait lire le statut du colis et les instructions de retrait (adresse
         // physique). Seuls l'expéditeur et le voyageur qui transporte y ont droit.
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
         boolean isSender = bid.getSenderId().equals(currentUser.getId());
         boolean isTraveler = announcement.getTravelerId().equals(currentUser.getId());
         if (!isSender && !isTraveler) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "tracking/forbidden", "Forbidden",
-                    "Ce colis n'est pas le vôtre");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "tracking/forbidden", "problem.tracking-forbidden");
         }
 
         java.util.Optional<PaymentEntity> paymentOpt = paymentRepository.findByBidId(bid.getId());
@@ -286,23 +270,16 @@ public class TrackingService {
         // attend le commit du premier, puis voit son DEPART et le renvoie tel quel.
         bidRepository.lockForUpdate(request.bidId());
         BidEntity bid = bidRepository.findById(request.bidId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul le voyageur de cette annonce peut scanner le QR code");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-le-voyageur-de-cette-annonce-peut-scanner");
         }
 
         // Un DEPART ne s'enregistre qu'une fois par colis (index unique V48). Le rejeu du
@@ -321,19 +298,15 @@ public class TrackingService {
                 && bid.getStatus() != BidStatus.HANDED_OVER
                 && bid.getStatus() != BidStatus.IN_TRANSIT) {
             reportLateHandoverIfAny(bid, request, traveler);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted",
-                    "Bid Not Accepted", "Ce colis n'est pas dans un état scannable");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted", "problem.bid-not-accepted.ce-colis-n-est-pas-dans-un-etat");
         }
 
         if (bid.getQrToken() == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "qr-not-ready",
-                    "QR Not Ready", "Le QR code n'est pas encore disponible");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "qr-not-ready", "problem.qr-not-ready.le-qr-code-n-est-pas-encore-disponible");
         }
 
         if (request.eventType() == TrackingEventType.ARRIVEE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "use-confirm-delivery",
-                    "Use Confirm Delivery",
-                    "L'arrivée doit être confirmée avec le code de confirmation fourni par l'expéditeur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "use-confirm-delivery", "problem.use-confirm-delivery");
         }
 
         if (request.offlineTimestamp() != null
@@ -342,8 +315,7 @@ public class TrackingService {
             // rejecting clearly fraudulent backdating attempts.
             auditService.log("TRACKING_EVENT", bid.getId(), "FRAUD_FUTURE_TIMESTAMP",
                     traveler.getId(), Map.of("offlineTimestamp", request.offlineTimestamp().toString()));
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-timestamp",
-                    "Invalid Timestamp", "Le timestamp du scan ne peut pas être dans le futur");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-timestamp", "problem.invalid-timestamp");
         }
 
         if (request.eventType() == TrackingEventType.DEPART) {
@@ -358,8 +330,7 @@ public class TrackingService {
         // tout DEPART sautait cette génération et laissait la livraison
         // inconfirmable (code-not-generated).
         if (request.eventType() == TrackingEventType.TRANSIT && bid.getStatus() == BidStatus.ACCEPTED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "depart-required",
-                    "Depart Required", "Scannez d'abord le départ du colis");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "depart-required", "problem.depart-required");
         }
 
         TrackingEventEntity event = new TrackingEventEntity();
@@ -491,45 +462,30 @@ public class TrackingService {
      */
     public TrackingEventResponse findRecordedDepart(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul le voyageur de cette annonce peut scanner le QR code");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-le-voyageur-de-cette-annonce-peut-scanner");
         }
         return trackingEventRepository
                 .findFirstByBidIdAndEventTypeOrderByScannedAtAsc(bidId, TrackingEventType.DEPART)
                 .map(e -> toEventResponse(e, null))
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "scan-already-recorded", "Scan Already Recorded",
-                        "Ce scan est déjà en cours d'enregistrement, réessayez"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.CONFLICT, "scan-already-recorded", "problem.scan-already-recorded"));
     }
 
     @Transactional(readOnly = true)
     public List<TrackingEventResponse> getEvents(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         boolean isSender = currentUser.getId().equals(bid.getSenderId());
         boolean isTraveler = currentUser.getId().equals(announcement.getTravelerId());
@@ -538,8 +494,7 @@ public class TrackingService {
                 && recipientLinkRepository.existsByBidIdAndRecipientUserIdAndStatus(
                         bidId, currentUser.getId(), ReceptionLinkStatus.CONFIRMED);
         if (!isSender && !isTraveler && !isConfirmedRecipient) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Accès interdit à ces événements de tracking");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.acces-interdit-a-ces-evenements-de-tracking");
         }
 
         return trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId).stream()
@@ -550,18 +505,13 @@ public class TrackingService {
     @Transactional(readOnly = true)
     public List<TripScanHistoryEntryDto> getTripScanHistory(UUID announcementId, String firebaseUid) {
         AnnouncementEntity announcement = announcementRepository.findById(announcementId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         if (!announcement.getTravelerId().equals(currentUser.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Accès interdit à l'historique de ce trajet");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.acces-interdit-a-l-historique-de-ce-trajet");
         }
 
         List<BidEntity> bids = bidRepository.findByAnnouncementId(announcementId);
@@ -622,11 +572,13 @@ public class TrackingService {
             Optional<String> code = blocker.blockingCode(bid.getId());
             if (code.isPresent()) {
                 log.info("Scan DEPART du colis {} refusé : {}", bid.getId(), code.get());
-                String detail = blocker.messageKey() != null
-                        ? messagesResolver.forRequest().get(blocker.messageKey())
-                        : "Une demande en cours sur ce colis (supplément de prix ou modification) attend une réponse ou un paiement.";
-                throw new YadonyBusinessException(HttpStatus.CONFLICT, code.get(), "Handover Blocked", detail,
-                        Map.of("bidId", bid.getId().toString()));
+                Map<String, Object> props = Map.of("bidId", bid.getId().toString());
+                throw blocker.messageKey() != null
+                        ? YadonyBusinessException.localized(HttpStatus.CONFLICT, code.get(),
+                                "problem.handover-blocked.resolved", props,
+                                messagesResolver.forRequest().get(blocker.messageKey()))
+                        : YadonyBusinessException.localized(HttpStatus.CONFLICT, code.get(),
+                                "problem.handover-blocked.pending-request", props);
             }
         }
     }
@@ -642,9 +594,7 @@ public class TrackingService {
         if (photoKey.startsWith("http://") || photoKey.startsWith("https://")
                 || photoKey.contains("..")
                 || !photoKey.startsWith(expectedPrefix)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-photo-url", "Invalid Photo URL",
-                    "L'URL de la photo doit être une clé S3 valide pour ce bid");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-photo-url", "problem.invalid-photo-url.l-url-de-la-photo-doit-etre-une");
         }
         return photoKey;
     }
@@ -662,18 +612,13 @@ public class TrackingService {
 
     public ConfirmCodeResponse getConfirmationCode(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         if (!currentUser.getId().equals(bid.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut consulter le code de confirmation");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-l-expediteur-peut-consulter-le-code-de");
         }
 
         return new ConfirmCodeResponse(
@@ -685,24 +630,17 @@ public class TrackingService {
     @Transactional
     public ConfirmCodeResponse setConfirmationCodePublicVisible(UUID bidId, String firebaseUid, boolean visible) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         if (!currentUser.getId().equals(bid.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut publier le code de confirmation");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-l-expediteur-peut-publier-le-code-de");
         }
 
         if (bid.getConfirmationCode() == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
-                    "Code Not Generated",
-                    "Le code de confirmation n'est pas encore disponible — le voyageur doit d'abord scanner le départ");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated", "problem.code-not-generated.le-code-de-confirmation-n-est-pas-encore");
         }
 
         bid.setConfirmationCodePublicEnabled(visible);
@@ -739,34 +677,26 @@ public class TrackingService {
         // « code-blocked » et non « too-many-attempts » : ce dernier est partagé avec les
         // OTP, dont le texte app (« patientez quelques minutes ») ne s'applique pas ici —
         // attendre ne débloque rien, seul un nouveau code de l'expéditeur le fait.
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-blocked",
-                "Code Blocked",
-                "Trop d'essais incorrects : ce code est bloqué. Demandez à l'expéditeur d'en générer un nouveau dans l'app");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-blocked", "problem.code-blocked");
     }
 
     @Transactional
     public ConfirmCodeResponse refreshConfirmationCode(UUID bidId, String firebaseUid) {
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         UserEntity currentUser = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         if (!currentUser.getId().equals(bid.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul l'expéditeur peut régénérer le code de confirmation");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-l-expediteur-peut-regenerer-le-code-de");
         }
 
         if (bid.getStatus() != BidStatus.ACCEPTED
                 && bid.getStatus() != BidStatus.HANDED_OVER
                 && bid.getStatus() != BidStatus.IN_TRANSIT
                 && bid.getStatus() != BidStatus.ARRIVED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted",
-                    "Bid Not Accepted", "Ce colis ne peut pas recevoir un nouveau code dans son état actuel");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted", "problem.bid-not-accepted.ce-colis-ne-peut-pas-recevoir-un-nouveau");
         }
 
         // Code absent ET colis pas encore remis : le DEPART n'a pas été scanné, il n'y a
@@ -776,9 +706,7 @@ public class TrackingService {
         // (un second scan DEPART est refusé, et processScan ne génère un code que depuis
         // ACCEPTED).
         if (bid.getConfirmationCode() == null && bid.getStatus() == BidStatus.ACCEPTED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
-                    "Code Not Generated",
-                    "Le code de confirmation n'est pas encore disponible — le voyageur doit d'abord scanner le départ");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated", "problem.code-not-generated.le-code-de-confirmation-n-est-pas-encore");
         }
 
         // Rate-limit : 5 régénérations maximum par fenêtre de 24h glissante
@@ -786,9 +714,7 @@ public class TrackingService {
         LocalDateTime windowStart = bid.getConfirmationCodeRefreshWindowStart();
         if (windowStart != null && windowStart.isAfter(now.minusHours(24))) {
             if (bid.getConfirmationCodeRefreshCount() >= MAX_CODE_REFRESHES_PER_DAY) {
-                throw new YadonyBusinessException(HttpStatus.TOO_MANY_REQUESTS, "too-many-refreshes",
-                        "Too Many Refreshes",
-                        "Limite atteinte : 5 régénérations par 24h. Patientez avant de réessayer.");
+                throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "too-many-refreshes", "problem.too-many-refreshes");
             }
             bid.setConfirmationCodeRefreshCount(bid.getConfirmationCodeRefreshCount() + 1);
         } else {
@@ -797,9 +723,7 @@ public class TrackingService {
         }
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         String newCode = com.yadony.api.matching.PickupCodes.newCode();
         LocalDateTime newExpiry = com.yadony.api.matching.ArrivalRules.renewedPickupCodeExpiry(announcement);
@@ -827,31 +751,23 @@ public class TrackingService {
         // ni CANCELLED et versé.
         bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Bid Not Found",
-                        "Transaction introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
 
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found",
-                        "Annonce introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found",
-                        "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
 
         if (!announcement.getTravelerId().equals(traveler.getId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Seul le voyageur de cette annonce peut confirmer la livraison");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.seul-le-voyageur-de-cette-annonce-peut-confirmer");
         }
 
         if (bid.getStatus() != BidStatus.ACCEPTED
                 && bid.getStatus() != BidStatus.HANDED_OVER
                 && bid.getStatus() != BidStatus.IN_TRANSIT
                 && bid.getStatus() != BidStatus.ARRIVED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted",
-                    "Bid Not Accepted", "Ce colis ne peut pas être confirmé dans son état actuel");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-not-accepted", "problem.bid-not-accepted.ce-colis-ne-peut-pas-etre-confirme-dans");
         }
 
         // Avant toute lecture du code : un essai avant le départ ne consomme aucune
@@ -863,13 +779,9 @@ public class TrackingService {
             // Renvoyer le voyageur vers le scan DEPART, déjà fait, le laissait sans issue
             // (FLUTTER-G1) : seul l'expéditeur peut en générer un nouveau.
             if (bid.getStatus() != BidStatus.ACCEPTED) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-blocked",
-                        "Code Blocked",
-                        "Aucun code de retrait valide : demandez à l'expéditeur d'en générer un nouveau dans l'app");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-blocked", "problem.code-blocked.aucun-code-de-retrait-valide-demandez-a-l");
             }
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated",
-                    "Code Not Generated",
-                    "Le code de confirmation n'est pas encore disponible — scannez d'abord le départ du colis");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-not-generated", "problem.code-not-generated.le-code-de-confirmation-n-est-pas-encore2");
         }
 
         if (bid.getConfirmationCodeExpiry() != null
@@ -879,9 +791,7 @@ public class TrackingService {
             bid.setConfirmationCodeAttempts(0);
             bid.setConfirmationCodePublicEnabled(false);
             bidRepository.save(bid);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-expired",
-                    "Code Expired",
-                    "Le code de confirmation a expiré — demandez à l'expéditeur de vous partager un nouveau code");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-expired", "problem.code-expired.le-code-de-confirmation-a-expire-demandez-a");
         }
 
         // Ligne héritée : compteur déjà au maximum avec un code encore présent (avant
@@ -901,9 +811,7 @@ public class TrackingService {
                 throw tooManyAttempts();
             }
             bidRepository.save(bid);
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "code-incorrect",
-                    "Code Incorrect",
-                    "Code incorrect — " + remaining + " tentative(s) restante(s)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "code-incorrect", "problem.code-incorrect.code-incorrect-tentative-s-restante-s", String.valueOf(remaining));
         }
 
         // Validée avant de consommer le code : une clé rejetée ne doit pas
@@ -966,9 +874,8 @@ public class TrackingService {
                 traveler.getId(), Map.of(
                         "bidId", bid.getId().toString(),
                         "bidStatus", bid.getStatus().name()));
-        throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, TRIP_NOT_DEPARTED,
-                "Trip Not Departed",
-                messagesResolver.forRequest().get("problem.trip-not-departed"));
+        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, TRIP_NOT_DEPARTED,
+                "problem.trip-not-departed.resolved", messagesResolver.forRequest().get("problem.trip-not-departed"));
     }
 
     /**
@@ -981,17 +888,13 @@ public class TrackingService {
     private void assertTrackingNumberOnDepart(BidEntity bid, String provided, ScanMethod scanMethod) {
         if (provided == null || provided.isBlank()) {
             if (requireNumberOnDepart && scanMethod != ScanMethod.QR) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-required",
-                        "Tracking Number Required",
-                        "Saisissez le numéro de suivi du colis, donné par l'expéditeur");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-required", "problem.tracking-number-required");
             }
             return;
         }
         String expected = bid.getTrackingNumber();
         if (expected == null || !expected.equalsIgnoreCase(provided.trim())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-mismatch",
-                    "Tracking Number Mismatch",
-                    "Ce numéro de suivi ne correspond pas à ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "tracking-number-mismatch", "problem.tracking-number-mismatch");
         }
     }
 
@@ -1012,9 +915,7 @@ public class TrackingService {
             MatrixToImageWriter.writeToStream(matrix, "PNG", out);
             return Base64.getEncoder().encodeToString(out.toByteArray());
         } catch (Exception e) {
-            throw new YadonyBusinessException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, "qr-generation-error", "QR Generation Error",
-                    "Erreur lors de la génération du QR code");
+            throw YadonyBusinessException.localized(HttpStatus.INTERNAL_SERVER_ERROR, "qr-generation-error", "problem.qr-generation-error");
         }
     }
 }

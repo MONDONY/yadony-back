@@ -17,7 +17,6 @@ public final class PaymentBusy {
     }
 
     public static YadonyBusinessException exception() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, CODE, "Payment Busy",
-                "Paiement en cours de validation, réessayez dans un instant");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, CODE, "problem.payment-busy");
     }
 }

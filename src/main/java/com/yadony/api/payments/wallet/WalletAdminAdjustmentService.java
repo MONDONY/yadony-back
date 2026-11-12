@@ -209,8 +209,7 @@ public class WalletAdminAdjustmentService {
         WalletAdjustmentRequestEntity request = requestRepository.findById(requestId)
                 .orElseThrow(WalletAdminAdjustmentService::requestNotFound);
         if (request.getRequestedBy().equals(approverId)) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "wallet-adjustment-self-approval", "Forbidden",
-                    "Une correction doit être approuvée par un autre admin que son auteur");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "wallet-adjustment-self-approval", "problem.wallet-adjustment-self-approval");
         }
         if (requestRepository.claim(requestId, WalletAdjustmentRequestStatus.APPROVED, approverId,
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC), null) == 0) {
@@ -236,8 +235,7 @@ public class WalletAdminAdjustmentService {
         requestRepository.findById(requestId).orElseThrow(WalletAdminAdjustmentService::requestNotFound);
         String trimmed = note == null || note.isBlank() ? null : note.trim();
         if (trimmed != null && trimmed.length() > REASON_MAX_LENGTH) {
-            throw badRequest("wallet-adjustment-note-invalid",
-                    "La note ne doit pas dépasser " + REASON_MAX_LENGTH + " caractères");
+            throw badRequest("wallet-adjustment-note-invalid", "problem.wallet-adjustment-note-invalid", String.valueOf(REASON_MAX_LENGTH));
         }
         if (requestRepository.claim(requestId, WalletAdjustmentRequestStatus.REJECTED, adminId,
                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC), trimmed) == 0) {
@@ -286,19 +284,12 @@ public class WalletAdminAdjustmentService {
             throw WalletService.externalRefundHeld();
         }
         if (walletService.isRefundRequestPending(userId, code)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
-                    "Unprocessable", "Solde gelé : une demande de remboursement est en cours sur cette devise");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending", "problem.topup-code.balance-frozen");
         }
 
         BigDecimal balanceBefore = wallet.getBalance();
         if (direction == WalletAdjustmentDirection.DEBIT && balanceBefore.compareTo(amount) < 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "insufficient-wallet-balance",
-                    "Solde insuffisant",
-                    "Solde disponible : " + WalletAmountText.format(balanceBefore, code)
-                            + ", montant à débiter : " + WalletAmountText.format(amount, code),
-                    Map.of("availableBalance", plain(balanceBefore, currency),
-                            "requiredAmount", plain(amount, currency),
-                            "currency", code));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "insufficient-wallet-balance", "problem.insufficient-wallet-balance", Map.of("availableBalance", plain(balanceBefore, currency), "requiredAmount", plain(amount, currency), "currency", code), String.valueOf(WalletAmountText.format(balanceBefore, code)), String.valueOf(WalletAmountText.format(amount, code)));
         }
         BigDecimal balanceAfter = direction == WalletAdjustmentDirection.CREDIT
                 ? balanceBefore.add(amount)
@@ -360,13 +351,7 @@ public class WalletAdminAdjustmentService {
         BigDecimal byAdmin = eurTotal(transactionRepository.sumAdjustmentsByAdmin(ADJUSTMENT_TYPES, actorId, since));
         BigDecimal forUser = eurTotal(transactionRepository.sumAdjustmentsForUser(ADJUSTMENT_TYPES, userId, since));
         if (byAdmin.add(eur).compareTo(DAILY_CAP_EUR) > 0 || forUser.add(eur).compareTo(DAILY_CAP_EUR) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-adjustment-daily-cap-exceeded",
-                    "Unprocessable", "Les corrections ne peuvent pas dépasser 500 € d'équivalent sur 24 h, "
-                            + "par admin et par utilisateur",
-                    Map.of("capEur", DAILY_CAP_EUR.toPlainString(),
-                            "adminTotalEur", byAdmin.setScale(2, RoundingMode.HALF_UP).toPlainString(),
-                            "userTotalEur", forUser.setScale(2, RoundingMode.HALF_UP).toPlainString(),
-                            "eurEquivalent", eur.setScale(2, RoundingMode.HALF_UP).toPlainString()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-adjustment-daily-cap-exceeded", "problem.wallet-adjustment-daily-cap-exceeded", Map.of("capEur", DAILY_CAP_EUR.toPlainString(), "adminTotalEur", byAdmin.setScale(2, RoundingMode.HALF_UP).toPlainString(), "userTotalEur", forUser.setScale(2, RoundingMode.HALF_UP).toPlainString(), "eurEquivalent", eur.setScale(2, RoundingMode.HALF_UP).toPlainString()));
         }
     }
 
@@ -392,9 +377,7 @@ public class WalletAdminAdjustmentService {
             walletService.getOrCreate(userId, code);
         }
         return accountRepository.findByUserIdAndCurrencyForUpdate(userId, code)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "wallet-account-not-found", "Unprocessable",
-                        "Aucun portefeuille dans cette devise : rien à débiter", Map.of("currency", code)));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-account-not-found", "problem.wallet-account-not-found", Map.of("currency", code)));
     }
 
     /**
@@ -425,10 +408,7 @@ public class WalletAdminAdjustmentService {
         // Sans taux pour la devise, ExchangeRateService lève 422 exchange-rate-missing.
         BigDecimal eur = "EUR".equals(code) ? amount : exchangeRateService.toEurPivot(amount, code);
         if (eur.compareTo(CAP_EUR) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-adjustment-cap-exceeded",
-                    "Unprocessable", "Une correction ne peut pas dépasser 500 € d'équivalent par opération",
-                    Map.of("capEur", CAP_EUR.toPlainString(), "eurEquivalent", eur.toPlainString(),
-                            "currency", code));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-adjustment-cap-exceeded", "problem.wallet-adjustment-cap-exceeded", Map.of("capEur", CAP_EUR.toPlainString(), "eurEquivalent", eur.toPlainString(), "currency", code));
         }
         return eur;
     }
@@ -457,25 +437,22 @@ public class WalletAdminAdjustmentService {
     }
 
     private static YadonyBusinessException requestNotFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "wallet-adjustment-request-not-found", "Not Found",
-                "Demande de correction introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "wallet-adjustment-request-not-found", "problem.wallet-adjustment-request-not-found");
     }
 
     private static YadonyBusinessException alreadyDecided() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "wallet-adjustment-request-already-decided",
-                "Conflict", "Cette demande a déjà été approuvée ou rejetée");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "wallet-adjustment-request-already-decided", "problem.wallet-adjustment-request-already-decided");
     }
 
     // ── Validation ───────────────────────────────────────────────────────────
 
     private static String validKey(String key) {
         if (key == null || key.isBlank()) {
-            throw badRequest("idempotency-key-required", "L'en-tête Idempotency-Key est obligatoire");
+            throw badRequest("idempotency-key-required", "problem.idempotency-key-required");
         }
         String trimmed = key.trim();
         if (trimmed.length() > KEY_MAX_LENGTH) {
-            throw badRequest("idempotency-key-invalid",
-                    "L'en-tête Idempotency-Key ne doit pas dépasser " + KEY_MAX_LENGTH + " caractères");
+            throw badRequest("idempotency-key-invalid", "problem.idempotency-key-invalid", String.valueOf(KEY_MAX_LENGTH));
         }
         return trimmed;
     }
@@ -488,13 +465,13 @@ public class WalletAdminAdjustmentService {
                 }
             }
         }
-        throw badRequest("wallet-adjustment-direction-invalid", "Le sens doit valoir CREDIT ou DEBIT");
+        throw badRequest("wallet-adjustment-direction-invalid", "problem.wallet-adjustment-direction-invalid");
     }
 
     private static SupportedCurrency validCurrency(String currency) {
         SupportedCurrency supported = SupportedCurrency.fromCode(currency);
         if (supported == null) {
-            throw badRequest("wallet-adjustment-currency-unsupported", "Devise non prise en charge");
+            throw badRequest("wallet-adjustment-currency-unsupported", "problem.wallet-adjustment-currency-unsupported");
         }
         return supported;
     }
@@ -502,8 +479,7 @@ public class WalletAdminAdjustmentService {
     private static String validReason(String reason) {
         String trimmed = reason == null ? "" : reason.trim();
         if (trimmed.length() < REASON_MIN_LENGTH || trimmed.length() > REASON_MAX_LENGTH) {
-            throw badRequest("wallet-adjustment-reason-invalid",
-                    "Le motif doit faire entre " + REASON_MIN_LENGTH + " et " + REASON_MAX_LENGTH + " caractères");
+            throw badRequest("wallet-adjustment-reason-invalid", "problem.wallet-adjustment-reason-invalid", String.valueOf(REASON_MIN_LENGTH), String.valueOf(REASON_MAX_LENGTH));
         }
         return trimmed;
     }
@@ -515,9 +491,7 @@ public class WalletAdminAdjustmentService {
     private static BigDecimal validAmount(BigDecimal amount, SupportedCurrency currency) {
         if (amount == null || amount.signum() <= 0
                 || amount.stripTrailingZeros().scale() > currency.minorUnit()) {
-            throw badRequest("wallet-adjustment-amount-invalid",
-                    "Le montant doit être positif, avec au plus " + currency.minorUnit() + " décimale(s) en "
-                            + currency.name());
+            throw badRequest("wallet-adjustment-amount-invalid", "problem.wallet-adjustment-amount-invalid", String.valueOf(currency.minorUnit()), String.valueOf(currency.name()));
         }
         return amount;
     }
@@ -526,13 +500,12 @@ public class WalletAdminAdjustmentService {
         return value.setScale(currency.minorUnit(), RoundingMode.HALF_UP).toPlainString();
     }
 
-    private static YadonyBusinessException badRequest(String code, String detail) {
-        return new YadonyBusinessException(HttpStatus.BAD_REQUEST, code, "Bad Request", detail);
+    private static YadonyBusinessException badRequest(String code, String key, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, code, key, args);
     }
 
     private static YadonyBusinessException conflict() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "wallet-adjustment-idempotency-conflict",
-                "Conflict", "Cette clé d'idempotence a déjà servi à une autre correction");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "wallet-adjustment-idempotency-conflict", "problem.wallet-adjustment-idempotency-conflict");
     }
 
     // ── Lecture ──────────────────────────────────────────────────────────────
@@ -594,7 +567,7 @@ public class WalletAdminAdjustmentService {
         try {
             return WalletTransactionType.valueOf(type.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw badRequest("wallet-transaction-type-invalid", "Type de mouvement inconnu : " + type.trim());
+            throw badRequest("wallet-transaction-type-invalid", "problem.wallet-transaction-type-invalid", String.valueOf(type.trim()));
         }
     }
 }

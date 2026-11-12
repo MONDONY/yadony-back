@@ -446,8 +446,7 @@ public class WalletCommissionCollector {
         }
         String code = normalize(fundingCurrency);
         if (SupportedCurrency.fromCode(code) == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "funding-currency-invalid",
-                    "Invalid Funding Currency", "Devise de prélèvement inconnue");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "funding-currency-invalid", "problem.funding-currency-invalid");
         }
         return code;
     }

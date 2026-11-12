@@ -18,8 +18,7 @@ public final class PawapayErrors {
 
     /** 422 : le rail est coupé ({@code yadony.pawapay.enabled=false}), aucun nouveau mouvement d'argent. */
     public static YadonyBusinessException disabled() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled",
-                "Mobile Money Disabled", "Le mobile money n'est pas encore disponible.");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-disabled", "problem.mobile-money-disabled");
     }
 
     /**
@@ -30,8 +29,7 @@ public final class PawapayErrors {
      * les recharges dont la garde {@code topup_guard} n'a pas été libérée après 15 min).
      */
     public static YadonyBusinessException walletTopupAlreadyPending() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "topup-already-pending",
-                "Topup Already Pending", "Une recharge est déjà en attente de validation sur votre téléphone.");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "topup-already-pending", "problem.topup-already-pending");
     }
 
     /**
@@ -39,9 +37,7 @@ public final class PawapayErrors {
      * dans les deux cas ce n'est pas la faute de l'utilisateur, donc jamais un 422 métier.
      */
     public static YadonyBusinessException providerUnavailable() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable",
-                "Mobile Money Provider Unavailable",
-                "Le service mobile money ne répond pas. Réessayez dans quelques instants.");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "mobile-money-provider-unavailable", "problem.mobile-money-provider-unavailable");
     }
 
     /**

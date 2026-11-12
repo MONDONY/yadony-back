@@ -44,7 +44,6 @@ public class WalletTopupCodeController {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return userRepository.findByFirebaseUid((String) auth.getPrincipal())
                 .map(UserEntity::getId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Utilisateur introuvable", ""));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.title-only"));
     }
 }

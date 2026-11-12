@@ -157,8 +157,7 @@ public class PaymentStripeResyncService {
         PaymentEntity initial = load(paymentId);
         String piId = initial.getStripePaymentIntentId();
         if (initial.getRail() != PaymentRail.STRIPE || piId == null || piId.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "not-a-card-payment",
-                    "Not A Card Payment", "Ce paiement n'a pas de PaymentIntent Stripe : rien à resynchroniser");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "not-a-card-payment", "problem.not-a-card-payment");
         }
 
         PaymentIntent pi = retrieve(piId);
@@ -200,10 +199,7 @@ public class PaymentStripeResyncService {
                             "capture du séquestre impossible (" + e.getMessage() + ")", source);
                 }
                 if (!alreadyChanged) {
-                    throw new YadonyBusinessException(HttpStatus.CONFLICT, "escrow-capture-failed",
-                            "Escrow Capture Failed",
-                            "Capture impossible (" + e.getMessage() + ") : rien n'a été écrit, "
-                                    + "le paiement reste en séquestre");
+                    throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "escrow-capture-failed", "problem.escrow-capture-failed", String.valueOf(e.getMessage()));
                 }
                 // Le passage en séquestre est commité et juste : seule la capture reste à faire.
                 captureFailed = true;
@@ -261,8 +257,7 @@ public class PaymentStripeResyncService {
 
     private PaymentEntity load(UUID paymentId) {
         return paymentRepository.findById(paymentId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "payment-not-found",
-                        "Not Found", "Paiement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "payment-not-found", "problem.payment-not-found"));
     }
 
     /** Alignement local, dans la transaction courte, sur l'entité relue après l'appel Stripe. */
@@ -363,10 +358,7 @@ public class PaymentStripeResyncService {
                         }
                         return new Step(Action.ALREADY_IN_SYNC, "Séquestre capturé : base déjà à jour", false);
                     }
-                    case "canceled" -> throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                            "authorization-expired", "Authorization Expired",
-                            "L'autorisation carte a expiré ou a été annulée chez Stripe : plus rien à capturer. "
-                                    + "Le paiement reste en séquestre, à rembourser ou à trancher à la main");
+                    case "canceled" -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "authorization-expired", "problem.authorization-expired");
                     default -> throw unsupported(payment, stripeStatus);
                 }
             }
@@ -409,28 +401,22 @@ public class PaymentStripeResyncService {
     }
 
     private static YadonyBusinessException notFound(String piId) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "payment-intent-not-found",
-                "Payment Intent Not Found", "PaymentIntent " + piId + " introuvable chez Stripe : rien n'a été écrit");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-intent-not-found", "problem.payment-intent-not-found.paymentintent-introuvable-chez-stripe-rien-n-a-ete", String.valueOf(piId));
     }
 
     private static YadonyBusinessException stripeUnavailable(StripeException e) {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-unavailable", "Stripe Error",
-                "Stripe n'a pas pu être interrogé (" + e.getMessage() + ") : réessayer plus tard");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-unavailable", "problem.stripe-unavailable", String.valueOf(e.getMessage()));
     }
 
     private static YadonyBusinessException unsupported(PaymentEntity payment, String stripeStatus) {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "resync-not-supported", "Resync Not Supported",
-                "Écart non géré automatiquement : base " + payment.getStatus() + ", Stripe " + stripeStatus
-                        + ". Rien n'a été écrit, à trancher à la main");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "resync-not-supported", "problem.resync-not-supported", String.valueOf(payment.getStatus()), String.valueOf(stripeStatus));
     }
 
     private static void requireSameAmount(PaymentEntity payment, PaymentIntent pi) {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(payment.getCurrency());
         long expected = CurrencyAmount.of(payment.getAmount(), currency).minor();
         if (pi.getAmount() == null || pi.getAmount() != expected || !currency.code().equalsIgnoreCase(pi.getCurrency())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "amount-mismatch", "Amount Mismatch",
-                    "Montant Stripe " + pi.getAmount() + " " + pi.getCurrency() + " différent du montant attendu "
-                            + expected + " " + currency.code() + " : rien n'a été écrit, à trancher à la main");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amount-mismatch", "problem.amount-mismatch.montant-stripe-different-du-montant-attendu-rien-n", String.valueOf(pi.getAmount()), String.valueOf(pi.getCurrency()), String.valueOf(expected), String.valueOf(currency.code()));
         }
     }
 

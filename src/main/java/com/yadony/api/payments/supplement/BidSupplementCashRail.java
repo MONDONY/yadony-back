@@ -170,8 +170,8 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
     private YadonyBusinessException unfunded(UUID travelerId, CommissionSplit split, String bidCurrency,
                                              String complement, BigDecimal commission) {
         boolean hasCard = users.findById(travelerId).map(u -> u.getCommissionPaymentMethodId() != null).orElse(false);
-        return CommissionUnfundedProblem.of("supplement-commission-unfunded", "Supplement Commission Unfunded",
-                "Votre solde ne couvre pas la commission de ce supplément : rechargez-le ou payez par carte",
+        return CommissionUnfundedProblem.of("supplement-commission-unfunded",
+                "problem.supplement-commission-unfunded",
                 split, bidCurrency, complement, commission, hasCard,
                 collector.alternatives(travelerId, bidCurrency, complement, commission));
     }
