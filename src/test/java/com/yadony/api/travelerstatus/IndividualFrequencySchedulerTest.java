@@ -112,7 +112,8 @@ class IndividualFrequencySchedulerTest {
         assertThat(store).singleElement().satisfies(f -> {
             assertThat(f.getUserId()).isEqualTo(userId);
             assertThat(f.getTripsCount()).isEqualTo(5);
-            assertThat(f.getWindowDays()).isEqualTo(30);
+            // Période du compte : jours du mois civil de la détection (novembre 2026 = 30).
+            assertThat(f.getWindowDays()).isEqualTo(java.time.YearMonth.from(f.getDetectedAt()).lengthOfMonth());
             assertThat(f.getThreshold()).isEqualTo(4);
             assertThat(f.isWeeklyApplication()).isFalse();
             assertThat(f.getDetectedAt()).isEqualTo(LocalDateTime.ofInstant(DAY0, ZoneOffset.UTC));

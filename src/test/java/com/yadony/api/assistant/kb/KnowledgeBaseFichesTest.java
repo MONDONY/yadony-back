@@ -179,8 +179,10 @@ class KnowledgeBaseFichesTest {
                 .findFirst().orElseThrow();
         KbArticle en = corpus.articles("en").stream().filter(x -> x.id().equals("statut-voyageur"))
                 .findFirst().orElseThrow();
-        assertThat(fr.body()).contains("Confirmez votre statut", "Rien n'est bloqué");
-        assertThat(en.body()).contains("Confirm your status", "Nothing is blocked");
+        assertThat(fr.body()).contains("Confirmez votre statut", "Rien n'est bloqué", "plus de 4 trajets dans le mois civil");
+        assertThat(fr.body()).doesNotContain("souvent avec des colis");
+        assertThat(en.body()).contains("Confirm your status", "Nothing is blocked", "more than 4 trips in a calendar month");
+        assertThat(en.body()).doesNotContain("often travel with parcels");
         assertThat(fr.body().length()).isLessThanOrEqualTo(2000);
         assertThat(en.body().length()).isLessThanOrEqualTo(2000);
     }

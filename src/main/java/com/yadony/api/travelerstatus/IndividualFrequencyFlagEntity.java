@@ -21,7 +21,7 @@ public class IndividualFrequencyFlagEntity extends BaseEntity {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
-    /** Trajets distincts avec une réservation acceptée ou plus avancée, sur la fenêtre. */
+    /** Trajets publiés dans le mois civil de la détection (brouillons, annulés et retirés exclus). */
     @Column(name = "trips_count", nullable = false)
     private int tripsCount;
 
