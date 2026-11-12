@@ -10,6 +10,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.messaging.dto.ConversationResponse;
 import com.yadony.api.auth.KycStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -667,5 +668,53 @@ class ConversationServiceTest {
 
         assertThat(service.toResponse(conv, senderId).notificationsMuted()).isTrue();
         assertThat(service.toResponse(conv, travelerId).notificationsMuted()).isFalse();
+    }
+    @Test
+    void toResponse_portsTripTransportModeFromAnnouncement() {
+        UUID announcementId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        bid.setSenderId(senderId);
+        bid.setAnnouncementId(announcementId);
+        bid.setStatus(BidStatus.ACCEPTED);
+        com.yadony.api.matching.AnnouncementEntity announcement =
+                new com.yadony.api.matching.AnnouncementEntity();
+        announcement.setTravelerId(travelerId);
+        announcement.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        lenient().when(firestoreService.getConversationMeta(any())).thenReturn(Map.of());
+
+        ConversationResponse response = service.toResponse(conv, senderId);
+
+        assertThat(response.tripTransportMode()).isEqualTo("BOAT");
+    }
+
+    @Test
+    void toResponse_tripTransportModeNullWithoutBid() {
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.empty());
+        lenient().when(firestoreService.getConversationMeta(any())).thenReturn(Map.of());
+
+        assertThat(service.toResponse(conv, senderId).tripTransportMode()).isNull();
+    }
+
+    @Test
+    void toResponse_tripTransportModeNullWhenAnnouncementHasNoMode() {
+        UUID announcementId = UUID.randomUUID();
+        BidEntity bid = new BidEntity();
+        bid.setSenderId(senderId);
+        bid.setAnnouncementId(announcementId);
+        bid.setStatus(BidStatus.ACCEPTED);
+        com.yadony.api.matching.AnnouncementEntity announcement =
+                new com.yadony.api.matching.AnnouncementEntity();
+        announcement.setTravelerId(travelerId);
+        announcement.setTransportMode(null);
+        ConversationEntity conv = new ConversationEntity(bidId, senderId, travelerId, "conv_" + bidId);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
+        lenient().when(firestoreService.getConversationMeta(any())).thenReturn(Map.of());
+
+        assertThat(service.toResponse(conv, senderId).tripTransportMode()).isNull();
     }
 }

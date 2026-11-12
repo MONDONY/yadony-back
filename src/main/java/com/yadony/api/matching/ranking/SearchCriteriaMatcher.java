@@ -52,10 +52,11 @@ public final class SearchCriteriaMatcher {
             out.add(new UnmetCriterion("MAX_AVAILABLE_KG", plain(c.maxAvailableKg()), plain(kg)));
         }
 
-        // TRANSPORT_MODE : valeur invalide ignorée, comme dans la recherche SQL
+        // TRANSPORT_MODE : valeur invalide ignorée, comme dans la recherche SQL ; la route couvre
+        // voiture et bus (TransportMode.accepts, comme hasTransportMode)
         if (c.transportMode() != null && !c.transportMode().isBlank()) {
             TransportMode wanted = parseMode(c.transportMode());
-            if (wanted != null && wanted != a.transportMode()) {
+            if (wanted != null && !TransportMode.accepts(wanted, a.transportMode())) {
                 out.add(new UnmetCriterion("TRANSPORT_MODE", wanted.name(),
                         a.transportMode() == null ? "" : a.transportMode().name()));
             }

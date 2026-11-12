@@ -301,7 +301,9 @@ public class ReceptionService {
                 sender != null ? sender.getId() : null,
                 sender != null ? storageService.avatarUrl(sender.getAvatarUrl()) : null,
                 canRate,
-                myRating);
+                myRating,
+                announcement != null && announcement.getTransportMode() != null
+                        ? announcement.getTransportMode().name() : null);
     }
 
     /** Dernière modification visible : le colis avance, ou le destinataire a répondu. */

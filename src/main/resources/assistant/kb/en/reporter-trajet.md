@@ -7,6 +7,6 @@ routes:
     label: My trips
 ---
 If your flight is canceled, your transport breaks down or your trip is postponed, open the trip in My trips then tap "Reschedule".
-Choose the new departure date, the reason (Flight canceled, Trip postponed or Other reason; if your transport is canceled or breaks down, choose Trip postponed or Other reason) and, if you like, a message to senders.
+Choose the new departure date, the reason and, if you like, a message to senders. The first reason follows the trip's mode: "Flight canceled" (air), "Breakdown or setback" (road) or "Transport canceled" (other modes, such as boat when it is offered). The other two are "Trip postponed" and "Other reason".
 Senders whose parcel is accepted can keep it or cancel at no cost.
 A trip can be rescheduled twice at most, and no longer once a parcel is on its way, arrived or delivered.
