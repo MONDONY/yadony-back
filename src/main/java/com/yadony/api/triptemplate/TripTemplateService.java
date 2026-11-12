@@ -134,6 +134,7 @@ public class TripTemplateService {
         TransportMode mode = TransportMode.parse(r.transportMode());
         transportModeGuard.assertTripModeAllowed(mode,
                 TransportMode.parseOrNull(entity.getTransportMode()));
+        transportModeGuard.assertTemplateModeSupported(mode);
         // Durée et capacité du mode, refusées avant toute écriture : une durée au-delà du mode
         // ferait échouer en silence chaque trajet publié depuis ce modèle.
         ArrivalRules.assertOffsetWithinMode(r.arrivalDayOffset(), mode);

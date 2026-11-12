@@ -277,10 +277,6 @@ class BoatSchemaIT {
         return id;
     }
 
-    private static UUID insertRequest(Integer l, Integer w, Integer h) throws SQLException {
-        return insertRequest(l, w, h, null);
-    }
-
     private static UUID seedBid(UUID announcementId, UUID senderId) throws SQLException {
         UUID id = UUID.randomUUID();
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""

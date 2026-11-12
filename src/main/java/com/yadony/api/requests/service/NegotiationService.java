@@ -1024,6 +1024,7 @@ public class NegotiationService {
                 ? request.getTransportMode()
                 : (req.transportMode() != null ? req.transportMode() : com.yadony.api.matching.TransportMode.PLANE);
         transportModeGuard.assertTripModeAllowed(mode, null);
+        transportModeGuard.assertBoatCarrierAllowed(mode, null, traveler);
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
                 req.arrivalDate(), req.arrivalTime(), mode);
         ann.setArrivalDate(req.arrivalDate());

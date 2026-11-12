@@ -990,6 +990,9 @@ public class AnnouncementService {
         // du mode : la récurrence a passé la garde à sa création, ses trajets continuent de sortir.
         transportModeGuard.assertTripModeAllowed(request.transportMode(),
                 recurrenceId != null ? request.transportMode() : null);
+        // Puis le profil : le bateau est réservé aux transporteurs vérifiés (GP Pro ou compte PRO).
+        transportModeGuard.assertBoatCarrierAllowed(request.transportMode(),
+                recurrenceId != null ? request.transportMode() : null, user);
 
         // D4 : voyageur suspendu de publication (retour de colis non rendu, décision admin).
         // S'applique aussi bien à un brouillon qu'à une publication directe.
@@ -1585,6 +1588,8 @@ public class AnnouncementService {
         final com.yadony.api.matching.TransportMode oldTransportMode = announcement.getTransportMode();
         // Un trajet bateau déjà en base reste modifiable interrupteur éteint ; y passer ne l'est pas.
         transportModeGuard.assertTripModeAllowed(request.transportMode(), oldTransportMode);
+        // Passer à bateau demande le profil vérifié ; un trajet qui reste bateau n'est pas recontrôlé.
+        transportModeGuard.assertBoatCarrierAllowed(request.transportMode(), oldTransportMode, user);
         final String oldCurrency = announcement.getCurrency();
         final String newCurrency = resolveCurrencyOnUpdate(announcement, request.currency(), user.getId());
         final boolean currencyChanged = !newCurrency.equalsIgnoreCase(oldCurrency);
@@ -1842,6 +1847,8 @@ public class AnnouncementService {
                 && com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(announcement.getPublishedAt())
                         .equals(com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(
                                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
+        // Un brouillon bateau ne sort que d'un compte encore vérifié (badge retiré depuis la création).
+        transportModeGuard.assertBoatCarrierAllowed(announcement.getTransportMode(), null, user);
         assertCanPublish(user, !alreadyCountedThisMonth);
         assertStripeCapability(user, announcement.getAcceptedPaymentMethods());
 

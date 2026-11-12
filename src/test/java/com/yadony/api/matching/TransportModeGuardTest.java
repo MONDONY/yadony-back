@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.auth.UserEntity;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.Test;
@@ -14,7 +15,7 @@ import static org.mockito.Mockito.when;
 class TransportModeGuardTest {
 
     private final PlatformSettingsService settings = mock(PlatformSettingsService.class);
-    private final TransportModeGuard guard = new TransportModeGuard(settings);
+    private final TransportModeGuard guard = new TransportModeGuard(settings, new BoatCarrierPolicy());
 
     private void roadAndBoat(boolean road, boolean boat) {
         when(settings.transportRoadEnabled()).thenReturn(road);
@@ -121,5 +122,54 @@ class TransportModeGuardTest {
             guard.assertRequestModeAllowed(TransportMode.TRAIN);
             guard.assertRequestModeAllowed(TransportMode.OTHER);
         }).doesNotThrowAnyException();
+    }
+
+    private static UserEntity user(boolean gpPro, boolean pro) {
+        UserEntity u = new UserEntity();
+        u.setGpPro(gpPro);
+        u.setProAccount(pro);
+        return u;
+    }
+
+    @Test
+    void boatCarrier_kycOnly_forbidden() {
+        assertThatThrownBy(() -> guard.assertBoatCarrierAllowed(TransportMode.BOAT, null, user(false, false)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-carrier-not-verified");
+                    assertThat(ex.getMessage()).contains("GP Pro");
+                });
+    }
+
+    @Test
+    void boatCarrier_gpProOrPro_accepted() {
+        assertThatCode(() -> guard.assertBoatCarrierAllowed(TransportMode.BOAT, null, user(true, false)))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> guard.assertBoatCarrierAllowed(TransportMode.BOAT, TransportMode.PLANE, user(false, true)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void boatCarrier_tripKeepingBoat_notRechecked() {
+        assertThatCode(() -> guard.assertBoatCarrierAllowed(TransportMode.BOAT, TransportMode.BOAT, user(false, false)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void boatCarrier_otherModesAndNull_ignored() {
+        assertThatCode(() -> guard.assertBoatCarrierAllowed(TransportMode.PLANE, null, user(false, false)))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> guard.assertBoatCarrierAllowed(null, null, user(false, false)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void template_boat_unsupported422() {
+        assertThatThrownBy(() -> guard.assertTemplateModeSupported(TransportMode.BOAT))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-template-unsupported");
+                });
+        assertThatCode(() -> guard.assertTemplateModeSupported(TransportMode.CAR)).doesNotThrowAnyException();
     }
 }

@@ -107,7 +107,7 @@ class AnnouncementServiceTest {
         transportSettings = org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class);
         org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(true);
         org.mockito.Mockito.lenient().when(transportSettings.transportRoadEnabled()).thenReturn(true);
-        transportModeGuard = new TransportModeGuard(transportSettings);
+        transportModeGuard = new TransportModeGuard(transportSettings, new BoatCarrierPolicy());
         YadonyConfigProperties config = new YadonyConfigProperties(null, null,
                 new YadonyConfigProperties.Urgency(3), null);
         // Pass-through: return the key/URL as-is so avatar URL assertions remain valid
@@ -1096,6 +1096,32 @@ class AnnouncementServiceTest {
                             ex -> assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled"));
 
             verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("bateau + voyageur non vérifié (ni GP Pro ni PRO) → 403 boat-carrier-not-verified, rien d'écrit")
+        void create_boat_unverifiedCarrier_throws403() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest(TransportMode.BOAT)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(ex.getErrorCode()).isEqualTo("boat-carrier-not-verified");
+                    });
+
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("bateau + interrupteur éteint + voyageur non vérifié → 422 transport-mode-disabled (l'interrupteur d'abord)")
+        void create_boat_switchOffAndUnverified_switchWins() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest(TransportMode.BOAT)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled"));
         }
 
         @Test
@@ -2259,6 +2285,24 @@ class AnnouncementServiceTest {
 
             assertThat(result.transportMode()).isEqualTo(TransportMode.BOAT);
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("passer un trajet existant au bateau + voyageur non vérifié → 403 boat-carrier-not-verified")
+        void update_switchToBoat_unverifiedCarrier_throws403() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequestWithMode(TransportMode.BOAT)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(ex.getErrorCode()).isEqualTo("boat-carrier-not-verified");
+                    });
+
+            verify(announcementRepository, never()).save(any());
         }
 
         @Test
@@ -4143,6 +4187,44 @@ class AnnouncementServiceTest {
             // que les events de matching/notifications doivent partir.
             verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.AnnouncementCreatedEvent.class));
             verify(eventPublisher).publishEvent(any(AnnouncementPublishedEvent.class));
+        }
+
+        @Test
+        @DisplayName("brouillon bateau dont le badge a été retiré → 403 boat-carrier-not-verified à la publication")
+        void publishAnnouncement_boatDraft_badgeRemoved_throws403() {
+            UserEntity user = verifiedProUser();
+            user.setProAccount(false);
+            user.setGpPro(false);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTransportMode(TransportMode.BOAT);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(ex.getErrorCode()).isEqualTo("boat-carrier-not-verified");
+                    });
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("brouillon bateau d'un GP Pro → publié")
+        void publishAnnouncement_boatDraft_gpPro_publishes() {
+            UserEntity user = verifiedProUser();
+            user.setProAccount(false);
+            user.setGpPro(true);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTransportMode(TransportMode.BOAT);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID);
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
         }
 
         @Test

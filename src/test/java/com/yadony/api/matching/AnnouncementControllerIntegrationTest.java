@@ -274,7 +274,10 @@ class AnnouncementControllerIntegrationTest {
 
     @Test
     void createAnnouncement_withEachTransportMode_returns201() throws Exception {
-        seedTraveler("uid-test-traveler");
+        // Le bateau est réservé aux transporteurs vérifiés : GP Pro ici.
+        var boatCarrier = seedTraveler("uid-test-traveler");
+        boatCarrier.setGpPro(true);
+        userRepository.save(boatCarrier);
         for (var mode : List.of("PLANE", "CAR", "TRAIN", "BUS", "BOAT", "OTHER")) {
             announcementRepository.deleteAll();
             mockMvc.perform(post("/announcements")
@@ -407,7 +410,9 @@ class AnnouncementControllerIntegrationTest {
 
     @Test
     void searchAnnouncements_returnsTransportModeInResults() throws Exception {
-        seedTraveler("uid-test-traveler");
+        var boatCarrier = seedTraveler("uid-test-traveler");
+        boatCarrier.setGpPro(true);
+        userRepository.save(boatCarrier);
         mockMvc.perform(post("/announcements")
                 .with(authentication(authenticatedAs("uid-test-traveler")))
                 .contentType(MediaType.APPLICATION_JSON)

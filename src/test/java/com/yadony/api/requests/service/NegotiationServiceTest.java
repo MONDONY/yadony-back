@@ -967,6 +967,42 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("trajet dédié bateau d'un voyageur non vérifié → 403 boat-carrier-not-verified, rien d'écrit")
+        void start_dedicatedBoatTrip_unverifiedCarrier_403() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(null);
+            LocalDate departure = request.getDesiredDate();
+            lenient().when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            lenient().when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            lenient().when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            lenient().when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            lenient().when(announcementRepo.findCountryCodeByCityName(anyString())).thenReturn(Optional.empty());
+            doThrow(new YadonyBusinessException(HttpStatus.FORBIDDEN, "boat-carrier-not-verified",
+                "Transport par bateau réservé", "Réservé aux transporteurs vérifiés."))
+                .when(transportModeGuard).assertBoatCarrierAllowed(
+                    eq(com.yadony.api.matching.TransportMode.BOAT), eq(null), eq(traveler));
+            var payload = dedicatedTripPayload(
+                departure, departure, com.yadony.api.matching.TransportMode.BOAT);
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, payload)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-carrier-not-verified");
+                });
+
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any());
+        }
+
+        @Test
         @DisplayName("trajet dédié d'un voyageur GP Pro → annonce créée avec travelerIsGpPro=true")
         void start_dedicatedTrip_copiesGpProOntoAnnouncement() {
             stubDedicatedTripRequestFields();
