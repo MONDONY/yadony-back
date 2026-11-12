@@ -27,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -782,6 +783,205 @@ class MatchingServiceTest {
 
             assertThat(matchingService.findBestMatchByRequestId(travelerId))
                     .containsOnlyKeys(enNegociation.getId());
+        }
+    }
+
+    /**
+     * Lot 2 route (B5) : kilo libre, taille et poids max par colis. Les interrupteurs route et bateau
+     * sont éteints (mocks à false) : le mode est ignoré, seules les nouvelles règles jouent.
+     */
+    @Nested
+    @DisplayName("taille, poids max par colis et kilo libre")
+    class SizeAndParcelWeight {
+
+        private AnnouncementEntity roadTrip(CapacityUnit unit, String availableKg,
+                                            String maxParcelKg, ItemSize maxSize) {
+            activeAnnouncement.setTransportMode(TransportMode.CAR);
+            activeAnnouncement.setCapacityUnit(unit);
+            activeAnnouncement.setAvailableKg(new BigDecimal(availableKg));
+            activeAnnouncement.setMaxParcelWeightKg(maxParcelKg == null ? null : new BigDecimal(maxParcelKg));
+            activeAnnouncement.setMaxItemSize(maxSize);
+            return activeAnnouncement;
+        }
+
+        private boolean suggested(PackageRequestEntity request) {
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            return !matchingService.findMatchingRequests(TRAVELER_ID).isEmpty();
+        }
+
+        private boolean notified(PackageRequestEntity request) {
+            when(packageRequestRepository.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(announcementRepository.findActiveByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(activeAnnouncement));
+            return !matchingService.findTravelersMatchingPackage(REQUEST_ID).isEmpty();
+        }
+
+        private boolean bestMatched(PackageRequestEntity request) {
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenOrNegotiatingByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            lenient().when(userRepository.findAllById(any())).thenReturn(List.of(sender));
+            return matchingService.findBestMatchByRequestId(TRAVELER_ID).containsKey(request.getId());
+        }
+
+        @Test
+        void kgFreeRoadTrip_matches25kgRequest() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", null, null);
+            PackageRequestEntity request = buildRequest(25, LocalDate.now().plusDays(10), 3);
+
+            assertThat(suggested(request)).isTrue();
+        }
+
+        @Test
+        void kgFreeRoadTrip_matches25kgRequest_onNotificationPath() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", null, null);
+
+            assertThat(notified(buildRequest(25, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
+        @Test
+        void kgFreeRoadTrip_matches25kgRequest_onBestMatchPath() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", null, null);
+
+            assertThat(bestMatched(buildRequest(25, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
+        @Test
+        void kgFreeRoadTrip_maxParcelWeight20_doesNotMatch25kg() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", "20", null);
+
+            assertThat(suggested(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+        }
+
+        @Test
+        void kgFreeRoadTrip_maxParcelWeight20_doesNotMatch25kg_onNotificationPath() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", "20", null);
+
+            assertThat(notified(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+        }
+
+        @Test
+        void kgFreeRoadTrip_maxParcelWeight20_doesNotMatch25kg_onBestMatchPath() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", "20", null);
+
+            assertThat(bestMatched(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+        }
+
+        @Test
+        void kgFreeRoadTrip_maxParcelWeight20_matches20kgRequest() throws Exception {
+            roadTrip(CapacityUnit.KG_FREE, "1", "20", null);
+
+            assertThat(suggested(buildRequest(20, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
+        @Test
+        void kgFreeRoadTrip_scoreWeightPartIsNeutral() throws Exception {
+            // La capacité technique (~1 kg) n'est pas une vraie capacité : la part « poids » du score
+            // est neutre (20 sur 40), elle ne tombe pas à 0 ni ne dépend de la valeur technique.
+            roadTrip(CapacityUnit.KG_FREE, "1", null, null);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(buildRequest(25, LocalDate.now().plusDays(10), 3)));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            List<MatchingRequestDto> results = matchingService.findMatchingRequests(TRAVELER_ID);
+
+            // 20 (poids neutre) + 5 (budget 1,2 €/kg, sous 80 % du prix 5 €/kg) + 25 (date exacte).
+            assertThat(results).hasSize(1);
+            assertThat(results.get(0).matchScore()).isEqualTo(20 + 5 + 25);
+        }
+
+        @Test
+        void exactRoadTrip_1500kg_matches1200kgRequest() throws Exception {
+            // Garde-fou (déjà vert avant B5) : la route compte en tonnes, 1 200 kg tiennent dans 1 500 kg.
+            roadTrip(CapacityUnit.KG_EXACT, "1500", null, null);
+
+            assertThat(suggested(buildRequest(1200, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
+        @Test
+        void exactRoadTrip_1500kg_doesNotMatch1600kgRequest() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "1500", null, null);
+
+            assertThat(suggested(buildRequest(1600, LocalDate.now().plusDays(10), 3))).isFalse();
+        }
+
+        @Test
+        void exactRoadTrip_maxParcelWeightAppliesBelowAvailableKg() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "500", "20", null);
+
+            assertThat(suggested(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+        }
+
+        @Test
+        void sizeL_request_doesNotMatch_tripMaxM() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "500", null, ItemSize.M);
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setItemSize(ItemSize.L);
+
+            assertThat(suggested(request)).isFalse();
+        }
+
+        @Test
+        void sizeL_request_doesNotMatch_tripMaxM_onNotificationAndBestMatchPaths() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "500", null, ItemSize.M);
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setItemSize(ItemSize.L);
+
+            assertThat(notified(request)).isFalse();
+            assertThat(bestMatched(request)).isFalse();
+        }
+
+        @Test
+        void sizeM_request_matches_tripMaxL() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "500", null, ItemSize.L);
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setItemSize(ItemSize.M);
+
+            assertThat(suggested(request)).isTrue();
+        }
+
+        @Test
+        void requestWithoutSize_matchesSizedTrip() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "500", null, ItemSize.S);
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+
+            assertThat(request.getItemSize()).isNull();
+            assertThat(suggested(request)).isTrue();
+        }
+
+        @Test
+        void tripWithoutSize_matchesSizedRequest() throws Exception {
+            roadTrip(CapacityUnit.KG_EXACT, "500", null, null);
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setItemSize(ItemSize.XL);
+
+            assertThat(suggested(request)).isTrue();
+        }
+
+        @Test
+        void exactKgTrip_unchanged() throws Exception {
+            // Garde-fou (déjà vert avant B5) : avion, 10 kg restants, aucune limite ni taille.
+            activeAnnouncement.setAvailableKg(new BigDecimal("10"));
+
+            assertThat(suggested(buildRequest(12, LocalDate.now().plusDays(10), 3))).isFalse();
+            assertThat(notified(buildRequest(12, LocalDate.now().plusDays(10), 3))).isFalse();
+            assertThat(suggested(buildRequest(10, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
+        @Test
+        void planeTripWithoutLimits_ignoresRequestSize() throws Exception {
+            // Un trajet avion existant n'a ni taille max ni poids max : la taille d'une demande ne le filtre pas.
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setItemSize(ItemSize.XL);
+
+            assertThat(suggested(request)).isTrue();
         }
     }
 
