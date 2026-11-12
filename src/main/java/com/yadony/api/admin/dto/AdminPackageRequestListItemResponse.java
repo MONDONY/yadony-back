@@ -1,5 +1,6 @@
 package com.yadony.api.admin.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.requests.entity.PackageRequestStatus;
 import com.yadony.api.requests.entity.ParcelSize;
@@ -25,7 +26,8 @@ public record AdminPackageRequestListItemResponse(
         LocalDate desiredDate,
         BigDecimal weightKg,
         ParcelSize parcelSize,
-        TransportMode transportMode,
+        /** Toujours sérialisé, null compris : null = « peu importe ». */
+        @JsonInclude(JsonInclude.Include.ALWAYS) TransportMode transportMode,
         PackageRequestStatus status,
         String currency,
         BigDecimal targetPrice,
