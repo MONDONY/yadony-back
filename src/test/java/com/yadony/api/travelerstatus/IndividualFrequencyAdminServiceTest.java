@@ -109,6 +109,7 @@ class IndividualFrequencyAdminServiceTest {
             assertThat(r.threshold()).isEqualTo(4);
             assertThat(r.detectedAt()).isEqualTo(f.getDetectedAt());
             assertThat(r.weeklyApplication()).isFalse();
+            assertThat(r.periodMonth()).isEqualTo("2026-11");
         });
     }
 
@@ -139,7 +140,17 @@ class IndividualFrequencyAdminServiceTest {
 
         IndividualFrequencyAlert alert = service.openAlertFor(userId);
 
-        assertThat(alert).isEqualTo(new IndividualFrequencyAlert(f.getId(), 6, 30, 4, f.getDetectedAt(), false));
+        assertThat(alert).isEqualTo(new IndividualFrequencyAlert(f.getId(), 6, 30, 4, f.getDetectedAt(), false, "2026-11"));
         assertThat(service.openAlertFor(other)).isNull();
+    }
+
+    /** Le mois est celui d'Europe/Paris : 30 nov. 23:30 UTC est déjà décembre à Paris. */
+    @Test
+    void moisDeLAlerte_suitLeFuseauDeParis() {
+        IndividualFrequencyFlagEntity f = flag();
+        f.setDetectedAt(LocalDateTime.of(2026, 11, 30, 23, 30));
+        when(flags.findFirstByUserIdAndResolvedAtIsNullAndDismissedAtIsNull(userId)).thenReturn(Optional.of(f));
+
+        assertThat(service.openAlertFor(userId).periodMonth()).isEqualTo("2026-12");
     }
 }

@@ -178,7 +178,7 @@ class AdminUserDetailResponseTest {
     @DisplayName("alerte « particulier à confirmer » : présente avec un drapeau ouvert, nulle sinon")
     void individualFrequencyAlert() {
         var alert = new com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert(
-                UUID.randomUUID(), 6, 30, 4, java.time.LocalDateTime.of(2026, 11, 10, 4, 30), false);
+                UUID.randomUUID(), 6, 30, 4, java.time.LocalDateTime.of(2026, 11, 10, 4, 30), false, "2026-11");
 
         AdminUserDetailResponse flagged = AdminUserDetailResponse.from(sampleUser(), sampleContact(), null,
                 com.yadony.api.payments.hold.PayoutHoldSummary.NONE, 2, alert);

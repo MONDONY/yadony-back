@@ -46,7 +46,7 @@ public class IndividualFrequencyAdminService {
         return open.stream()
                 .map(f -> new AdminIndividualFrequencyFlagRow(f.getId(), f.getUserId(),
                         displayName(byId.get(f.getUserId())), f.getTripsCount(), f.getWindowDays(),
-                        f.getThreshold(), f.getDetectedAt(), f.isWeeklyApplication()))
+                        f.getThreshold(), f.getDetectedAt(), f.isWeeklyApplication(), periodMonth(f)))
                 .toList();
     }
 
@@ -76,8 +76,13 @@ public class IndividualFrequencyAdminService {
     public IndividualFrequencyAlert openAlertFor(UUID userId) {
         return flags.findFirstByUserIdAndResolvedAtIsNullAndDismissedAtIsNull(userId)
                 .map(f -> new IndividualFrequencyAlert(f.getId(), f.getTripsCount(), f.getWindowDays(),
-                        f.getThreshold(), f.getDetectedAt(), f.isWeeklyApplication()))
+                        f.getThreshold(), f.getDetectedAt(), f.isWeeklyApplication(), periodMonth(f)))
                 .orElse(null);
+    }
+
+    /** Mois civil compté, {@code AAAA-MM} : celui de la détection (fuseau Europe/Paris). */
+    private static String periodMonth(IndividualFrequencyFlagEntity flag) {
+        return IndividualFrequencyEvaluator.monthOf(flag.getDetectedAt()).toString();
     }
 
     private static String displayName(UserEntity user) {

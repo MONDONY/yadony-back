@@ -121,11 +121,15 @@ class IndividualFrequencySchemaPostgresIT {
     }
 
     @Autowired com.yadony.api.matching.AnnouncementRepository announcementRepository;
-    @Autowired com.yadony.api.matching.BidRepository bidRepository;
     @Autowired com.yadony.api.gppro.GpProApplicationRepository applicationRepository;
     @Autowired jakarta.persistence.EntityManager entityManager;
 
     private UUID trip(UUID travelerId, java.time.LocalDate departureDate) {
+        return trip(travelerId, departureDate, com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+    }
+
+    private UUID trip(UUID travelerId, java.time.LocalDate departureDate,
+                      com.yadony.api.matching.AnnouncementStatus status) {
         com.yadony.api.matching.AnnouncementEntity a = new com.yadony.api.matching.AnnouncementEntity();
         a.setTravelerId(travelerId);
         a.setDepartureCity("Paris");
@@ -142,33 +146,25 @@ class IndividualFrequencySchemaPostgresIT {
         a.setAvailableKg(new java.math.BigDecimal("10.00"));
         a.setTotalKg(new java.math.BigDecimal("10.00"));
         a.setPricePerKg(new java.math.BigDecimal("5.00"));
-        a.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
+        a.setStatus(status);
         return announcementRepository.saveAndFlush(a).getId();
     }
 
-    private void acceptedBid(UUID tripId, UUID senderId) {
-        com.yadony.api.matching.BidEntity b = new com.yadony.api.matching.BidEntity();
-        b.setAnnouncementId(tripId);
-        b.setSenderId(senderId);
-        b.setStatus(com.yadony.api.matching.BidStatus.ACCEPTED);
-        b.setWeightKg(new java.math.BigDecimal("2.00"));
-        bidRepository.saveAndFlush(b);
-    }
-
     @Test
-    @DisplayName("détection sur Postgres avec de vraies données : voyages, même jour, demande hebdomadaire refusée")
+    @DisplayName("détection sur Postgres avec de vraies données : trajets publiés du mois, brouillon, annulé, demande hebdomadaire refusée")
     void detectionWithRealData() {
         UUID sender = persistUser().getId();
         UUID frequent = persistUser().getId();
         UUID weekly = persistUser().getId();
         java.time.LocalDate base = java.time.LocalDate.now().plusDays(10);
         for (int i = 0; i < 5; i++) {
-            acceptedBid(trip(frequent, base.plusDays(i)), sender);
+            trip(frequent, base.plusDays(i));
         }
-        // Deux trajets dédiés du même vol : un seul voyage de plus.
-        acceptedBid(trip(frequent, base), sender);
-        acceptedBid(trip(weekly, base), sender);
-        acceptedBid(trip(weekly, base.plusDays(3)), sender);
+        // Un brouillon et un trajet annulé ne comptent pas.
+        trip(frequent, base, com.yadony.api.matching.AnnouncementStatus.DRAFT);
+        trip(frequent, base, com.yadony.api.matching.AnnouncementStatus.CANCELLED);
+        trip(weekly, base);
+        trip(weekly, base.plusDays(3));
         com.yadony.api.gppro.GpProApplicationEntity app = new com.yadony.api.gppro.GpProApplicationEntity();
         app.setUserId(weekly);
         app.setStatus(com.yadony.api.gppro.GpProApplicationStatus.REJECTED);
@@ -181,7 +177,7 @@ class IndividualFrequencySchemaPostgresIT {
         var result = evaluator.detect(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(1), 4);
 
         assertThat(result.get(frequent)).isEqualTo(new IndividualFrequencyEvaluator.Detection(5, false));
-        // countTrips (liste IN) exécutée sur Postgres pour le déclencheur hebdomadaire sous le seuil.
+        // countPublishedTrips (liste IN) exécutée sur Postgres pour le déclencheur hebdomadaire sous le seuil.
         assertThat(result.get(weekly)).isEqualTo(new IndividualFrequencyEvaluator.Detection(2, true));
         assertThat(result).doesNotContainKey(sender);
     }

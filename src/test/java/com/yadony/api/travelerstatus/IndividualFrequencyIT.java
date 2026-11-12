@@ -16,9 +16,6 @@ import com.yadony.api.gppro.GpProTravelFrequency;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
-import com.yadony.api.matching.BidEntity;
-import com.yadony.api.matching.BidRepository;
-import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.TransportMode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,7 +70,6 @@ class IndividualFrequencyIT {
     @Autowired IndividualFrequencyFlagRepository flags;
     @Autowired UserRepository users;
     @Autowired AnnouncementRepository announcements;
-    @Autowired BidRepository bids;
     @Autowired GpProApplicationRepository applications;
     @Autowired JdbcTemplate jdbc;
     @Autowired jakarta.persistence.EntityManager entityManager;
@@ -130,10 +126,6 @@ class IndividualFrequencyIT {
         return users.saveAndFlush(u);
     }
 
-    private UserEntity sender() {
-        return user(null, false);
-    }
-
     private UUID trip(UserEntity traveler, AnnouncementStatus status) {
         return trip(traveler, status, LocalDate.now().plusDays(nextDay++));
     }
@@ -159,17 +151,6 @@ class IndividualFrequencyIT {
         return announcements.saveAndFlush(a).getId();
     }
 
-    private UUID bid(UUID tripId, UserEntity sender, BidStatus status, LocalDateTime createdAt) {
-        BidEntity b = new BidEntity();
-        b.setAnnouncementId(tripId);
-        b.setSenderId(sender.getId());
-        b.setStatus(status);
-        b.setWeightKg(new BigDecimal("2.00"));
-        UUID id = bids.saveAndFlush(b).getId();
-        backdate("bids", id, createdAt);
-        return id;
-    }
-
     /**
      * Antidate une ligne en passant par Hibernate, qui convertit les dates avec {@code hibernate.jdbc.time_zone=UTC}
      * comme pour les écritures de l'application. Un JdbcTemplate écrirait dans le fuseau de la JVM : décalage d'une
@@ -187,12 +168,16 @@ class IndividualFrequencyIT {
                 .executeUpdate());
     }
 
-    /** {@code count} trajets distincts, chacun avec une réservation acceptée créée il y a {@code daysAgo} jours. */
-    private void acceptedTrips(UserEntity traveler, int count, int daysAgo) {
-        UserEntity s = sender();
+    /** {@code count} trajets publiés maintenant (donc ce mois-ci), sans aucune réservation. */
+    private void publishedTrips(UserEntity traveler, int count) {
         for (int i = 0; i < count; i++) {
-            bid(trip(traveler, AnnouncementStatus.ACTIVE), s, BidStatus.ACCEPTED, now.minusDays(daysAgo));
+            trip(traveler, AnnouncementStatus.ACTIVE);
         }
+    }
+
+    /** Antidate la publication d'un trajet. */
+    private void publishedAt(UUID tripId, LocalDateTime value) {
+        backdate("announcements", "published_at", tripId, value);
     }
 
     private Map<UUID, IndividualFrequencyEvaluator.Detection> detect() {
@@ -205,8 +190,8 @@ class IndividualFrequencyIT {
     void particulier_avec5Trajets_estSignale_avec4_nonSignale() {
         UserEntity five = user(TravelerStatus.INDIVIDUAL, false);
         UserEntity four = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(five, 5, 3);
-        acceptedTrips(four, 4, 3);
+        publishedTrips(five, 5);
+        publishedTrips(four, 4);
 
         Map<UUID, IndividualFrequencyEvaluator.Detection> result = detect();
 
@@ -222,10 +207,10 @@ class IndividualFrequencyIT {
         // Données d'avant le GP Pro unifié (#721) : professionnel sans badge.
         UserEntity proWithoutBadge = user(TravelerStatus.PROFESSIONAL, false);
         UserEntity undeclared = user(null, false);
-        acceptedTrips(gpPro, 8, 2);
-        acceptedTrips(pro, 8, 2);
-        acceptedTrips(proWithoutBadge, 8, 2);
-        acceptedTrips(undeclared, 8, 2);
+        publishedTrips(gpPro, 8);
+        publishedTrips(pro, 8);
+        publishedTrips(proWithoutBadge, 8);
+        publishedTrips(undeclared, 8);
 
         assertThat(detect()).doesNotContainKeys(gpPro.getId(), pro.getId(), proWithoutBadge.getId(),
                 undeclared.getId());
@@ -240,7 +225,7 @@ class IndividualFrequencyIT {
         UserEntity softDeleted = user(TravelerStatus.INDIVIDUAL, false);
         UserEntity active = user(TravelerStatus.INDIVIDUAL, false);
         for (UserEntity u : List.of(suspended, banned, pendingDeletion, deletionRequested, softDeleted, active)) {
-            acceptedTrips(u, 6, 2);
+            publishedTrips(u, 6);
             application(u, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.REJECTED, now.minusDays(3));
         }
         jdbc.update("UPDATE users SET status = 'SUSPENDED' WHERE id = ?", suspended.getId());
@@ -257,73 +242,113 @@ class IndividualFrequencyIT {
     }
 
     @Test
-    void reservationsRefuseesAnnuleesExpireesOuNonAcceptees_neComptentPas() {
-        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity s = sender();
-        acceptedTrips(traveler, 4, 1);
-        for (BidStatus st : List.of(BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.EXPIRED,
-                BidStatus.PENDING, BidStatus.AWAITING_PAYMENT, BidStatus.PAYMENT_ESCROWED,
-                BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED, BidStatus.NEGOTIATING,
-                BidStatus.NEGOTIATION_CLOSED)) {
-            bid(trip(traveler, AnnouncementStatus.ACTIVE), s, st, now.minusDays(1));
-        }
+    void cinqTrajets_retenu_quatre_pasRetenu_aucuneReservationNecessaire() {
+        UserEntity five = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity four = user(TravelerStatus.INDIVIDUAL, false);
+        publishedTrips(five, 5);
+        publishedTrips(four, 4);
 
-        assertThat(detect()).doesNotContainKey(traveler.getId());
+        Map<UUID, IndividualFrequencyEvaluator.Detection> result = detect();
+
+        assertThat(result).containsKey(five.getId()).doesNotContainKey(four.getId());
+        assertThat(result.get(five.getId()).tripsCount()).isEqualTo(5);
     }
 
     @Test
-    void reservationsAcceptees_ouPlusAvancees_comptent() {
+    void brouillonJamaisPublie_neComptePas() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity s = sender();
-        for (BidStatus st : List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT,
-                BidStatus.ARRIVED, BidStatus.COMPLETED)) {
-            bid(trip(traveler, AnnouncementStatus.ACTIVE), s, st, now.minusDays(1));
-        }
+        publishedTrips(traveler, 4);
+        trip(traveler, AnnouncementStatus.DRAFT);
 
-        assertThat(detect()).containsKey(traveler.getId());
+        assertThat(detect()).doesNotContainKey(traveler.getId());
+
+        trip(traveler, AnnouncementStatus.ACTIVE);
         assertThat(detect().get(traveler.getId()).tripsCount()).isEqualTo(5);
     }
 
     @Test
     void trajetAnnuleOuRetire_neComptePas() {
-        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity s = sender();
-        acceptedTrips(traveler, 4, 1);
-        bid(trip(traveler, AnnouncementStatus.CANCELLED), s, BidStatus.ACCEPTED, now.minusDays(1));
-        bid(trip(traveler, AnnouncementStatus.REMOVED_BY_ADMIN), s, BidStatus.ACCEPTED, now.minusDays(1));
+        UserEntity cancelled = user(TravelerStatus.INDIVIDUAL, false);
+        UserEntity removed = user(TravelerStatus.INDIVIDUAL, false);
+        publishedTrips(cancelled, 4);
+        publishedTrips(removed, 4);
+        trip(cancelled, AnnouncementStatus.CANCELLED);
+        trip(removed, AnnouncementStatus.REMOVED_BY_ADMIN);
 
-        assertThat(detect()).doesNotContainKey(traveler.getId());
+        assertThat(detect()).doesNotContainKeys(cancelled.getId(), removed.getId());
     }
 
     @Test
-    void unTrajetAvecTroisReservations_comptePourUn() {
+    void trajetTermineOuComplet_compte() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity s = sender();
-        acceptedTrips(traveler, 3, 1);
-        UUID busy = trip(traveler, AnnouncementStatus.FULL);
-        bid(busy, s, BidStatus.ACCEPTED, now.minusDays(1));
-        bid(busy, s, BidStatus.COMPLETED, now.minusDays(2));
-        bid(busy, s, BidStatus.IN_TRANSIT, now.minusDays(3));
+        for (AnnouncementStatus st : List.of(AnnouncementStatus.ACTIVE, AnnouncementStatus.FULL,
+                AnnouncementStatus.IN_PROGRESS, AnnouncementStatus.COMPLETED, AnnouncementStatus.ACTIVE)) {
+            trip(traveler, st);
+        }
 
-        assertThat(detect()).doesNotContainKey(traveler.getId());
-
-        acceptedTrips(traveler, 1, 1);
         assertThat(detect().get(traveler.getId()).tripsCount()).isEqualTo(5);
     }
 
+    /** Même définition que la limite mensuelle : supprimer un trajet publié ne le retire pas du compte. */
     @Test
-    void fenetre_exactement30Jours_compte_auDela_neComptePas() {
-        UserEntity inside = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity outside = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(inside, 4, 1);
-        acceptedTrips(outside, 4, 1);
-        UserEntity s = sender();
-        bid(trip(inside, AnnouncementStatus.COMPLETED), s, BidStatus.COMPLETED, now.minusDays(30));
-        bid(trip(outside, AnnouncementStatus.COMPLETED), s, BidStatus.COMPLETED, now.minusDays(30).minusMinutes(1));
+    void trajetSupprime_compteEncore_commeLeQuota() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        publishedTrips(traveler, 4);
+        UUID deleted = trip(traveler, AnnouncementStatus.ACTIVE);
+        jdbc.update("UPDATE announcements SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", deleted);
 
-        Map<UUID, IndividualFrequencyEvaluator.Detection> result = detect();
+        assertThat(detect().get(traveler.getId()).tripsCount()).isEqualTo(5);
+    }
 
-        assertThat(result).containsKey(inside.getId()).doesNotContainKey(outside.getId());
+    /** Le mois civil est celui d'Europe/Paris : 5 trajets le mois précédent et 1 ce mois-ci, pas retenu. */
+    @Test
+    void finDeMois_cinqSurLeMoisPrecedent_unSurLeMoisEnCours_pasRetenu() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        LocalDateTime checkAt = LocalDateTime.of(2026, 12, 3, 4, 30);
+        for (int i = 0; i < 5; i++) {
+            publishedAt(trip(traveler, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 11, 25 + i, 10, 0));
+        }
+        publishedAt(trip(traveler, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 12, 2, 10, 0));
+
+        assertThat(evaluator.detect(checkAt, THRESHOLD)).doesNotContainKey(traveler.getId());
+        // Au contrôle du 29 novembre, les 5 trajets de novembre sont le mois en cours.
+        assertThat(evaluator.detect(LocalDateTime.of(2026, 11, 29, 4, 30), THRESHOLD).get(traveler.getId())
+                .tripsCount()).isEqualTo(5);
+    }
+
+    /** Frontières à Paris (UTC+1 en hiver) : 30 nov. 23:30 UTC est le 1er décembre 00:30 à Paris. */
+    @Test
+    void bornesDuMois_selonLeFuseauDeParis() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        // 4 en décembre à Paris dont un publié le 30 nov. à 23:30 UTC (= 1er déc. 00:30 Paris) ; 1 le 30 nov. 22:30 UTC.
+        publishedAt(trip(traveler, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 11, 30, 23, 30));
+        for (int i = 0; i < 3; i++) {
+            publishedAt(trip(traveler, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 12, 5 + i, 10, 0));
+        }
+        publishedAt(trip(traveler, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 11, 30, 22, 30));
+        LocalDateTime checkAt = LocalDateTime.of(2026, 12, 20, 4, 30);
+
+        assertThat(evaluator.detect(checkAt, THRESHOLD)).doesNotContainKey(traveler.getId());
+
+        publishedAt(trip(traveler, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 12, 31, 22, 59));
+        assertThat(evaluator.detect(checkAt, THRESHOLD).get(traveler.getId()).tripsCount()).isEqualTo(5);
+
+        // 31 déc. 23:00 UTC = 1er janvier 00:00 Paris : n'est plus dans décembre.
+        UserEntity other = user(TravelerStatus.INDIVIDUAL, false);
+        for (int i = 0; i < 4; i++) {
+            publishedAt(trip(other, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 12, 5 + i, 10, 0));
+        }
+        publishedAt(trip(other, AnnouncementStatus.ACTIVE), LocalDateTime.of(2026, 12, 31, 23, 0));
+        assertThat(evaluator.detect(checkAt, THRESHOLD)).doesNotContainKey(other.getId());
+    }
+
+    @Test
+    void seuilReglable_6TrajetsSontRetenusAuSeuil5_pasAuSeuil6() {
+        UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
+        publishedTrips(traveler, 6);
+
+        assertThat(evaluator.detect(now, 5)).containsKey(traveler.getId());
+        assertThat(evaluator.detect(now, 6)).doesNotContainKey(traveler.getId());
     }
 
     @Test
@@ -331,7 +356,7 @@ class IndividualFrequencyIT {
         UserEntity weekly = user(TravelerStatus.INDIVIDUAL, false);
         UserEntity monthly = user(TravelerStatus.INDIVIDUAL, false);
         UserEntity pending = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(weekly, 2, 1);
+        publishedTrips(weekly, 2);
         application(weekly, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.REJECTED, now.minusDays(5));
         application(monthly, GpProTravelFrequency.MONTHLY, GpProApplicationStatus.REJECTED, now.minusDays(5));
         // Demande encore ouverte : l'équipe l'examine déjà, aucune question au voyageur.
@@ -375,7 +400,7 @@ class IndividualFrequencyIT {
     @Test
     void demandeGpProEnCours_jamaisSignale_niParLeCompteur_etSonDrapeauEstResolu() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 6, 2);
+        publishedTrips(traveler, 6);
         scheduler.run();
         assertThat(openFlags(traveler)).hasSize(1);
 
@@ -386,28 +411,6 @@ class IndividualFrequencyIT {
 
         jdbc.update("UPDATE gp_pro_applications SET status = 'AWAITING_KYC' WHERE id = ?", open);
         assertThat(detect()).doesNotContainKey(traveler.getId());
-    }
-
-    @Test
-    void deuxAnnoncesLeMemeJour_unSeulVoyage() {
-        UserEntity dedicated = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity sameDayBelow = user(TravelerStatus.INDIVIDUAL, false);
-        UserEntity s = sender();
-        // 4 voyages + 3 trajets dédiés du même vol : 5 voyages, pas 7.
-        acceptedTrips(dedicated, 4, 1);
-        LocalDate flight = LocalDate.now().plusDays(60);
-        for (int i = 0; i < 3; i++) {
-            bid(trip(dedicated, AnnouncementStatus.ACTIVE, flight), s, BidStatus.ACCEPTED, now.minusDays(1));
-        }
-        // 3 voyages + 2 annonces le même jour : 4 voyages, pas 5, sous le seuil.
-        acceptedTrips(sameDayBelow, 3, 1);
-        bid(trip(sameDayBelow, AnnouncementStatus.ACTIVE, flight), s, BidStatus.ACCEPTED, now.minusDays(1));
-        bid(trip(sameDayBelow, AnnouncementStatus.ACTIVE, flight), s, BidStatus.COMPLETED, now.minusDays(1));
-
-        Map<UUID, IndividualFrequencyEvaluator.Detection> result = detect();
-
-        assertThat(result.get(dedicated.getId()).tripsCount()).isEqualTo(5);
-        assertThat(result).doesNotContainKey(sameDayBelow.getId());
     }
 
     /**
@@ -454,7 +457,7 @@ class IndividualFrequencyIT {
     @Test
     void beanDuContexte_eteintParDefaut_neFaitRien() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 6, 2);
+        publishedTrips(traveler, 6);
         application(traveler, GpProTravelFrequency.WEEKLY, GpProApplicationStatus.REJECTED, now.minusDays(1));
 
         assertThat(contextScheduler.run()).isEqualTo(new IndividualFrequencyScheduler.Outcome(0, 0, 0, 0));
@@ -464,7 +467,7 @@ class IndividualFrequencyIT {
     @Test
     void doubleExecution_unSeulDrapeau_uneSeuleQuestion_etAucuneModificationDesDonnees() throws Exception {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 5, 2);
+        publishedTrips(traveler, 5);
         List<Map<String, Object>> before = snapshot(traveler);
 
         scheduler.run();
@@ -479,7 +482,8 @@ class IndividualFrequencyIT {
         assertThat(mine).hasSize(1);
         IndividualFrequencyFlagEntity flag = mine.get(0);
         assertThat(flag.getTripsCount()).isEqualTo(5);
-        assertThat(flag.getWindowDays()).isEqualTo(30);
+        assertThat(flag.getWindowDays())
+                .isEqualTo(IndividualFrequencyEvaluator.monthOf(now).lengthOfMonth());
         assertThat(flag.getThreshold()).isEqualTo(THRESHOLD);
         assertThat(flag.getResolvedAt()).isNull();
         // Anti-objectif : ni le compte, ni les trajets, ni les réservations ne bougent.
@@ -489,7 +493,7 @@ class IndividualFrequencyIT {
     @Test
     void drapeauResolu_quandLeVoyageurDevientGpPro() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 5, 2);
+        publishedTrips(traveler, 5);
         scheduler.run();
 
         jdbc.update("UPDATE users SET gp_pro = TRUE WHERE id = ?", traveler.getId());
@@ -502,7 +506,7 @@ class IndividualFrequencyIT {
     @Test
     void seuilReleve_resout_puisSeuilRebaisse_nouveauDrapeauSansSecondeQuestion() throws Exception {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 5, 2);
+        publishedTrips(traveler, 5);
 
         schedulerWithThreshold(4).run();
         awaitQuestions(traveler, 1);
@@ -519,7 +523,7 @@ class IndividualFrequencyIT {
     @Test
     void drapeauResolu_quandLeCompteEstSuspendu() {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 5, 2);
+        publishedTrips(traveler, 5);
         scheduler.run();
 
         jdbc.update("UPDATE users SET status = 'SUSPENDED' WHERE id = ?", traveler.getId());
@@ -573,6 +577,7 @@ class IndividualFrequencyIT {
                 .andExpect(jsonPath("$[0].displayName").value("Awa Diallo"))
                 .andExpect(jsonPath("$[0].tripsCount").value(6))
                 .andExpect(jsonPath("$[0].windowDays").value(30))
+                .andExpect(jsonPath("$[0].periodMonth").value(IndividualFrequencyEvaluator.monthOf(now.minusHours(2)).toString()))
                 .andExpect(jsonPath("$[0].threshold").value(THRESHOLD))
                 .andExpect(jsonPath("$[0].detectedAt").exists());
 
@@ -595,7 +600,7 @@ class IndividualFrequencyIT {
     @Test
     void drapeauEcarte_nEstPasRecree_tantQueLaConditionNeCessePas() throws Exception {
         UserEntity traveler = user(TravelerStatus.INDIVIDUAL, false);
-        acceptedTrips(traveler, 5, 2);
+        publishedTrips(traveler, 5);
         scheduler.run();
         IndividualFrequencyFlagEntity flag = flags.findAll().stream()
                 .filter(f -> f.getUserId().equals(traveler.getId())).findFirst().orElseThrow();
@@ -640,6 +645,7 @@ class IndividualFrequencyIT {
                 .andExpect(jsonPath("$.individualFrequencyAlert.flagId").value(flag.getId().toString()))
                 .andExpect(jsonPath("$.individualFrequencyAlert.tripsCount").value(6))
                 .andExpect(jsonPath("$.individualFrequencyAlert.windowDays").value(30))
+                .andExpect(jsonPath("$.individualFrequencyAlert.periodMonth").value(IndividualFrequencyEvaluator.monthOf(now.minusHours(2)).toString()))
                 .andExpect(jsonPath("$.individualFrequencyAlert.threshold").value(THRESHOLD))
                 .andExpect(jsonPath("$.individualFrequencyAlert.detectedAt").exists());
 
