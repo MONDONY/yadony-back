@@ -57,4 +57,19 @@ public class MessagesResolver {
     public Messages forRequest() {
         return of(requestLanguage());
     }
+
+    /**
+     * Comme {@link #forRequest()}, mais anglais quand la requête n'envoie pas d'{@code Accept-Language}
+     * (ou hors requête HTTP) : réponses de validation, historiquement en anglais sans en-tête.
+     */
+    public Messages forRequestEnglishByDefault() {
+        RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes instanceof ServletRequestAttributes servletAttributes) {
+            String header = servletAttributes.getRequest().getHeader(HttpHeaders.ACCEPT_LANGUAGE);
+            if (header != null && !header.isBlank()) {
+                return of(AppLanguage.fromAcceptLanguage(header));
+            }
+        }
+        return of(AppLanguage.EN);
+    }
 }
