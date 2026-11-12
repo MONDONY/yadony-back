@@ -887,6 +887,9 @@ public class NegotiationService {
         if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/not-active");
         }
+        // Trajet bateau au m³ : sans kilos, il ne se lie pas encore à une demande (capacité et prix
+        // en kilos seulement) ; 422 boat-volume-booking-unavailable avant la lecture de availableKg.
+        com.yadony.api.matching.BoatVolumeBooking.assertBookableByKg(ann);
         // Kilo libre : availableKg est une valeur technique (~1) sans signification, la capacité
         // n'est pas bornée (même exemption que BidService, BidCheckoutService, BidNegotiationService et
         // le matching) : sans elle une demande matchée serait refusée « insufficient-capacity ».
@@ -1027,6 +1030,9 @@ public class NegotiationService {
         transportModeGuard.assertBoatCarrierAllowed(mode, null, traveler);
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
                 req.arrivalDate(), req.arrivalTime(), mode);
+        // Trajet neuf : arrivalDateMax reste nul, aucune fourchette à contredire
+        // (chk_announcements_arrival_date_max). Un trajet dédié bateau reste au kilo, sans
+        // fourchette ni volume, jusqu'au trajet dédié bateau au m³ (lot 3, tâche BA7).
         ann.setArrivalDate(req.arrivalDate());
         ann.setHandoverDeadline(dedicatedHandoverDeadline(
                 req.departureDate(), req.departureTime(), ann.getTimezone()));

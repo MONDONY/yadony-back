@@ -125,6 +125,8 @@ public class TripSeriesService {
             }
         }
         LocalDate arrivalDate = b.arrivalDate() == null ? null : b.arrivalDate().plusDays(days);
+        // Bateau : la fin de la fourchette glisse comme le début (même largeur de fourchette).
+        LocalDate arrivalDateMax = b.arrivalDateMax() == null ? null : b.arrivalDateMax().plusDays(days);
         return new AnnouncementRequest(
                 b.departureCity(), b.arrivalCity(), date, b.departureTime(), b.arrivalTime(),
                 b.pickupAddress(), b.deliveryAddress(), b.availableKg(), b.pricePerKg(),
@@ -132,6 +134,7 @@ public class TripSeriesService {
                 b.acceptedPaymentMethods(), b.capacityUnit(), b.pricingMode(),
                 b.departureCountryCode(), b.arrivalCountryCode(), deadline, draft,
                 b.negotiable(), b.currency(), arrivalDate, b.stopsCount(),
-                b.maxItemSize(), b.maxParcelWeightKg());
+                b.maxItemSize(), b.maxParcelWeightKg(),
+                arrivalDateMax, b.volumeCapacityM3(), b.pricePerM3());
     }
 }

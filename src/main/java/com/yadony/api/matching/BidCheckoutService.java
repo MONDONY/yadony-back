@@ -99,6 +99,9 @@ public class BidCheckoutService {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
 
+        // Trajet bateau au m³ : pas encore réservable (même garde que BidService.assertCanBidOn).
+        BoatVolumeBooking.assertBookableByKg(announcement);
+
         // FLUTTER-GA : même garde que la création d'une demande (BidService.assertCanBidOn),
         // absente du paiement carte direct — reprise d'un paiement en attente comprise.
         HandoverDeadlineRules.assertNotPassed(announcement);

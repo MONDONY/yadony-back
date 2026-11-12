@@ -5,7 +5,8 @@ public record MatchingRequestDto(
         String tripId,
         String tripCorridor,
         String tripDepartureDate,
-        double tripAvailableKg,
+        /** Kilos restants du trajet ; null pour un trajet bateau au m³ (clé absente du JSON). */
+        Double tripAvailableKg,
         String senderId,
         String senderName,
         String senderInitials,

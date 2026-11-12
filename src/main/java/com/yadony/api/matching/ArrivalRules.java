@@ -71,7 +71,28 @@ public final class ArrivalRules {
         }
     }
 
-    /** Jour d'arrivée effectif : la date d'arrivée, sinon le jour du départ. */
+    /**
+     * Fourchette d'arrivée estimée d'un trajet bateau : début ({@code arrivalDate}) et fin
+     * ({@code arrivalDateMax}) tous deux présents, la fin pas avant le début (422
+     * {@code arrival-range-invalid}), et au plus départ + 120 jours (422 {@code arrival-too-far}, le
+     * plafond du CHECK {@code chk_announcements_arrival_date_max}). Le début contre le départ reste
+     * contrôlé par {@link #validate}.
+     */
+    public static void validateRange(LocalDate departureDate, LocalDate arrivalDate, LocalDate arrivalDateMax) {
+        if (arrivalDate == null || arrivalDateMax == null || arrivalDateMax.isBefore(arrivalDate)) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-range-invalid",
+                    "problem.arrival-range-invalid");
+        }
+        if (departureDate != null && arrivalDateMax.isAfter(departureDate.plusDays(BOAT_MAX_DAYS))) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-too-far",
+                    "problem.arrival-too-far", BOAT_MAX_DAYS);
+        }
+    }
+
+    /**
+     * Jour d'arrivée effectif : la date d'arrivée, sinon le jour du départ. Pour un bateau, c'est
+     * le début de la fourchette (arrivée au plus tôt), lu par le suivi et le rappel d'arrivée.
+     */
     public static LocalDate effectiveArrivalDate(AnnouncementEntity announcement) {
         return announcement.getArrivalDate() != null
                 ? announcement.getArrivalDate()
@@ -79,13 +100,25 @@ public final class ArrivalRules {
     }
 
     /**
+     * Jour d'arrivée au plus tard : la fin de la fourchette d'un bateau ({@code arrivalDateMax}),
+     * sinon le jour d'arrivée effectif.
+     */
+    public static LocalDate latestArrivalDate(AnnouncementEntity announcement) {
+        return announcement.getArrivalDateMax() != null
+                ? announcement.getArrivalDateMax()
+                : effectiveArrivalDate(announcement);
+    }
+
+    /**
      * Expiration du code de retrait : jour d'arrivée réel + heure d'arrivée + 24 h, sinon
      * 72 h après le début du jour d'arrivée. Un vol de nuit arrive le lendemain : partir du
      * jour du départ faisait expirer le code à l'atterrissage (FLUTTER-4E). Recalculée
-     * quand le trajet est reporté.
+     * quand le trajet est reporté. Pour un bateau, le jour d'arrivée est la FIN de la fourchette
+     * ({@link #latestArrivalDate}) : un code calé sur l'arrivée au plus tôt expirerait avant
+     * qu'un navire en retard dans sa fourchette n'accoste.
      */
     public static java.time.LocalDateTime pickupCodeExpiry(AnnouncementEntity announcement) {
-        LocalDate arrivalDay = effectiveArrivalDate(announcement);
+        LocalDate arrivalDay = latestArrivalDate(announcement);
         if (announcement.getArrivalTime() != null) {
             return arrivalDay.atTime(announcement.getArrivalTime()).plusDays(1);
         }

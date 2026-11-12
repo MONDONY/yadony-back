@@ -70,6 +70,24 @@ class SearchCriteriaMatcherTest {
     }
 
     @Test
+    void availableKg_boatPerM3WithoutKg_missesBothBoundsLikeSql() {
+        AnnouncementEntity a = trip();
+        a.setTransportMode(TransportMode.BOAT);
+        a.setAvailableKg(null);
+        a.setPricePerM3(new BigDecimal("600"));
+        SearchCriteria min = new SearchCriteria(null, null, new BigDecimal("8"), null, null, null, null,
+                null, false, false, null, false);
+        SearchCriteria max = new SearchCriteria(null, null, null, new BigDecimal("20"), null, null, null,
+                null, false, false, null, false);
+
+        assertThat(SearchCriteriaMatcher.unmet(a, null, false, min))
+                .containsExactly(new UnmetCriterion("AVAILABLE_KG", "8", ""));
+        assertThat(SearchCriteriaMatcher.unmet(a, null, false, max))
+                .containsExactly(new UnmetCriterion("MAX_AVAILABLE_KG", "20", ""));
+        assertThat(SearchCriteriaMatcher.unmet(a, null, false, NONE)).isEmpty();
+    }
+
+    @Test
     void availableKg_kgFreePassesMin_butNotMax() {
         AnnouncementEntity a = trip();
         a.setCapacityUnit(CapacityUnit.KG_FREE);

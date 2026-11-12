@@ -189,6 +189,8 @@ public class BidService {
         UserEntity sender = findUserByFirebaseUid(firebaseUid);
         AnnouncementEntity ann = announcementRepository.findById(request.announcementId())
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
+        // Trajet bateau au m³ : pas de devis au kilo (même refus que la réservation).
+        BoatVolumeBooking.assertBookableByKg(ann);
 
         // Même détermination de mode que createBid/checkout : au moins poids OU article.
         List<BidGridItemRequest> gridItems = request.gridItems() != null ? request.gridItems() : List.of();
@@ -453,6 +455,9 @@ public class BidService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
+
+        // Trajet bateau au m³ : pas encore réservable (prix et capacité en kilos seulement).
+        BoatVolumeBooking.assertBookableByKg(announcement);
 
         // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
         // garde, la demande naissait déjà « fenêtre dépassée » et l'expéditeur n'avait

@@ -179,13 +179,19 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "delivery_lng", nullable = false, precision = 9, scale = 6)
     private java.math.BigDecimal deliveryLng;
 
-    @Column(name = "available_kg", nullable = false, precision = 8, scale = 2)
+    /**
+     * Kilos restants. Null pour le seul trajet bateau au m³ ({@link #isPricedPerM3()}, V382 :
+     * chk_announcements_kg_or_m3) : tout lecteur doit tolérer null.
+     */
+    @Column(name = "available_kg", precision = 8, scale = 2)
     private BigDecimal availableKg;
 
-    @Column(name = "total_kg", nullable = false, precision = 8, scale = 2)
+    /** Capacité initiale en kilos ; null pour un trajet bateau au m³, comme {@link #availableKg}. */
+    @Column(name = "total_kg", precision = 8, scale = 2)
     private BigDecimal totalKg;
 
-    @Column(name = "price_per_kg", nullable = false, precision = 10, scale = 2)
+    /** Prix au kilo ; null pour un trajet bateau au m³ (son prix est {@link #pricePerM3}). */
+    @Column(name = "price_per_kg", precision = 10, scale = 2)
     private BigDecimal pricePerKg;
 
     @Column(name = "status", nullable = false, length = 20)
@@ -498,6 +504,25 @@ public class AnnouncementEntity extends BaseEntity {
     public void setAvailableVolumeM3(BigDecimal availableVolumeM3) { this.availableVolumeM3 = availableVolumeM3; }
     public BigDecimal getPricePerM3() { return pricePerM3; }
     public void setPricePerM3(BigDecimal pricePerM3) { this.pricePerM3 = pricePerM3; }
+
+    /**
+     * Trajet bateau vendu au m³ : prix au m³ renseigné, aucun kilo (capacité, capacité initiale et
+     * prix au kilo nuls, V382 chk_announcements_kg_or_m3). Un trajet bateau au kilo répond non.
+     */
+    public boolean isPricedPerM3() {
+        return transportMode == TransportMode.BOAT && pricePerM3 != null;
+    }
+
+    /**
+     * Plus aucune place : volume restant à 0 pour un trajet au m³, kilos restants à 0 sinon (le
+     * kilo libre n'est jamais plein). Une capacité inconnue (null) n'est pas « pleine ».
+     */
+    public boolean hasNoCapacityLeft() {
+        if (isPricedPerM3()) {
+            return availableVolumeM3 != null && availableVolumeM3.signum() <= 0;
+        }
+        return capacityUnit != CapacityUnit.KG_FREE && availableKg != null && availableKg.signum() <= 0;
+    }
     public int getRescheduleCount() { return rescheduleCount; }
     public void setRescheduleCount(int rescheduleCount) { this.rescheduleCount = rescheduleCount; }
     public void setArrivalTime(LocalTime arrivalTime) { this.arrivalTime = arrivalTime; }
@@ -543,7 +568,9 @@ public class AnnouncementEntity extends BaseEntity {
      * @return {@code true} si l'annonce a changé (l'appelant la sauvegarde alors)
      */
     public boolean reserveCapacity(BigDecimal weightKg) {
-        if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null) {
+        // Trajet bateau au m³ (availableKg nul) : aucun kilo à suivre ; la réservation d'un tel
+        // trajet est refusée en amont (BoatVolumeBooking) tant que le volume n'est pas géré.
+        if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null || availableKg == null) {
             return false;
         }
         availableKg = availableKg.subtract(weightKg);
@@ -562,7 +589,7 @@ public class AnnouncementEntity extends BaseEntity {
      * @return {@code true} si l'annonce a changé (l'appelant la sauvegarde alors)
      */
     public boolean releaseCapacity(BigDecimal weightKg) {
-        if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null) {
+        if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null || availableKg == null) {
             return false;
         }
         availableKg = availableKg.add(weightKg);

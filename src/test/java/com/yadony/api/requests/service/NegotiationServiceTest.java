@@ -4343,6 +4343,25 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("trajet bateau au m³ (sans kilos) : liaison refusée en 422 boat-volume-booking-unavailable, sans NPE")
+        void offerWithExistingBoatPerM3Trip_refusedBeforeKgCapacity() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("10");
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "1");
+            ann.setAvailableKg(null);
+            ann.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+            ann.setPricePerM3(new BigDecimal("600"));
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
+                });
+        }
+
+        @Test
         @DisplayName("offerOnKgFreeTrip_25kg_accepted — kilo libre : availableKg technique (1) ne refuse plus une demande de 25 kg (D9)")
         void offerOnKgFreeTrip_25kg_accepted() {
             UUID travelerId = UUID.randomUUID();

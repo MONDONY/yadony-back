@@ -248,7 +248,9 @@ public class MatchingService {
      * trajet en renseigne un. Un poids max absent ne bloque rien.
      */
     private boolean fitsWeight(PackageRequestEntity request, AnnouncementEntity announcement) {
-        if (!isKgFree(announcement)
+        // Trajet bateau au m³ : aucun kilo à comparer (availableKg nul), seul le poids max par colis
+        // compte ici ; le volume se compare ailleurs.
+        if (!isKgFree(announcement) && announcement.getAvailableKg() != null
                 && request.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
             return false;
         }
@@ -292,7 +294,8 @@ public class MatchingService {
                 announcement.getId().toString(),
                 corridor,
                 announcement.getDepartureDate().toString(),
-                announcement.getAvailableKg().doubleValue(),
+                // Null pour un trajet bateau au m³ (pas de kilos) : clé absente du JSON.
+                announcement.getAvailableKg() == null ? null : announcement.getAvailableKg().doubleValue(),
                 sender.getId().toString(),
                 senderName,
                 senderInitials,
@@ -314,7 +317,8 @@ public class MatchingService {
                                   double budgetPerKg) {
         // Kilo libre : pas de capacité réelle à remplir, la part « poids » est neutre (la moitié).
         int weightScore;
-        if (isKgFree(announcement)) {
+        // Trajet bateau au m³ (sans kilos) : même part neutre que le kilo libre.
+        if (isKgFree(announcement) || announcement.getAvailableKg() == null) {
             weightScore = 20;
         } else {
             double ratio = request.getWeightKg().divide(announcement.getAvailableKg(),
@@ -327,27 +331,32 @@ public class MatchingService {
         // budget « couvrait » n'importe quel prix EUR (5000 >= 8), et un budget 10 €/kg
         // échouait face à 6000 F CFA/kg qui n'en valent que ~9. Même devise → brut,
         // exact et sans bruit de taux.
-        double pricePerKg = announcement.getPricePerKg().doubleValue();
-        double budgetComparable = budgetPerKg;
-        double priceComparable = pricePerKg;
-        String requestCurrency = request.getCurrency() != null ? request.getCurrency() : "EUR";
-        String announcementCurrency = announcement.getCurrency() != null ? announcement.getCurrency() : "EUR";
-        if (!requestCurrency.equalsIgnoreCase(announcementCurrency)) {
-            budgetComparable = exchangeRateService.toEurPivot(
-                    java.math.BigDecimal.valueOf(budgetPerKg), requestCurrency).doubleValue();
-            java.math.BigDecimal pivot = announcement.getPricePerKgEur() != null
-                    ? announcement.getPricePerKgEur()
-                    : exchangeRateService.toEurPivot(
-                            announcement.getPricePerKg(), announcementCurrency);
-            priceComparable = pivot.doubleValue();
-        }
+        // Trajet bateau au m³ : un budget au kilo ne se compare pas à un prix au m³, part neutre.
         int budgetScore;
-        if (budgetComparable >= priceComparable) {
-            budgetScore = 35;
-        } else if (budgetComparable >= priceComparable * 0.8) {
+        if (announcement.getPricePerKg() == null) {
             budgetScore = 20;
         } else {
-            budgetScore = 5;
+            double pricePerKg = announcement.getPricePerKg().doubleValue();
+            double budgetComparable = budgetPerKg;
+            double priceComparable = pricePerKg;
+            String requestCurrency = request.getCurrency() != null ? request.getCurrency() : "EUR";
+            String announcementCurrency = announcement.getCurrency() != null ? announcement.getCurrency() : "EUR";
+            if (!requestCurrency.equalsIgnoreCase(announcementCurrency)) {
+                budgetComparable = exchangeRateService.toEurPivot(
+                        java.math.BigDecimal.valueOf(budgetPerKg), requestCurrency).doubleValue();
+                java.math.BigDecimal pivot = announcement.getPricePerKgEur() != null
+                        ? announcement.getPricePerKgEur()
+                        : exchangeRateService.toEurPivot(
+                                announcement.getPricePerKg(), announcementCurrency);
+                priceComparable = pivot.doubleValue();
+            }
+            if (budgetComparable >= priceComparable) {
+                budgetScore = 35;
+            } else if (budgetComparable >= priceComparable * 0.8) {
+                budgetScore = 20;
+            } else {
+                budgetScore = 5;
+            }
         }
 
         int dateScore;

@@ -898,6 +898,43 @@ class MatchingServiceTest {
         }
 
         @Test
+        void boatPerM3Trip_withoutKg_matchesWithNeutralWeightAndBudgetParts() throws Exception {
+            // Lot 3 (BA3) : un trajet bateau au m³ n'a ni kilos ni prix au kilo. Aucun NPE : la part
+            // « poids » et la part « budget » sont neutres (20 + 20), la capacité en kilos est absente.
+            activeAnnouncement.setTransportMode(TransportMode.BOAT);
+            activeAnnouncement.setCapacityUnit(CapacityUnit.KG_EXACT);
+            activeAnnouncement.setAvailableKg(null);
+            activeAnnouncement.setPricePerKg(null);
+            activeAnnouncement.setPricePerM3(new BigDecimal("600"));
+            activeAnnouncement.setVolumeCapacityM3(new BigDecimal("2"));
+            activeAnnouncement.setAvailableVolumeM3(new BigDecimal("2"));
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(buildRequest(25, LocalDate.now().plusDays(10), 3)));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            List<MatchingRequestDto> results = matchingService.findMatchingRequests(TRAVELER_ID);
+
+            assertThat(results).hasSize(1);
+            assertThat(results.get(0).tripAvailableKg()).isNull();
+            assertThat(results.get(0).matchScore()).isEqualTo(20 + 20 + 25);
+        }
+
+        @Test
+        void boatPerM3Trip_maxParcelWeightStillApplies() throws Exception {
+            activeAnnouncement.setTransportMode(TransportMode.BOAT);
+            activeAnnouncement.setCapacityUnit(CapacityUnit.KG_EXACT);
+            activeAnnouncement.setAvailableKg(null);
+            activeAnnouncement.setPricePerKg(null);
+            activeAnnouncement.setPricePerM3(new BigDecimal("600"));
+            activeAnnouncement.setMaxParcelWeightKg(new BigDecimal("20"));
+
+            assertThat(notified(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+            assertThat(bestMatched(buildRequest(15, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
+        @Test
         void exactRoadTrip_1500kg_matches1200kgRequest() throws Exception {
             // Garde-fou (déjà vert avant B5) : la route compte en tonnes, 1 200 kg tiennent dans 1 500 kg.
             roadTrip(CapacityUnit.KG_EXACT, "1500", null, null);

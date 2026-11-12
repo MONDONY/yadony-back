@@ -106,6 +106,8 @@ public class AnnouncementSpecification {
      * kilo libre (YADONY-FLUTTER-PROD-Z). Même règle que
      * {@link AnnouncementEntity#reserveCapacity} (aucune limite en KG_FREE).
      */
+    // Un trajet bateau au m³ (availableKg nul, V382) ne passe ni cette borne ni maxAvailableKg :
+    // « NULL >= x » est faux en SQL. SearchCriteriaMatcher reproduit la même règle en mémoire.
     public static Specification<AnnouncementEntity> minAvailableKg(BigDecimal kg) {
         return (root, query, cb) -> cb.or(
                 cb.equal(root.get("capacityUnit"), CapacityUnit.KG_FREE),
@@ -127,8 +129,9 @@ public class AnnouncementSpecification {
      * sur le brut : le fil mélange les devises, et « pricePerKg <= 10 » n'a aucun sens
      * entre une annonce à 8 EUR et une à 5000 XOF. L'appelant convertit la borne
      * (saisie dans la devise du lecteur) via {@code ExchangeRateService.toEurPivot}.
-     * Pivot non null par construction (price_per_kg NOT NULL + CHECK > 0 depuis V3,
-     * backfill V235) : aucune annonce n'échappe au filtre par absence de pivot.
+     * Pivot non null pour tout trajet au kilo (price_per_kg + CHECK > 0 depuis V3, backfill V235).
+     * Un trajet bateau au m³ (V382) n'a ni prix au kilo ni pivot : « NULL <= x » étant faux, il est
+     * exclu de ce filtre, qui ne porte que sur un prix au kilo.
      */
     public static Specification<AnnouncementEntity> maxPricePerKgEur(BigDecimal maxEur) {
         return (root, query, cb) -> cb.lessThanOrEqualTo(root.get("pricePerKgEur"), maxEur);

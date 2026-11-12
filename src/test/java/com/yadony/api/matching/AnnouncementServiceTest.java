@@ -2719,6 +2719,30 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("grille → bateau sans mode de prix (conservé) : 422 boat-price-required, pas de grille en bateau")
+        void mixedToBoat_withoutPricingMode_refused() {
+            AnnouncementEntity a = stubDraft(PricingMode.MIXED, BigDecimal.ZERO);
+            // Transporteur vérifié : seul le mode de prix doit faire refuser.
+            UserEntity carrier = buildTraveler();
+            carrier.setGpPro(true);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(carrier));
+            LocalDate departure = LocalDate.now().plusDays(15);
+            AnnouncementRequest boat = new AnnouncementRequest(
+                    "Paris", "Dakar", departure, null, null,
+                    new AddressDto("CDG", 49.009, 2.547), new AddressDto("DSS", 14.693, -17.447),
+                    BigDecimal.valueOf(10), BigDecimal.valueOf(5), TransportMode.BOAT,
+                    null, null, null, null, null, null, null, null, departure.atTime(18, 0),
+                    null, null, null, departure.plusDays(20), null, null, null,
+                    departure.plusDays(30), null, null);
+
+            assertThatThrownBy(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, boat))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo("boat-price-required"));
+            assertThat(a.getTransportMode()).isNotEqualTo(TransportMode.BOAT);
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("grille → grille : mode inchangé, la grille figée n'est pas recopiée")
         void mixedToMixed_keepsGridUntouched() {
             AnnouncementEntity a = stubDraft(PricingMode.MIXED, BigDecimal.ZERO);

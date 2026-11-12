@@ -117,6 +117,7 @@ class GuestDataExposureIT {
 
     /** Net voyageur au kilo du trajet seede. Masque pour un invite, servi a un inscrit. */
     private static final BigDecimal NET_PAR_KG = new BigDecimal("8.00");
+    private static final BigDecimal NET_PAR_M3 = new BigDecimal("600.00");
     /** Net voyageur de l'unique ligne de grille du trajet seede. Meme regle. */
     private static final BigDecimal NET_LIGNE_GRILLE = new BigDecimal("45.00");
     /** Budget net de la demande seedee. Servi a TOUS, invites compris (decision A16). */
@@ -214,6 +215,12 @@ class GuestDataExposureIT {
             // limites du trajet que l'expediteur doit connaitre avant de decider, invite compris,
             // au meme titre que availableKg et acceptedContentTypes. Ni identite ni montant.
             "maxItemSize", "maxParcelWeightKg",
+            // Bateau (lot 3) : fin de la fourchette d'arrivée estimée, volume proposé et restant, prix au
+            // m³ BRUT (pricePerM3Display) : limites et prix du trajet, comme leurs équivalents au kilo.
+            // pricePerM3 est le NET au m³ : champ ajouté donc toujours sérialisé, il vaut null pour un
+            // invité (même masquage que pricePerKg, GuestSession.travelerNetOrNull). La clé est servie,
+            // jamais la valeur : vérifié par unInviteNeRecoitJamaisLeNetAuM3.
+            "arrivalDateMax", "volumeCapacityM3", "availableVolumeM3", "pricePerM3Display", "pricePerM3",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
@@ -578,6 +585,68 @@ class GuestDataExposureIT {
         assertThat(corps.has("promoCode"))
                 .as("le code promo appartient a l'expediteur, jamais a qui consulte sa demande")
                 .isFalse();
+    }
+
+    /**
+     * Trajet bateau au m³ (lot 3) : le net au m³ suit la règle du net au kilo. La clé
+     * {@code pricePerM3} est toujours sérialisée (champ ajouté), mais à null pour un invité ; le
+     * brut au m³ reste servi. Un inscrit voit le net.
+     */
+    @Test
+    @DisplayName("trajet bateau au m³ : un invité voit le brut au m³, jamais le net")
+    void unInviteNeRecoitJamaisLeNetAuM3() throws Exception {
+        UUID voyageurId = userRepository.findByFirebaseUid("uid-voyageur-exposition").orElseThrow().getId();
+        AnnouncementEntity bateau = new AnnouncementEntity();
+        bateau.setTravelerId(voyageurId);
+        bateau.setDepartureCity("Marseille");
+        bateau.setArrivalCity("Dakar");
+        bateau.setDepartureDate(LocalDate.now().plusDays(12));
+        bateau.setDepartureTime(LocalTime.of(10, 0));
+        bateau.setArrivalDate(LocalDate.now().plusDays(30));
+        bateau.setArrivalDateMax(LocalDate.now().plusDays(40));
+        bateau.setTransportMode(TransportMode.BOAT);
+        bateau.setPickupAddressLabel("Port de Marseille");
+        bateau.setPickupLat(new BigDecimal("43.300000"));
+        bateau.setPickupLng(new BigDecimal("5.370000"));
+        bateau.setDeliveryAddressLabel("Port de Dakar");
+        bateau.setDeliveryLat(new BigDecimal("14.690000"));
+        bateau.setDeliveryLng(new BigDecimal("-17.440000"));
+        bateau.setVolumeCapacityM3(new BigDecimal("2.500"));
+        bateau.setAvailableVolumeM3(new BigDecimal("2.500"));
+        bateau.setPricePerM3(NET_PAR_M3);
+        bateau.setCurrency("EUR");
+        bateau.setTimezone("Europe/Paris");
+        bateau.setStatus(AnnouncementStatus.ACTIVE);
+        bateau.setCapacityUnit(CapacityUnit.KG_EXACT);
+        bateau.setPricingMode(PricingMode.KG);
+        bateau.setHandoverDeadline(LocalDateTime.now().plusDays(10));
+        bateau.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.CASH));
+        UUID bateauId = announcementRepository.save(bateau).getId();
+
+        JsonNode detail = lire(get("/announcements/" + bateauId), "bateau-detail");
+        auditer(detail, "GET /announcements/{id} (bateau au m³)");
+        assertThat(detail.has("pricePerM3")).as("la clé est toujours servie").isTrue();
+        assertThat(detail.get("pricePerM3").isNull()).as("le net au m³ est masqué pour un invité").isTrue();
+        assertThat(detail.path("pricePerM3Display").decimalValue())
+                .as("le brut au m³ reste servi a un visiteur").isGreaterThan(BigDecimal.ZERO);
+
+        JsonNode recherche = lire(get("/announcements").param("page", "0").param("size", "20"), "bateau-recherche");
+        auditer(recherche, "GET /announcements (bateau au m³)");
+        JsonNode carte = null;
+        for (JsonNode n : recherche.path("content")) {
+            if (bateauId.toString().equals(n.path("id").asText())) carte = n;
+        }
+        assertThat(carte).as("le trajet bateau doit ressortir, sinon ce cas ne prouve rien").isNotNull();
+        assertThat(carte.get("pricePerM3").isNull()).isTrue();
+        assertThat(carte.path("pricePerM3Display").decimalValue()).isGreaterThan(BigDecimal.ZERO);
+
+        var inscrit = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+        JsonNode detailInscrit = MAPPER.readTree(mockMvc.perform(get("/announcements/" + bateauId)
+                        .with(authentication(inscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(detailInscrit.path("pricePerM3").decimalValue())
+                .as("un inscrit voit le net au m³").isEqualByComparingTo(NET_PAR_M3);
     }
 
     // ── Non-regression : rien ne change pour un compte inscrit ────────────────

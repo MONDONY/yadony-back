@@ -168,4 +168,88 @@ class ArrivalRulesTest {
         assertThatThrownBy(() -> ArrivalRules.assertOffsetWithinMode(121, TransportMode.BOAT))
                 .isInstanceOf(YadonyBusinessException.class);
     }
+
+    // ─── Bateau (lot 3) : fourchette d'arrivée estimée ──────────────────────────
+
+    private static AnnouncementEntity boatAnn(LocalDate min, LocalDate max) {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setTransportMode(TransportMode.BOAT);
+        a.setDepartureDate(DEP);
+        a.setArrivalDate(min);
+        a.setArrivalDateMax(max);
+        return a;
+    }
+
+    @Test
+    @DisplayName("code de retrait d'un bateau : calé sur la FIN de la fourchette, même règle sans heure")
+    void pickupCodeExpiry_usesArrivalMax() {
+        LocalDate min = DEP.plusDays(30);
+        LocalDate max = DEP.plusDays(40);
+
+        assertThat(ArrivalRules.pickupCodeExpiry(boatAnn(min, max))).isEqualTo(max.atStartOfDay().plusDays(3));
+    }
+
+    @Test
+    @DisplayName("code de retrait d'un bateau avec heure d'arrivée : fin de fourchette + heure + 24 h")
+    void pickupCodeExpiry_usesArrivalMaxWithTime() {
+        AnnouncementEntity a = boatAnn(DEP.plusDays(30), DEP.plusDays(40));
+        a.setArrivalTime(LocalTime.of(8, 0));
+
+        assertThat(ArrivalRules.pickupCodeExpiry(a)).isEqualTo(DEP.plusDays(41).atTime(8, 0));
+    }
+
+    @Test
+    @DisplayName("sans fourchette : expiration inchangée (arrivée effective)")
+    void pickupCodeExpiry_withoutRange_unchanged() {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setDepartureDate(DEP);
+        a.setArrivalDate(DEP.plusDays(1));
+
+        assertThat(ArrivalRules.pickupCodeExpiry(a)).isEqualTo(DEP.plusDays(1).atStartOfDay().plusDays(3));
+        assertThat(ArrivalRules.latestArrivalDate(a)).isEqualTo(DEP.plusDays(1));
+    }
+
+    @Test
+    @DisplayName("jour d'arrivée effectif d'un bateau : début de fourchette ; au plus tard : la fin")
+    void effectiveAndLatestArrival_boat() {
+        AnnouncementEntity a = boatAnn(DEP.plusDays(30), DEP.plusDays(40));
+
+        assertThat(ArrivalRules.effectiveArrivalDate(a)).isEqualTo(DEP.plusDays(30));
+        assertThat(ArrivalRules.latestArrivalDate(a)).isEqualTo(DEP.plusDays(40));
+    }
+
+    @Test
+    @DisplayName("fourchette valide, y compris d'un seul jour et jusqu'à départ + 120 j")
+    void validateRange_ok() {
+        assertThatCode(() -> ArrivalRules.validateRange(DEP, DEP.plusDays(30), DEP.plusDays(40)))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> ArrivalRules.validateRange(DEP, DEP.plusDays(30), DEP.plusDays(30)))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> ArrivalRules.validateRange(DEP, DEP.plusDays(100), DEP.plusDays(120)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("début ou fin manquant, fin avant le début : 422 arrival-range-invalid")
+    void validateRange_incomplete_rejected() {
+        for (LocalDate[] range : new LocalDate[][] {
+                {null, DEP.plusDays(40)}, {DEP.plusDays(30), null}, {null, null},
+                {DEP.plusDays(30), DEP.plusDays(29)}}) {
+            assertThatThrownBy(() -> ArrivalRules.validateRange(DEP, range[0], range[1]))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("arrival-range-invalid");
+                    });
+        }
+    }
+
+    @Test
+    @DisplayName("fin au-delà de départ + 120 j : 422 arrival-too-far (120)")
+    void validateRange_beyond120_rejected() {
+        assertThatThrownBy(() -> ArrivalRules.validateRange(DEP, DEP.plusDays(100), DEP.plusDays(121)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("arrival-too-far");
+                    assertThat(ex.getMessage()).contains("120");
+                });
+    }
 }

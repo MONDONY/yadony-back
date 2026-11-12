@@ -92,8 +92,44 @@ public record AnnouncementSearchResponse(
          *  sérialisée (null explicite), champ ajouté. */
         @JsonInclude(JsonInclude.Include.ALWAYS) String maxItemSize,
         /** Poids maximal par colis en kg, route et bateau ; null = non renseigné. Toujours sérialisé. */
-        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg,
+        /** Bateau : fin de la fourchette d'arrivée estimée ({@code arrivalDate} = début) ; null hors
+         *  bateau. Toujours sérialisé, comme les quatre champs suivants. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) LocalDate arrivalDateMax,
+        /** Bateau : volume proposé en m³ (capacité initiale) ; null sans volume. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal volumeCapacityM3,
+        /** Bateau : volume restant en m³ ; null sans volume. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal availableVolumeM3,
+        /** Bateau au m³ : prix NET voyageur au m³, masqué (null) pour un invité comme {@code pricePerKg}. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3,
+        /** Prix au m³ payé par l'expéditeur (brut, servi à tous, même règle que {@code pricePerKgDisplay}). */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display
 ) {
+    /** Arité d'avant le bateau : champs bateau nuls (appelants qui ne les lisent pas). */
+    public AnnouncementSearchResponse(
+            UUID id, UUID travelerId, String departureCity, String arrivalCity, LocalDate departureDate,
+            LocalTime departureTime, LocalTime arrivalTime, LocalDate arrivalDate,
+            AddressDto pickupAddress, AddressDto deliveryAddress, BigDecimal availableKg, BigDecimal totalKg,
+            BigDecimal pricePerKg, BigDecimal pricePerKgDisplay,
+            com.yadony.api.matching.TransportMode transportMode, Integer stopsCount, String status,
+            long bidsCount, TravelerProfileDto traveler, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes, List<String> acceptedPaymentMethods,
+            com.yadony.api.matching.CapacityUnit capacityUnit, LocalDateTime createdAt, LocalDateTime updatedAt,
+            com.yadony.api.matching.PricingMode pricingMode, List<AnnouncementPriceGridItemResponse> priceGridItems,
+            LocalDateTime handoverDeadline, boolean isFavorite, boolean urgent, String currency, boolean negotiable,
+            Set<PaymentMethod> availablePaymentMethods, BigDecimal convertedPricePerKg, String convertedCurrency,
+            BigDecimal pricePerKgDisplayConverted, Long uniqueViewerCount, String departureTimezone,
+            String maxItemSize, BigDecimal maxParcelWeightKg) {
+        this(id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes,
+                refusedTypes, acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode,
+                priceGridItems, handoverDeadline, isFavorite, urgent, currency, negotiable,
+                availablePaymentMethods, convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted,
+                uniqueViewerCount, departureTimezone, maxItemSize, maxParcelWeightKg,
+                null, null, null, null, null);
+    }
+
     /**
      * Copie enrichie des prix convertis dans la devise du lecteur. Utilisé par
      * {@code AnnouncementService.searchAnnouncements} une fois les prix originaux mappés, pour ne
@@ -109,7 +145,8 @@ public record AnnouncementSearchResponse(
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
-                departureTimezone, maxItemSize, maxParcelWeightKg);
+                departureTimezone, maxItemSize, maxParcelWeightKg,
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display);
     }
 
     /**
@@ -124,6 +161,7 @@ public record AnnouncementSearchResponse(
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
-                departureTimezone, maxItemSize, maxParcelWeightKg);
+                departureTimezone, maxItemSize, maxParcelWeightKg,
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display);
     }
 }

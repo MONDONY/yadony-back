@@ -935,8 +935,14 @@ class AnnouncementControllerIntegrationTest {
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
+    /** Trajet au kilo ; en bateau, avec la fourchette d'arrivée estimée obligatoire depuis le lot 3. */
     private String validBodyWithMode(String mode) {
-        String date = LocalDate.now().plusDays(10).toString();
+        LocalDate departure = LocalDate.now().plusDays(10);
+        String date = departure.toString();
+        String range = "BOAT".equals(mode)
+                ? ",\n  \"arrivalDate\": \"%s\",\n  \"arrivalDateMax\": \"%s\"".formatted(
+                        departure.plusDays(20), departure.plusDays(30))
+                : "";
         return """
             {
               "departureCity": "Paris",
@@ -948,9 +954,9 @@ class AnnouncementControllerIntegrationTest {
               "transportMode": "%s",
               "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
               "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
-              "handoverDeadline": "%sT07:30:00"
+              "handoverDeadline": "%sT07:30:00"%s
             }
-            """.formatted(date, mode, date);
+            """.formatted(date, mode, date, range);
     }
 
     private String draftBodyWithMode(String mode) {
