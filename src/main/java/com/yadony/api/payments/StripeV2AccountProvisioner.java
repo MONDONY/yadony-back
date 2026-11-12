@@ -70,10 +70,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         // Le pays d'un compte Connect est immuable apres creation : mieux vaut refuser
         // que fabriquer un compte sur un pays par defaut.
         if (country == null || country.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "country-required", "Country Required",
-                    "Renseignez votre pays dans les reglages avant de creer votre "
-                            + "compte de paiement.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "country-required", "problem.country-required");
         }
 
         // yadony dessert des pays que Stripe ne couvre pas (zone XOF, zone XAF).
@@ -86,10 +83,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
             // par utilisateur (FLUTTER-DM, voyageur CI). Ni telephone, ni email, ni nom.
             log.warn("Compte Connect refusé : code=country-not-supported-by-stripe pays={} userId={}",
                     country, user.getId());
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "country-not-supported-by-stripe", "Country Not Supported",
-                    "Le paiement par carte n'est pas encore disponible dans votre pays. "
-                            + "Vous pouvez continuer a recevoir vos paiements en especes.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "country-not-supported-by-stripe", "problem.country-not-supported-by-stripe");
         }
 
         // US / Canada : Stripe refuse stripe_transfers sans merchant.card_payments dans
@@ -110,11 +104,7 @@ public class StripeV2AccountProvisioner implements ConnectAccountProvisioner {
         // ajoute juste apres ce refus doit debloquer le reessai immediatement (FLUTTER-BX).
         String contactEmail = firebaseContact.getFreshContact(user.getFirebaseUid()).email();
         if (contactEmail == null || contactEmail.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "contact-email-required", "Contact Email Required",
-                    "Ajoutez une adresse e-mail à votre compte avant de créer votre "
-                            + "compte de paiement : Stripe en a besoin pour vous envoyer "
-                            + "vos justificatifs de virement.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "contact-email-required", "problem.contact-email-required");
         }
 
         if (StripeConnectCountries.requiresMerchantConfiguration(country)) {

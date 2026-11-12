@@ -271,8 +271,6 @@ public class PawapayOperationService {
     }
 
     private static YadonyBusinessException inProgress(PawapayOperationKind kind) {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "mobile-money-operation-in-progress",
-                "Mobile Money Operation In Progress",
-                "Une opération " + kind.name().toLowerCase() + " est déjà en cours pour ce paiement");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "mobile-money-operation-in-progress", "problem.mobile-money-operation-in-progress", String.valueOf(kind.name().toLowerCase()));
     }
 }

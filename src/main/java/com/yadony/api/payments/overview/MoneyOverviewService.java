@@ -93,8 +93,7 @@ public class MoneyOverviewService {
     public MoneyOverviewResponse overview(String firebaseUid) {
         UUID userId = userRepository.findByFirebaseUid(firebaseUid)
                 .map(UserEntity::getId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Utilisateur introuvable", ""));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.title-only"));
         OffsetDateTime now = OffsetDateTime.now(clock).withOffsetSameInstant(ZoneOffset.UTC);
         OffsetDateTime since = now.minusDays(RECENT_WINDOW_DAYS);
 

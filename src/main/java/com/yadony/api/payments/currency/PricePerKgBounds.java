@@ -35,12 +35,10 @@ public final class PricePerKgBounds {
         BigDecimal min = CurrencyBounds.minPricePerKg(currency);
         BigDecimal max = CurrencyBounds.maxPricePerKg(currency);
         if (pricePerKg.compareTo(min) < 0) {
-            throw refusal(errorCode, REASON_TOO_LOW, min, max, currency,
-                    "Ce prix au kilo est inférieur au minimum autorisé dans cette devise.");
+            throw refusal(errorCode, REASON_TOO_LOW, min, max, currency, "problem.price-out-of-bounds.ce-prix-au-kilo-est-inferieur");
         }
         if (pricePerKg.compareTo(max) > 0) {
-            throw refusal(errorCode, REASON_TOO_HIGH, min, max, currency,
-                    "Ce prix au kilo dépasse le plafond autorisé dans cette devise.");
+            throw refusal(errorCode, REASON_TOO_HIGH, min, max, currency, "problem.price-out-of-bounds.ce-prix-au-kilo-depasse-le");
         }
     }
 
@@ -49,9 +47,9 @@ public final class PricePerKgBounds {
     }
 
     private static YadonyBusinessException refusal(String errorCode, String reason, BigDecimal min,
-            BigDecimal max, SupportedCurrency currency, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, "Price Out Of Bounds",
-                detail, Map.of(
+            BigDecimal max, SupportedCurrency currency, String key) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, key,
+                Map.of(
                         "reason", reason,
                         "min", min,
                         "max", max,

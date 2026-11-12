@@ -115,7 +115,45 @@ class ServerMessagesGuardTest {
             "payments/wallet/WalletSelfRefundService.java",
             "payments/wallet/WalletService.java",
             "payments/wallet/WalletTopupOrchestrator.java",
-            "payments/wallet/topupcode/WalletTopupCodeRedemptionService.java");
+            "payments/wallet/topupcode/WalletTopupCodeRedemptionService.java",
+            // Paquet 4b : reste de payments (avenant, partage, administration du portefeuille, export fiscal,
+            // bornes de prix, taux de change) et tracking. Restent hors liste : webhook Stripe (serveur à serveur),
+            // services mobile money dont le détail est déjà résolu, CurrencyCatalog (texte anglais).
+            "payments/ConnectDashboardController.java",
+            "payments/FiscalExportController.java",
+            "payments/PaymentBusy.java",
+            "payments/PaymentController.java",
+            "payments/PaymentStripeResyncService.java",
+            "payments/PrePaymentReleaseAdapter.java",
+            "payments/StripeV2AccountProvisioner.java",
+            "payments/amendment/BidAmendmentCapacity.java",
+            "payments/amendment/BidAmendmentCardRail.java",
+            "payments/amendment/BidAmendmentCashRail.java",
+            "payments/amendment/BidAmendmentController.java",
+            "payments/amendment/BidAmendmentEligibility.java",
+            "payments/amendment/BidAmendmentPricing.java",
+            "payments/amendment/BidAmendmentService.java",
+            "payments/cash/CashCommissionController.java",
+            "payments/cash/CommissionUnfundedProblem.java",
+            "payments/cash/WalletCommissionCollector.java",
+            "payments/currency/ExchangeRateLookup.java",
+            "payments/currency/ExchangeRateUpdateService.java",
+            "payments/currency/GridItemPriceBounds.java",
+            "payments/currency/PricePerKgBounds.java",
+            "payments/overview/MoneyOverviewService.java",
+            "payments/pawapay/PawapayErrors.java",
+            "payments/pawapay/PawapayOperationService.java",
+            "payments/split/PaymentSplitService.java",
+            "payments/supplement/BidSupplementAdminService.java",
+            "payments/wallet/WalletAdminAdjustmentService.java",
+            "payments/wallet/WalletController.java",
+            "payments/wallet/WalletExternalRefundService.java",
+            "payments/wallet/WalletRefundRetryService.java",
+            "payments/wallet/topupcode/WalletTopupCodeAdminService.java",
+            "payments/wallet/topupcode/WalletTopupCodeController.java",
+            "tracking/PickupCodeRequestService.java",
+            "tracking/TrackingService.java",
+            "tracking/TripPositionService.java");
 
     private static final Pattern HARDCODED_BUSINESS = Pattern.compile(
             "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\("
@@ -138,7 +176,13 @@ class ServerMessagesGuardTest {
             "payments/mobilemoney/MobileMoneyNegotiationPaymentService.java",
             "payments/wallet/WalletService.java",
             "payments/wallet/WalletTopupOrchestrator.java",
-            "payments/wallet/topupcode/WalletTopupCodeRedemptionService.java");
+            "payments/wallet/topupcode/WalletTopupCodeRedemptionService.java",
+            // Paquet 4b : IllegalState/IllegalArgument internes restées françaises (journal seulement).
+            "payments/amendment/BidAmendmentService.java",
+            "payments/cash/WalletCommissionCollector.java",
+            "payments/pawapay/PawapayOperationService.java",
+            "payments/split/PaymentSplitService.java",
+            "payments/wallet/topupcode/WalletTopupCodeAdminService.java");
     private static final Pattern FRENCH_IN_BUSINESS_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");

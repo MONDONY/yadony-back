@@ -39,6 +39,11 @@ class MessagesBundleTest {
             "tracking.step.departed",
             // Messages de retour de colis repris mot pour mot (le français existant ne change pas).
             "problem.code-expired.detail",
+            // Paquet 4b : refus de remise et de code de confirmation repris mot pour mot.
+            "problem.code-not-generated.le-code-de-confirmation-n-est-pas-encore.detail",
+            "problem.code-not-generated.le-code-de-confirmation-n-est-pas-encore2.detail",
+            "problem.code-expired.le-code-de-confirmation-a-expire-demandez-a.detail",
+            "problem.code-incorrect.code-incorrect-tentative-s-restante-s.detail",
             "problem.too-many-attempts.detail",
             // Refus auth repris mot pour mot (paquet i18n serveur n° 3).
             "problem.active-transactions.detail",

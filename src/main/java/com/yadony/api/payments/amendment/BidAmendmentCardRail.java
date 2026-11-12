@@ -118,8 +118,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "amendment-payment-creation-failed",
-                    "Payment Error", "Impossible de bloquer le montant de la modification. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "amendment-payment-creation-failed", "problem.amendment-payment-creation-failed");
         } catch (RuntimeException e) {
             // Expéditeur introuvable, client Stripe impossible à préparer… : sans PaymentIntent, la demande ne pourra
             // jamais être autorisée, elle ne doit pas bloquer le colis et ses kilos jusqu'à l'échéance.
@@ -139,8 +138,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
     }
 
     private PaymentIntentView createPaymentIntent(BidAmendmentEntity a) throws StripeException {
-        UserEntity sender = users.findById(a.getSenderId()).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Expéditeur introuvable"));
+        UserEntity sender = users.findById(a.getSenderId()).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.expediteur-introuvable"));
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(a.getCurrency());
         CurrencyAmount gross = CurrencyAmount.of(a.getGrossAmount(), currency);
         PaymentIntentCreateParams.Builder params = PaymentIntentCreateParams.builder()
@@ -183,17 +181,14 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
      * demande est présentée au voyageur. Pas encore autorisée : rien ne change. Idempotent ; vue de l'expéditeur.
      */
     public BidAmendmentResponse confirmAuthorization(UUID bidId, UUID amendmentId, String firebaseUid) {
-        UserEntity sender = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        UserEntity sender = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
         BidAmendmentEntity a = amendments.findById(amendmentId).filter(found -> found.getBidId().equals(bidId))
                 .orElseThrow(BidAmendmentCardRail::notFound);
         if (!sender.getId().equals(a.getSenderId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas partie à cette modification");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.not-amendment-party");
         }
         if (a.getRail() != BidSupplementRail.STRIPE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-rail-unavailable",
-                    "Amendment Rail Unavailable", "Cette modification n'a pas de montant carte à confirmer");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "amendment-rail-unavailable", "problem.amendment-rail-unavailable");
         }
         if (a.getStatus() == BidAmendmentStatus.AUTHORIZATION_PENDING && a.getStripePaymentIntentId() != null) {
             PaymentIntentView pi = retrieve(a.getStripePaymentIntentId());
@@ -282,8 +277,7 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
             return new AmendmentAcceptResponse(view(reloaded, false), null);
         }
         ledger.captureFailed(id, "status-" + pi.status());
-        throw new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-capture-failed", "Amendment Capture Failed",
-                "Le montant de cette modification n'a pas pu être débité : la demande est annulée");
+        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-capture-failed", "problem.amendment-capture-failed");
     }
 
     // ── Clôture : autorisation rendue ────────────────────────────────────────
@@ -409,17 +403,14 @@ public class BidAmendmentCardRail implements BidAmendmentRailHandler {
     }
 
     private static YadonyBusinessException stripeError() {
-        return new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                "Impossible de vérifier le paiement auprès de Stripe");
+        return YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error");
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "amendment-not-found", "Amendment Not Found",
-                "Modification introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "amendment-not-found", "problem.amendment-not-found");
     }
 
     private static YadonyBusinessException notPending() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "amendment-not-pending", "Amendment Not Pending",
-                "Cette modification n'attend plus de réponse");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "amendment-not-pending", "problem.amendment-not-pending");
     }
 }

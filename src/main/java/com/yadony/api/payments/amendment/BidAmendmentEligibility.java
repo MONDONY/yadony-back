@@ -155,8 +155,7 @@ public class BidAmendmentEligibility {
     /** Erreur HTTP d'un code de {@link #blockingReason} : 409 si une transaction est déjà ouverte, sinon 422. */
     public static YadonyBusinessException exceptionFor(String code) {
         HttpStatus status = "amendment-already-open".equals(code) ? HttpStatus.CONFLICT : HttpStatus.UNPROCESSABLE_ENTITY;
-        return new YadonyBusinessException(status, code, "Amendment Unavailable",
-                "Ce colis ne peut pas être modifié (" + code + ")");
+        return YadonyBusinessException.localized(status, code, "problem.amendment-unavailable", String.valueOf(code));
     }
 
     /** Des kilos libres vendus au kilo (ou une capacité libre), ou des articles de grille. */

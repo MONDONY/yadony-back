@@ -250,13 +250,13 @@ public class WalletRefundRetryService {
      */
     private Target target(WalletRefundRequestEntity request, boolean fresh) {
         if (request.getChannel() != WalletRefundChannel.MANUAL_ADMIN) {
-            throw notEligible("not-manual", "Seul un remboursement traité à la main peut être relancé");
+            throw notEligible("not-manual", "problem.wallet-refund-retry-not-eligible.not-manual");
         }
         if (request.getStatus() == WalletRefundRequestStatus.PROCESSING) {
             throw inProgress();
         }
         if (request.getStatus() != WalletRefundRequestStatus.PENDING) {
-            throw notEligible("not-pending", "Cette demande a déjà été traitée");
+            throw notEligible("not-pending", "problem.wallet-refund-retry-not-eligible.not-pending");
         }
         List<WalletRefundRequestItemEntity> all = itemRepository.findByRefundRequestId(request.getId());
         if (fresh) {
@@ -268,32 +268,28 @@ public class WalletRefundRetryService {
                         Comparator.nullsFirst(Comparator.naturalOrder())))
                 .toList();
         if (items.isEmpty()) {
-            throw notEligible("no-mobile-money-source",
-                    "Aucune recharge mobile money identifiée sur cette demande : remboursez hors app");
+            throw notEligible("no-mobile-money-source", "problem.wallet-refund-retry-not-eligible.no-mobile-money-source");
         }
         List<Line> lines = new ArrayList<>();
         PawapayOperationEntity reference = null;
         for (WalletRefundRequestItemEntity item : items) {
             if (WalletRefundRail.of(item.getPaymentIntentId()) != WalletRefundRail.PAWAPAY) {
-                throw notEligible("not-mobile-money-topup",
-                        "Cette demande ne vient pas d'une recharge mobile money : remboursez hors app");
+                throw notEligible("not-mobile-money-topup", "problem.wallet-refund-retry-not-eligible.not-mobile-money-topup");
             }
             if (item.getPawapayRefundId() != null || item.getPawapayPayoutId() != null) {
                 throw inProgress();
             }
             PawapayOperationEntity deposit = deposit(item);
             if (!request.getCurrency().equalsIgnoreCase(deposit.getCurrency())) {
-                throw notEligible("currency-mismatch", "La devise de la recharge ne correspond pas à la demande");
+                throw notEligible("currency-mismatch", "problem.wallet-refund-retry-not-eligible.currency-mismatch");
             }
             if (reference != null && !sameDestination(reference, deposit)) {
-                throw notEligible("multiple-destinations",
-                        "Les recharges de cette demande viennent de plusieurs numéros : remboursez hors app");
+                throw notEligible("multiple-destinations", "problem.wallet-refund-retry-not-eligible.multiple-destinations");
             }
             reference = reference == null ? deposit : reference;
             BigDecimal lineDue = due(item, deposit, request.getCurrency());
             if (lineDue.signum() <= 0) {
-                throw notEligible("nothing-to-refund",
-                        "Les frais de remboursement absorbent le montant d'une recharge : remboursez hors app");
+                throw notEligible("nothing-to-refund", "problem.wallet-refund-retry-not-eligible.nothing-to-refund");
             }
             lines.add(new Line(item, deposit, lineDue));
         }
@@ -309,12 +305,12 @@ public class WalletRefundRetryService {
         try {
             depositId = WalletRefundRail.depositId(item.getPaymentIntentId());
         } catch (IllegalArgumentException e) {
-            throw notEligible("deposit-missing", "Recharge mobile money d'origine introuvable");
+            throw notEligible("deposit-missing", "problem.wallet-refund-retry-not-eligible.deposit-missing");
         }
         return operationRepository.findById(depositId)
                 .filter(op -> op.getKind() == PawapayOperationKind.DEPOSIT
                         && op.getPurpose() == PawapayOperationPurpose.WALLET_TOPUP)
-                .orElseThrow(() -> notEligible("deposit-missing", "Recharge mobile money d'origine introuvable"));
+                .orElseThrow(() -> notEligible("deposit-missing", "problem.wallet-refund-retry-not-eligible.deposit-missing"));
     }
 
     private static boolean sameDestination(PawapayOperationEntity a, PawapayOperationEntity b) {
@@ -361,26 +357,17 @@ public class WalletRefundRetryService {
 
     private static void validateAmount(BigDecimal amount, BigDecimal due, String currency) {
         if (amount.signum() <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-invalid",
-                    "Unprocessable", "Le montant à verser doit être strictement positif");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-invalid", "problem.wallet-refund-retry-amount-invalid");
         }
         int maxDecimals = scale(currency);
         if (Math.max(amount.stripTrailingZeros().scale(), 0) > maxDecimals) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-scale",
-                    "Unprocessable", "Le montant a trop de décimales pour la devise " + currency
-                            + " (" + maxDecimals + " au plus)", Map.of("maxDecimals", maxDecimals));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-scale", "problem.wallet-refund-retry-amount-scale", Map.of("maxDecimals", maxDecimals), String.valueOf(currency), String.valueOf(maxDecimals));
         }
         if (amount.compareTo(due) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-too-high",
-                    "Unprocessable", "Le montant dépasse le montant dû (" + due.toPlainString() + " " + currency + ")",
-                    Map.of("amountDue", due));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-amount-too-high", "problem.wallet-refund-retry-amount-too-high", Map.of("amountDue", due), String.valueOf(due.toPlainString()), String.valueOf(currency));
         }
         if (amount.compareTo(due) < 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-refund-retry-partial-not-allowed", "Unprocessable",
-                    "La relance verse le montant dû entier (" + due.toPlainString() + " " + currency
-                            + ") : un versement partiel ferait perdre la différence à l'utilisateur",
-                    Map.of("amountDue", due));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-partial-not-allowed", "problem.wallet-refund-retry-partial-not-allowed", Map.of("amountDue", due), String.valueOf(due.toPlainString()), String.valueOf(currency));
         }
     }
 
@@ -394,11 +381,7 @@ public class WalletRefundRetryService {
         props.put("topUpNeeded", funds.topUpNeeded(target.due(), balance, deposit.getProvider(), currency));
         props.put("currency", currency);
         props.put("country", deposit.getCountry());
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-insufficient-pawapay-funds",
-                "Unprocessable", "Le wallet pawaPay " + deposit.getCountry() + " " + currency
-                        + " ne couvre pas le montant dû (" + target.due().toPlainString() + " " + currency
-                        + ", au plus " + maxSafe.toPlainString() + " en sécurité) : alimentez-le d'au moins "
-                        + props.get("topUpNeeded") + " " + currency + " puis relancez", props);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-insufficient-pawapay-funds", "problem.wallet-refund-insufficient-pawapay-funds", props, String.valueOf(deposit.getCountry()), String.valueOf(currency), String.valueOf(target.due().toPlainString()), String.valueOf(maxSafe.toPlainString()), String.valueOf(props.get("topUpNeeded")));
     }
 
     private static int scale(String currency) {
@@ -406,22 +389,19 @@ public class WalletRefundRetryService {
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "wallet-refund-request-not-found", "Not Found",
-                "Demande introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "wallet-refund-request-not-found", "problem.wallet-refund-request-not-found");
     }
 
-    private static YadonyBusinessException notEligible(String reason, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-not-eligible",
-                "Unprocessable", detail, Map.of("reason", reason));
+    private static YadonyBusinessException notEligible(String reason, String key) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-not-eligible",
+                key, Map.of("reason", reason));
     }
 
     private static YadonyBusinessException inProgress() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-in-progress",
-                "Unprocessable", "Un remboursement mobile money est déjà en cours pour cette demande");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-in-progress", "problem.wallet-refund-retry-in-progress.un-remboursement-mobile-money-est-deja-en-cours");
     }
 
     private static YadonyBusinessException balanceUnavailable() {
-        return new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE, "pawapay-balance-unavailable",
-                "Service Unavailable", "Solde du wallet pawaPay illisible : réessayez dans quelques instants");
+        return YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "pawapay-balance-unavailable", "problem.pawapay-balance-unavailable");
     }
 }
