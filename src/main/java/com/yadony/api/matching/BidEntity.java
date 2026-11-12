@@ -40,6 +40,10 @@ public class BidEntity extends BaseEntity {
     @Column(name = "item_size", length = 2)
     private ItemSize itemSize;
 
+    /** Volume réservé en m³ (V382, bateau). Null hors bateau. */
+    @Column(name = "volume_m3", precision = 8, scale = 3)
+    private BigDecimal volumeM3;
+
     /** Net négocié figé (= prix d'accord du thread) pour un bid issu d'une
      * demande. Prime sur le tarif de l'annonce dans le calcul d'affichage,
      * qui peut dériver. Null pour un bid d'offre directe. */
@@ -346,6 +350,8 @@ public class BidEntity extends BaseEntity {
     public void setWeightKg(BigDecimal weightKg) { this.weightKg = weightKg; }
     public ItemSize getItemSize() { return itemSize; }
     public void setItemSize(ItemSize itemSize) { this.itemSize = itemSize; }
+    public BigDecimal getVolumeM3() { return volumeM3; }
+    public void setVolumeM3(BigDecimal volumeM3) { this.volumeM3 = volumeM3; }
 
     public BigDecimal getNegotiatedNetEur() { return negotiatedNetEur; }
     public void setNegotiatedNetEur(BigDecimal negotiatedNetEur) { this.negotiatedNetEur = negotiatedNetEur; }

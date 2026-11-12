@@ -118,6 +118,22 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "arrival_date")
     private LocalDate arrivalDate;
 
+    /** Fin de la fourchette d'arrivée (V382, bateau). Null = arrivée à date fixe. */
+    @Column(name = "arrival_date_max")
+    private LocalDate arrivalDateMax;
+
+    /** Capacité totale en m³ (V382, bateau). Null hors bateau. */
+    @Column(name = "volume_capacity_m3", precision = 8, scale = 3)
+    private BigDecimal volumeCapacityM3;
+
+    /** Volume restant en m³ (V382, bateau). Null hors bateau. */
+    @Column(name = "available_volume_m3", precision = 8, scale = 3)
+    private BigDecimal availableVolumeM3;
+
+    /** Prix au m³ dans la devise du trajet (V382, bateau). Null hors bateau. */
+    @Column(name = "price_per_m3", precision = 10, scale = 2)
+    private BigDecimal pricePerM3;
+
     /** Nombre de reports déjà faits (V278, plafond {@link TripRescheduleRules#MAX_RESCHEDULES}). */
     @Column(name = "reschedule_count", nullable = false)
     private int rescheduleCount = 0;
@@ -474,6 +490,14 @@ public class AnnouncementEntity extends BaseEntity {
     public LocalTime getArrivalTime() { return arrivalTime; }
     public LocalDate getArrivalDate() { return arrivalDate; }
     public void setArrivalDate(LocalDate arrivalDate) { this.arrivalDate = arrivalDate; }
+    public LocalDate getArrivalDateMax() { return arrivalDateMax; }
+    public void setArrivalDateMax(LocalDate arrivalDateMax) { this.arrivalDateMax = arrivalDateMax; }
+    public BigDecimal getVolumeCapacityM3() { return volumeCapacityM3; }
+    public void setVolumeCapacityM3(BigDecimal volumeCapacityM3) { this.volumeCapacityM3 = volumeCapacityM3; }
+    public BigDecimal getAvailableVolumeM3() { return availableVolumeM3; }
+    public void setAvailableVolumeM3(BigDecimal availableVolumeM3) { this.availableVolumeM3 = availableVolumeM3; }
+    public BigDecimal getPricePerM3() { return pricePerM3; }
+    public void setPricePerM3(BigDecimal pricePerM3) { this.pricePerM3 = pricePerM3; }
     public int getRescheduleCount() { return rescheduleCount; }
     public void setRescheduleCount(int rescheduleCount) { this.rescheduleCount = rescheduleCount; }
     public void setArrivalTime(LocalTime arrivalTime) { this.arrivalTime = arrivalTime; }
