@@ -171,8 +171,8 @@ public class VideoModalAdminService {
         List<VideoModalSituation> situations = parseSituations(r.situations());
         List<VideoModalTrigger> triggers = r.triggers() == null ? List.of() : r.triggers().stream().distinct().toList();
         if (triggers.isEmpty() && situations.isEmpty()) {
-            throw invalid("video-modal-triggers-required",
-                    "Au moins un déclencheur est obligatoire (sauf si la campagne a des situations)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "video-modal-triggers-required",
+                    "problem.video-modal-triggers-required");
         }
         c.setTriggers(triggers);
         c.setMaxDisplays(r.maxDisplays() == null ? DEFAULT_MAX_DISPLAYS : r.maxDisplays());

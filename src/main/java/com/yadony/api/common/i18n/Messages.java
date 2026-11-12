@@ -27,7 +27,8 @@ public final class Messages {
     }
 
     /**
-     * Les arguments Number sont passés en String (pas de groupement « 1 250 »).
+     * Les arguments Number sont passés en String (pas de groupement « 1 250 ») ; un {@link LocalizedDate} est écrit
+     * dans la langue de ces messages.
      */
     public String get(String key, Object... args) {
         return source.getMessage(key, convert(args), language.locale());
@@ -55,7 +56,11 @@ public final class Messages {
         Object[] converted = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             Object arg = args[i];
-            converted[i] = (arg instanceof Number) ? String.valueOf(arg) : arg;
+            if (arg instanceof LocalizedDate date) {
+                converted[i] = date.format(language);
+            } else {
+                converted[i] = (arg instanceof Number) ? String.valueOf(arg) : arg;
+            }
         }
         return converted;
     }
