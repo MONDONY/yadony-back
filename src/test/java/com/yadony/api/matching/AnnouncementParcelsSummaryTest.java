@@ -81,7 +81,8 @@ class AnnouncementParcelsSummaryTest {
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
-                parcelsNetPort);
+                parcelsNetPort,
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
 
         AnnouncementEntity a = new AnnouncementEntity();
         ReflectionTestUtils.setField(a, "id", ANNOUNCEMENT_ID);

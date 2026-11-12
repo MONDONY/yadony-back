@@ -9,6 +9,7 @@ import com.yadony.api.config.dto.ContentCategoryResponse;
 import com.yadony.api.config.dto.FlightsEnabledResponse;
 import com.yadony.api.config.dto.PaymentMethodsResponse;
 import com.yadony.api.config.dto.ProEnabledResponse;
+import com.yadony.api.config.dto.TransportModesResponse;
 import com.yadony.api.config.dto.ReimbursementCapResponse;
 import com.yadony.api.config.dto.RemoteConfigRefreshResponse;
 import com.yadony.api.config.dto.SmsEnabledResponse;
@@ -127,6 +128,16 @@ public class ConfigController {
     @GetMapping("/flights-enabled")
     public ResponseEntity<FlightsEnabledResponse> getFlightsEnabled() {
         return ResponseEntity.ok(new FlightsEnabledResponse(settings.flightsEnabled()));
+    }
+
+    /**
+     * Interrupteurs des modes de transport route et bateau : faux, l'application masque le mode.
+     * Public comme ses voisins : lu avant toute authentification, rien de sensible.
+     */
+    @GetMapping("/transport-modes")
+    public ResponseEntity<TransportModesResponse> getTransportModes() {
+        return ResponseEntity.ok(new TransportModesResponse(
+                settings.transportRoadEnabled(), settings.transportBoatEnabled()));
     }
 
     /**

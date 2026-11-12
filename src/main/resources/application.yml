@@ -395,6 +395,12 @@ yadony:
     # terminer l'offre. Valeur d'AMORCAGE seulement : une fois la ligne pro_enabled
     # presente dans platform_settings, c'est le back-office (Parametres) qui decide.
     enabled: ${YADONY_PRO_ENABLED:false}
+  transport:
+    # Interrupteurs des modes route et bateau (l'avion reste toujours ouvert). Faux par defaut.
+    # Valeurs d'AMORCAGE seulement : une fois les lignes transport_*_enabled presentes dans
+    # platform_settings, c'est le back-office (Parametres) qui decide.
+    road-enabled: ${YADONY_TRANSPORT_ROAD_ENABLED:false}
+    boat-enabled: ${YADONY_TRANSPORT_BOAT_ENABLED:false}
   escrow-timeout-hours: ${YADONY_ESCROW_TIMEOUT_HOURS:48}
   gp-pro:
     # Revue quotidienne des titulaires du badge GP Pro et purge de secours des justificatifs.

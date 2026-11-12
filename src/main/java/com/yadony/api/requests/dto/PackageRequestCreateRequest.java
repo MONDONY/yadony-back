@@ -43,7 +43,11 @@ public record PackageRequestCreateRequest(
     // service retombe sur ActiveCurrencyResolver.resolve(senderId) (portefeuille,
     // sinon pays). Validée contre SupportedCurrency dans PackageRequestService,
     // jamais ici (422 currency-unsupported, pas une 400 Bean Validation).
-    String currency
+    String currency,
+    // Mode de transport voulu. Absent/null : PLANE (anciennes apps, qui ne l'envoient pas) ;
+    // « ANY » : peu importe (stocké null en base) ; sinon l'un des modes, soumis aux
+    // interrupteurs route/bateau dans PackageRequestService. Valeur inconnue : 422 validation.
+    @Pattern(regexp = "ANY|PLANE|CAR|TRAIN|BUS|BOAT|OTHER") String transportMode
 ) {
     /**
      * Constructeur de compatibilité (sans promoCode ni currency) — évite de
@@ -57,7 +61,7 @@ public record PackageRequestCreateRequest(
             Set<PaymentMethod> acceptedPaymentMethods, List<String> photoKeys, Boolean saveAsDraft) {
         this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
             description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
-            acceptedPaymentMethods, photoKeys, saveAsDraft, null, null);
+            acceptedPaymentMethods, photoKeys, saveAsDraft, null, null, null);
     }
 
     /**
@@ -72,6 +76,21 @@ public record PackageRequestCreateRequest(
             String promoCode) {
         this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
             description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
-            acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, null);
+            acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, null, null);
+    }
+
+    /**
+     * Constructeur de compatibilité (sans transportMode) — l'ancienne forme canonique,
+     * pour ne pas retoucher tous les sites d'appel existants.
+     */
+    public PackageRequestCreateRequest(
+            String departureCity, String arrivalCity, LocalDate desiredDate, Integer dateToleranceDays,
+            BigDecimal weightKg, String contentCategory, String description, BigDecimal totalBudgetEur,
+            String photoUrl, String pickupNeighborhood, String deliveryNeighborhood, boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods, List<String> photoKeys, Boolean saveAsDraft,
+            String promoCode, String currency) {
+        this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
+            description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
+            acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, currency, null);
     }
 }

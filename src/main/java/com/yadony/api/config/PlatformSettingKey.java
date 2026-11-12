@@ -67,6 +67,17 @@ import java.util.Arrays;
  * l'onglet Billets). Faux par défaut : on l'allume depuis le back-office, sans
  * redéploiement, une fois le compte Travelpayouts prêt.
  *
+ * <p>{@code TRANSPORT_ROAD_ENABLED} et {@code TRANSPORT_BOAT_ENABLED} sont les interrupteurs des
+ * modes de transport route et bateau (l'avion reste le mode historique, toujours ouvert).
+ * Faux par défaut : tant qu'un mode est éteint, l'application le masque. Route éteinte : les
+ * trajets voiture et bus restent acceptés (dony-pro et l'assistant les publient déjà), seules les
+ * demandes d'envoi de ce mode sont refusées. Bateau éteint : la création d'un trajet bateau et
+ * les demandes d'envoi bateau sont refusées (un trajet bateau déjà en base reste modifiable).
+ * Tant que les deux sont éteints, la correspondance demandes-trajets ignore le mode. Amorcés une seule fois depuis
+ * {@code YADONY_TRANSPORT_ROAD_ENABLED} / {@code YADONY_TRANSPORT_BOAT_ENABLED}, puis pilotés
+ * depuis le back-office sans redéploiement. Exposés à l'application par
+ * {@code GET /config/transport-modes}.
+ *
  * <p>{@code PAYMENTS_PAYPAL_ENABLED}, {@code PAYMENTS_APPLE_PAY_ENABLED} et
  * {@code PAYMENTS_GOOGLE_PAY_ENABLED} sont les drapeaux des moyens de paiement de la feuille
  * de paiement (YADONY-FLUTTER-PROD-11). PayPal faux : « paypal » n'est jamais ajouté aux
@@ -97,6 +108,8 @@ public enum PlatformSettingKey {
     TRACKING_PHOTOS_MAX_PER_BID("tracking_photos_max_per_bid", PlatformSettingType.INTEGER),
     PHOTO_PURGE_ENABLED("photo_purge_enabled", PlatformSettingType.BOOLEAN),
     FLIGHTS_ENABLED("flights_enabled", PlatformSettingType.BOOLEAN),
+    TRANSPORT_ROAD_ENABLED("transport_road_enabled", PlatformSettingType.BOOLEAN),
+    TRANSPORT_BOAT_ENABLED("transport_boat_enabled", PlatformSettingType.BOOLEAN),
     ASSISTANT_DAILY_QUOTA("assistant_daily_quota", PlatformSettingType.INTEGER),
     ASSISTANT_FORM_DRAFT_DAILY_QUOTA("assistant_form_draft_daily_quota", PlatformSettingType.INTEGER),
     PAYMENTS_PAYPAL_ENABLED("payments_paypal_enabled", PlatformSettingType.BOOLEAN),

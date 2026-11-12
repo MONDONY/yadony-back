@@ -174,7 +174,8 @@ class PackageRequestServiceMatchingTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.defaults(),
                 blockVisibility, null, org.mockito.Mockito.mock(PackageRequestInsightService.class),
                 org.mockito.Mockito.mock(TravelerNegotiationLookup.class),
-                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class));
+                org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class),
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
     }
 
     @Test

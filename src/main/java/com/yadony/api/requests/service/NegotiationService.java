@@ -73,6 +73,7 @@ public class NegotiationService {
     private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     private final NegotiationMobileMoneyPort mobileMoneyPort;
     private final MessagesResolver messagesResolver;
+    private final com.yadony.api.matching.TransportModeGuard transportModeGuard;
 
     /**
      * Commission des fils à grille figée, celle que prélève le rail espèces ; injectée par champ,
@@ -97,7 +98,8 @@ public class NegotiationService {
                                CommissionRateResolver commissionRateResolver,
                                com.yadony.api.payments.currency.ExchangeRateService exchangeRateService,
                                NegotiationMobileMoneyPort mobileMoneyPort,
-                               MessagesResolver messagesResolver) {
+                               MessagesResolver messagesResolver,
+                               com.yadony.api.matching.TransportModeGuard transportModeGuard) {
         this.requestRepo = requestRepo;
         this.threadRepo = threadRepo;
         this.messageRepo = messageRepo;
@@ -115,6 +117,7 @@ public class NegotiationService {
         this.exchangeRateService = exchangeRateService;
         this.mobileMoneyPort = mobileMoneyPort;
         this.messagesResolver = messagesResolver;
+        this.transportModeGuard = transportModeGuard;
     }
 
     /**
@@ -1016,8 +1019,14 @@ public class NegotiationService {
         ann.setDepartureAt(com.yadony.api.matching.AnnouncementService.deriveDepartureAt(
                 req.departureDate(), req.departureTime(), ann.getTimezone()));
         ann.setArrivalTime(req.arrivalTime());
+        // Le mode du trajet dédié : celui de la demande s'il existe, sinon celui que le voyageur
+        // propose, sinon l'avion (la colonne est NOT NULL, le CHECK V35 refuse un mode nul).
+        com.yadony.api.matching.TransportMode mode = request.getTransportMode() != null
+                ? request.getTransportMode()
+                : (req.transportMode() != null ? req.transportMode() : com.yadony.api.matching.TransportMode.PLANE);
+        transportModeGuard.assertTripModeAllowed(mode, null);
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
-                req.arrivalDate(), req.arrivalTime());
+                req.arrivalDate(), req.arrivalTime(), mode);
         ann.setArrivalDate(req.arrivalDate());
         ann.setHandoverDeadline(dedicatedHandoverDeadline(
                 req.departureDate(), req.departureTime(), ann.getTimezone()));
@@ -1051,7 +1060,7 @@ public class NegotiationService {
                         traveler.canReceiveMobileMoney(request.getCurrency()));
         ann.setAcceptedPaymentMethods(offerable.isEmpty()
                 ? java.util.EnumSet.of(PaymentMethod.CASH) : java.util.EnumSet.copyOf(offerable));
-        ann.setTransportMode(request.getTransportMode());
+        ann.setTransportMode(mode);
         ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
         ann.setDescription(req.description());
         ann.setAcceptedContentTypes(req.acceptedContentTypes() != null

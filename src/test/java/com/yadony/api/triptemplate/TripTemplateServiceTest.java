@@ -29,6 +29,7 @@ class TripTemplateServiceTest {
     @Mock TripTemplateRepository repository;
     @Mock AuditService auditService;
     @Mock com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
+    @Mock com.yadony.api.matching.TransportModeGuard transportModeGuard;
     @InjectMocks TripTemplateService service;
 
     // Mockito renvoie null pour un retour String non stubé, et non Optional.empty() :
@@ -61,6 +62,75 @@ class TripTemplateServiceTest {
                 "XOF", pricingMode, methods, true, List.of("Hi-fi"), "Pas de liquide",
                 pickup, new AddressDto("Gare de Lyon", 48.84, 2.37),
                 LocalTime.of(22, 0), 2, "CI", "FR");
+    }
+
+    private CreateTripTemplateRequest requestWithMode(String mode) {
+        return new CreateTripTemplateRequest(
+                "Mon Paris->Dakar", "🇸🇳",
+                "Paris", 48.85, 2.35,
+                "Dakar", 14.71, -17.46,
+                mode, "SUITCASE_23KG", 23, 8.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    private static YadonyBusinessException transportModeDisabled() {
+        return new YadonyBusinessException(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                "transport-mode-disabled", "Mode de transport indisponible",
+                "Le transport par bateau n'est pas encore ouvert.");
+    }
+
+    @Test
+    void create_boatTemplate_whenGuardRefuses_is422_andNothingIsSaved() {
+        doThrow(transportModeDisabled()).when(transportModeGuard)
+                .assertTripModeAllowed(eq(com.yadony.api.matching.TransportMode.BOAT), any());
+
+        assertThatThrownBy(() -> service.create(userId, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("transport-mode-disabled");
+                });
+        verify(repository, never()).save(any(TripTemplateEntity.class));
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void update_existingBoatTemplate_guardSeesBoatAsPrevious() {
+        TripTemplateEntity existing = new TripTemplateEntity();
+        existing.setUserId(userId);
+        existing.setTransportMode("BOAT");
+        UUID id = UUID.randomUUID();
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+        var request = new UpdateTripTemplateRequest(
+                "Mon Paris->Dakar", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
+                "BOAT", "SUITCASE_23KG", 23, 8.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
+
+        service.update(userId, id, request);
+
+        verify(transportModeGuard).assertTripModeAllowed(
+                com.yadony.api.matching.TransportMode.BOAT, com.yadony.api.matching.TransportMode.BOAT);
+        verify(repository).save(existing);
+    }
+
+    @Test
+    void create_lowercaseMode_isStoredNormalized() {
+        var dto = service.create(userId, requestWithMode(" plane "));
+
+        ArgumentCaptor<TripTemplateEntity> captor = ArgumentCaptor.forClass(TripTemplateEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getTransportMode()).isEqualTo("PLANE");
+        assertThat(dto.transportMode()).isEqualTo("PLANE");
+        verify(transportModeGuard).assertTripModeAllowed(eq(com.yadony.api.matching.TransportMode.PLANE), any());
+    }
+
+    @Test
+    void create_unknownMode_is422InvalidTransportMode_andNothingIsSaved() {
+        assertThatThrownBy(() -> service.create(userId, requestWithMode("SHIP")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("invalid-transport-mode");
+                });
+        verify(repository, never()).save(any(TripTemplateEntity.class));
     }
 
     @Test

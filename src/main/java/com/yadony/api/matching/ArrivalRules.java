@@ -16,21 +16,42 @@ import java.time.LocalTime;
  */
 public final class ArrivalRules {
 
-    /** Au-delà, ce n'est plus un trajet mais un séjour. Aligné sur le CHECK de V276. */
-    public static final int MAX_DAYS_AFTER_DEPARTURE = 3;
+    /**
+     * Plafond absolu de la base : le CHECK {@code chk_announcements_arrival_date} (V379) accepte
+     * jusqu'à 120 jours, ce qu'il faut à un bateau. Chaque mode a sa propre limite dessous.
+     */
+    private static final int BOAT_MAX_DAYS = 120;
 
     private ArrivalRules() {}
 
+    /**
+     * Durée maximale entre le départ et l'arrivée selon le mode : au-delà, ce n'est plus un
+     * trajet mais un séjour. Avion, train et autre : 3 jours (vols de nuit, escales) ; voiture
+     * et bus : 14 jours (routes longues, frontières) ; bateau : 120 jours (cargos, traversées
+     * avec escales). Mode absent : 3 jours, comme avant les modes.
+     */
+    public static int maxDaysAfterDeparture(TransportMode mode) {
+        if (mode == null) {
+            return 3;
+        }
+        return switch (mode) {
+            case PLANE, TRAIN, OTHER -> 3;
+            case CAR, BUS -> 14;
+            case BOAT -> BOAT_MAX_DAYS;
+        };
+    }
+
     public static void validate(LocalDate departureDate, LocalTime departureTime,
-                                LocalDate arrivalDate, LocalTime arrivalTime) {
+                                LocalDate arrivalDate, LocalTime arrivalTime, TransportMode mode) {
         if (arrivalDate == null || departureDate == null) {
             return;
         }
         if (arrivalDate.isBefore(departureDate)) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-before-departure", "problem.arrival-before-departure");
         }
-        if (arrivalDate.isAfter(departureDate.plusDays(MAX_DAYS_AFTER_DEPARTURE))) {
-            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-too-far", "problem.arrival-too-far", MAX_DAYS_AFTER_DEPARTURE);
+        int maxDays = maxDaysAfterDeparture(mode);
+        if (arrivalDate.isAfter(departureDate.plusDays(maxDays))) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-too-far", "problem.arrival-too-far", maxDays);
         }
         if (arrivalDate.isEqual(departureDate) && arrivalTime != null && departureTime != null
                 && !arrivalTime.isAfter(departureTime)) {

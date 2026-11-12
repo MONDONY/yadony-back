@@ -65,6 +65,7 @@ class NegotiationServiceTest {
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
     @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     @Mock private com.yadony.api.requests.NegotiationMobileMoneyPort mobileMoneyPort;
+    @Mock private com.yadony.api.matching.TransportModeGuard transportModeGuard;
 
     private NegotiationService service;
 
@@ -165,7 +166,8 @@ class NegotiationServiceTest {
         service = new NegotiationService(requestRepo, threadRepo, messageRepo, userRepository,
                 announcementRepo, eventPublisher, auditService, config, negotiationProperties,
                 cashGatePort, escrowPort, storageService, photoService,
-                commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver());
+                commissionRateResolver, exchangeRateService, mobileMoneyPort, TestMessages.resolver(),
+                transportModeGuard);
     }
 
     private UserBusinessPrefsEntity prefsWithCurrency(UUID userId, String code) {
@@ -768,6 +770,146 @@ class NegotiationServiceTest {
             assertThat(threadCaptor.getValue().getTravelerAnnouncementId()).isEqualTo(newAnnId);
             verify(auditService).log(eq("ANNOUNCEMENT"), eq(newAnnId), eq("DEDICATED_TRIP_CREATED_AT_OFFER"),
                 eq(TRAVELER_ID), anyMap());
+        }
+
+        /** Payload avec mode facultatif et date d'arrivée choisie (11 paramètres, canonique). */
+        private com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest dedicatedTripPayload(
+                LocalDate date, LocalDate arrivalDate, com.yadony.api.matching.TransportMode offerMode) {
+            return new com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest(
+                date,
+                java.time.LocalTime.of(8, 0),
+                java.time.LocalTime.of(14, 30),
+                new com.yadony.api.matching.dto.AddressDto("CDG T2E", 49.0097, 2.5479),
+                new com.yadony.api.matching.dto.AddressDto("DSS Diass", 14.6708, -17.0734),
+                "Bagage en soute",
+                java.util.List.of("vetements", "documents"),
+                java.util.List.of("liquides"),
+                false, arrivalDate, offerMode
+            );
+        }
+
+        /** Démarre une négociation avec trajet dédié et renvoie l'annonce enregistrée. */
+        private com.yadony.api.matching.AnnouncementEntity startDedicatedTripAndCaptureAnnouncement(
+                com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest payload) {
+            when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            when(announcementRepo.save(any())).thenAnswer(inv -> {
+                com.yadony.api.matching.AnnouncementEntity a = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(a, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return a;
+            });
+            when(threadRepo.save(any())).thenAnswer(inv -> {
+                NegotiationThreadEntity t = inv.getArgument(0);
+                try {
+                    var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                    idField.setAccessible(true);
+                    idField.set(t, UUID.randomUUID());
+                } catch (Exception e) { throw new RuntimeException(e); }
+                return t;
+            });
+            when(announcementRepo.findCountryCodeByCityName("Paris")).thenReturn(Optional.of("FR"));
+            when(announcementRepo.findCountryCodeByCityName("Dakar")).thenReturn(Optional.of("SN"));
+
+            service.start(TRAVELER_ID, new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, payload));
+
+            ArgumentCaptor<com.yadony.api.matching.AnnouncementEntity> annCaptor =
+                ArgumentCaptor.forClass(com.yadony.api.matching.AnnouncementEntity.class);
+            verify(announcementRepo).save(annCaptor.capture());
+            return annCaptor.getValue();
+        }
+
+        @Test
+        @DisplayName("demande « peu importe » : le trajet dédié prend le mode de l'offre, contrôlé par la garde et par la durée d'arrivée de ce mode")
+        void dedicatedTrip_usesOfferMode_whenRequestIsAny() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(null);
+            LocalDate departure = request.getDesiredDate();
+
+            // Arrivée 10 jours après : refusée pour l'avion (3 jours), acceptée pour la voiture (14).
+            var ann = startDedicatedTripAndCaptureAnnouncement(dedicatedTripPayload(
+                departure, departure.plusDays(10), com.yadony.api.matching.TransportMode.CAR));
+
+            assertThat(ann.getTransportMode()).isEqualTo(com.yadony.api.matching.TransportMode.CAR);
+            verify(transportModeGuard).assertTripModeAllowed(com.yadony.api.matching.TransportMode.CAR, null);
+        }
+
+        @Test
+        @DisplayName("demande « peu importe » et offre sans mode : le trajet dédié est un vol (PLANE), jamais null")
+        void dedicatedTrip_defaultsToPlane_whenRequestAnyAndOfferWithoutMode() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(null);
+
+            var ann = startDedicatedTripAndCaptureAnnouncement(
+                dedicatedTripPayload(request.getDesiredDate()));
+
+            assertThat(ann.getTransportMode()).isEqualTo(com.yadony.api.matching.TransportMode.PLANE);
+            verify(transportModeGuard).assertTripModeAllowed(com.yadony.api.matching.TransportMode.PLANE, null);
+        }
+
+        @Test
+        @DisplayName("la demande fixe un mode : il l'emporte, le mode de l'offre est ignoré")
+        void dedicatedTrip_keepsRequestMode_whenRequestHasOne() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(com.yadony.api.matching.TransportMode.TRAIN);
+            LocalDate departure = request.getDesiredDate();
+
+            var ann = startDedicatedTripAndCaptureAnnouncement(dedicatedTripPayload(
+                departure, departure, com.yadony.api.matching.TransportMode.BOAT));
+
+            assertThat(ann.getTransportMode()).isEqualTo(com.yadony.api.matching.TransportMode.TRAIN);
+            verify(transportModeGuard).assertTripModeAllowed(com.yadony.api.matching.TransportMode.TRAIN, null);
+            verify(transportModeGuard, never()).assertTripModeAllowed(
+                eq(com.yadony.api.matching.TransportMode.BOAT), any());
+        }
+
+        @Test
+        @DisplayName("la garde refuse le mode (bateau éteint) → 422 transport-mode-disabled, aucun trajet enregistré")
+        void dedicatedTrip_boatRefusedByGuard_savesNothing() {
+            stubDedicatedTripRequestFields();
+            request.setTransportMode(null);
+            LocalDate departure = request.getDesiredDate();
+            lenient().when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            lenient().when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            lenient().when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            lenient().when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            lenient().when(announcementRepo.findCountryCodeByCityName(anyString())).thenReturn(Optional.empty());
+            doThrow(new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "transport-mode-disabled",
+                "Mode de transport indisponible", "Le transport par bateau n'est pas encore ouvert."))
+                .when(transportModeGuard).assertTripModeAllowed(
+                    eq(com.yadony.api.matching.TransportMode.BOAT), any());
+            var payload = dedicatedTripPayload(
+                departure, departure, com.yadony.api.matching.TransportMode.BOAT);
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("80"), request.getDesiredDate(),
+                new BigDecimal("5"), null, null, true, payload)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled");
+                });
+
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any());
         }
 
         @Test

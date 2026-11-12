@@ -45,7 +45,7 @@ public class PackageRequestEntity extends BaseEntity {
     private ParcelSize parcelSize;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "transport_mode", nullable = false, length = 20)
+    @Column(name = "transport_mode", length = 20)
     private com.yadony.api.matching.TransportMode transportMode;
 
     // Colonne élargie en TEXT par V171 (multi-sélection canonique jointe par virgule

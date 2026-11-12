@@ -408,6 +408,50 @@ class PackageRequestControllerIT {
         verify(service, org.mockito.Mockito.never()).create(any(), any());
     }
 
+    /** Mode de transport inconnu : refus Bean Validation (422 validation), le service n'est pas appelé. */
+    @Test
+    void post_create_unknownTransportMode_returns422Validation() throws Exception {
+        PackageRequestCreateRequest req = new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau", new BigDecimal("28.00"), null,
+            "10e", "Plateau",
+            true, java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE),
+            List.of(), null, null, null, "SHIP");
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.type").value("https://yadony.app/errors/validation"))
+            .andExpect(jsonPath("$.violations.transportMode").exists());
+        verify(service, org.mockito.Mockito.never()).create(any(), any());
+    }
+
+    /** « ANY » (peu importe) et les modes connus passent la validation du DTO. */
+    @Test
+    void post_create_anyTransportMode_returns201() throws Exception {
+        UUID newId = UUID.randomUUID();
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(fakeResponse(newId));
+        String body = objectMapper.writeValueAsString(new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau", new BigDecimal("28.00"), null,
+            "10e", "Plateau",
+            true, java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE),
+            List.of(), null, null, null, "ANY"));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isCreated());
+        verify(service).create(eq(SENDER_UUID), argThat(r -> "ANY".equals(r.transportMode())));
+    }
+
     @Test
     void put_update_weight32_returns200() throws Exception {
         UUID id = UUID.randomUUID();

@@ -181,6 +181,16 @@ public class PlatformSettingsService {
         return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.FLIGHTS_ENABLED.key()));
     }
 
+    /** Interrupteur du mode route — voir {@link PlatformSettingKey#TRANSPORT_ROAD_ENABLED}. */
+    public boolean transportRoadEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.TRANSPORT_ROAD_ENABLED.key()));
+    }
+
+    /** Interrupteur du mode bateau — voir {@link PlatformSettingKey#TRANSPORT_BOAT_ENABLED}. */
+    public boolean transportBoatEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.TRANSPORT_BOAT_ENABLED.key()));
+    }
+
     /** Feature flag de l'offre PRO — voir {@link PlatformSettingKey#PRO_ENABLED}. */
     public boolean proEnabled() {
         String raw = cache.all().get(PlatformSettingKey.PRO_ENABLED.key());
@@ -372,6 +382,8 @@ public class PlatformSettingsService {
             case TRACKING_PHOTOS_MAX_PER_BID -> String.valueOf(trackingPhotosMaxPerBid());
             case PHOTO_PURGE_ENABLED -> String.valueOf(photoPurgeEnabled());
             case FLIGHTS_ENABLED -> String.valueOf(flightsEnabled());
+            case TRANSPORT_ROAD_ENABLED -> String.valueOf(transportRoadEnabled());
+            case TRANSPORT_BOAT_ENABLED -> String.valueOf(transportBoatEnabled());
             case ASSISTANT_DAILY_QUOTA -> String.valueOf(assistantDailyQuota());
             case ASSISTANT_FORM_DRAFT_DAILY_QUOTA -> String.valueOf(assistantFormDraftDailyQuota());
             case PAYMENTS_PAYPAL_ENABLED -> String.valueOf(paypalEnabled());
@@ -506,6 +518,18 @@ public class PlatformSettingsService {
             case FLIGHTS_ENABLED -> {
                 if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
                     throw invalid("L'activation des billets d'avion attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
+            case TRANSPORT_ROAD_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation du mode route attend true ou false");
+                }
+                yield String.valueOf(Boolean.parseBoolean(value));
+            }
+            case TRANSPORT_BOAT_ENABLED -> {
+                if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)) {
+                    throw invalid("L'activation du mode bateau attend true ou false");
                 }
                 yield String.valueOf(Boolean.parseBoolean(value));
             }

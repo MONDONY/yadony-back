@@ -132,7 +132,8 @@ class PackageRequestServiceGridTest {
                 activeCurrencyResolver, exchangeRateService, mapper, matchingService,
                 new YadonyConfigProperties(null, null, new YadonyConfigProperties.Urgency(3), null),
                 announcementRepository, commissionRateResolver, PlatformSettingsTestFactory.withProEnabled(true),
-                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup, commissionGridService);
+                blockVisibility, TestMessages.resolver(), insightService, negotiationLookup, commissionGridService,
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
     }
 
     @AfterEach

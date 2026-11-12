@@ -32,18 +32,21 @@ public class MatchingService {
     private final UserRepository userRepository;
     private final com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     private final BlockVisibility blockVisibility;
+    private final com.yadony.api.config.PlatformSettingsService platformSettingsService;
 
     public MatchingService(
             AnnouncementRepository announcementRepository,
             PackageRequestRepository packageRequestRepository,
             UserRepository userRepository,
             com.yadony.api.payments.currency.ExchangeRateService exchangeRateService,
-            BlockVisibility blockVisibility) {
+            BlockVisibility blockVisibility,
+            com.yadony.api.config.PlatformSettingsService platformSettingsService) {
         this.announcementRepository = announcementRepository;
         this.packageRequestRepository = packageRequestRepository;
         this.userRepository = userRepository;
         this.exchangeRateService = exchangeRateService;
         this.blockVisibility = blockVisibility;
+        this.platformSettingsService = platformSettingsService;
     }
 
     public List<MatchingRequestDto> findMatchingRequests(UUID travelerId) {
@@ -209,17 +212,31 @@ public class MatchingService {
                 .toList();
     }
 
-    /**
-     * Règle de match commune à {@link #findMatchingRequests} et
-     * {@link #findBestMatchByRequestId} : corridor déjà filtré en SQL, restent le
-     * poids et la fenêtre de date. Point d'extension unique — ajouter un critère
-     * ici le propage aux deux chemins.
-     */
     /** Score de date d'une demande sans date (« Date flexible ») : exacte = 25, proche = 15. */
     static final int FLEXIBLE_DATE_SCORE = 20;
 
+    /**
+     * Règle de match commune à {@link #findMatchingRequests},
+     * {@link #findBestMatchByRequestId} et {@link #findTravelersMatchingPackage} : corridor
+     * déjà filtré en SQL, restent le mode de transport, le poids et la fenêtre de date.
+     * Point d'extension unique : ajouter un critère ici le propage aux trois chemins.
+     */
     private boolean matches(PackageRequestEntity request, AnnouncementEntity announcement) {
-        return fitsWeight(request, announcement) && fitsDate(request, announcement);
+        return fitsMode(request, announcement)
+                && fitsWeight(request, announcement) && fitsDate(request, announcement);
+    }
+
+    /**
+     * Mode choisi par l'expéditeur ; une demande « peu importe » (mode nul) accepte tout trajet.
+     * Tant que les deux interrupteurs route et bateau sont éteints, le choix du mode n'existe pas
+     * encore côté produit : le mode est ignoré (le client n'envoie rien, les demandes historiques
+     * portent la valeur par défaut avion) et la correspondance reste celle d'avant.
+     */
+    private boolean fitsMode(PackageRequestEntity request, AnnouncementEntity announcement) {
+        if (!platformSettingsService.transportRoadEnabled() && !platformSettingsService.transportBoatEnabled()) {
+            return true;
+        }
+        return TransportMode.accepts(request.getTransportMode(), announcement.getTransportMode());
     }
 
     private boolean fitsWeight(PackageRequestEntity request, AnnouncementEntity announcement) {

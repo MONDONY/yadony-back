@@ -29,6 +29,8 @@ public class PlatformSettingsInitializer {
     private final YadonyConfigProperties config;
     private final boolean smsEnabledProperty;
     private final boolean proEnabledProperty;
+    private final boolean transportRoadEnabledProperty;
+    private final boolean transportBoatEnabledProperty;
     private final boolean kycDiditEnabledProperty;
     private final boolean criticalSmsFallbackEnabledProperty;
     private final int assistantDailyQuotaProperty;
@@ -46,6 +48,10 @@ public class PlatformSettingsInitializer {
                                        YadonyConfigProperties config,
                                        @Value("${app.sms.enabled:false}") boolean smsEnabledProperty,
                                        @Value("${yadony.pro.enabled:false}") boolean proEnabledProperty,
+                                       @Value("${yadony.transport.road-enabled:false}")
+                                       boolean transportRoadEnabledProperty,
+                                       @Value("${yadony.transport.boat-enabled:false}")
+                                       boolean transportBoatEnabledProperty,
                                        @Value("${yadony.kyc.didit.enabled:}") String kycDiditEnabledProperty,
                                        @Value("${app.sms.critical-fallback.enabled:false}")
                                        boolean criticalSmsFallbackEnabledProperty,
@@ -70,6 +76,8 @@ public class PlatformSettingsInitializer {
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
         this.proEnabledProperty = proEnabledProperty;
+        this.transportRoadEnabledProperty = transportRoadEnabledProperty;
+        this.transportBoatEnabledProperty = transportBoatEnabledProperty;
         // Vide vaut faux — voir PlatformSettingsService.parseBooleanOrFalse : une variable
         // d'environnement declaree mais vide ferait sinon echouer le demarrage entier.
         this.kycDiditEnabledProperty = kycDiditEnabledProperty != null
@@ -211,6 +219,9 @@ public class PlatformSettingsInitializer {
                 String.valueOf(PlatformSettingKey.DEFAULT_TRACKING_PHOTOS_MAX_PER_BID));
         defaults.put(PlatformSettingKey.PHOTO_PURGE_ENABLED, "false");
         defaults.put(PlatformSettingKey.FLIGHTS_ENABLED, "false");
+        // Modes route et bateau : amorcés une seule fois depuis YADONY_TRANSPORT_*_ENABLED (faux par défaut).
+        defaults.put(PlatformSettingKey.TRANSPORT_ROAD_ENABLED, String.valueOf(transportRoadEnabledProperty));
+        defaults.put(PlatformSettingKey.TRANSPORT_BOAT_ENABLED, String.valueOf(transportBoatEnabledProperty));
         defaults.put(PlatformSettingKey.REMOTE_CONFIG_FETCH_MINUTES,
                 String.valueOf(PlatformSettingKey.DEFAULT_REMOTE_CONFIG_FETCH_MINUTES));
         defaults.put(PlatformSettingKey.INDIVIDUAL_TRIPS_ALERT_THRESHOLD,

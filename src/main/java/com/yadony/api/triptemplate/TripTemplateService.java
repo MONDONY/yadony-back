@@ -4,6 +4,8 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.config.ContentCategoryNormalizer;
+import com.yadony.api.matching.TransportMode;
+import com.yadony.api.matching.TransportModeGuard;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
@@ -38,12 +40,15 @@ public class TripTemplateService {
     private final TripTemplateRepository repository;
     private final AuditService auditService;
     private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final TransportModeGuard transportModeGuard;
 
     public TripTemplateService(TripTemplateRepository repository, AuditService auditService,
-                               ActiveCurrencyResolver activeCurrencyResolver) {
+                               ActiveCurrencyResolver activeCurrencyResolver,
+                               TransportModeGuard transportModeGuard) {
         this.repository = repository;
         this.auditService = auditService;
         this.activeCurrencyResolver = activeCurrencyResolver;
+        this.transportModeGuard = transportModeGuard;
     }
 
     /**
@@ -120,6 +125,12 @@ public class TripTemplateService {
      * mobile money même si le portefeuille est en euros.
      */
     private void applyFields(UUID userId, TripTemplateEntity entity, TripTemplatePayload r) {
+        // Mode normalisé (casse, espaces) puis contrôlé avant toute écriture ; le mode déjà enregistré
+        // (PLANE par défaut sur une entité neuve, donc sans effet à la création) laisse un modèle bateau
+        // existant se modifier interrupteur éteint.
+        TransportMode mode = TransportMode.parse(r.transportMode());
+        transportModeGuard.assertTripModeAllowed(mode,
+                TransportMode.parseOrNull(entity.getTransportMode()));
         SupportedCurrency currency = resolveCurrency(userId, r.currency());
         String pricingMode = r.pricingMode() == null ? "KG" : r.pricingMode();
         Set<PaymentMethod> methods = resolvePaymentMethods(r.acceptedPaymentMethods(), r.cashAccepted(), currency);
@@ -140,7 +151,7 @@ public class TripTemplateService {
         entity.setArrivalCity(r.arrivalCity());
         entity.setArrivalLat(r.arrivalLat());
         entity.setArrivalLng(r.arrivalLng());
-        entity.setTransportMode(r.transportMode());
+        entity.setTransportMode(mode.name());
         entity.setCapacityUnit(r.capacityUnit());
         entity.setAvailableKg(r.availableKg());
         entity.setPricePerKg(pricePerKg);

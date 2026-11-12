@@ -166,7 +166,7 @@ public class TripRescheduleService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "handover-deadline-past", "problem.handover-deadline-past");
         }
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
-                request.arrivalDate(), request.arrivalTime());
+                request.arrivalDate(), request.arrivalTime(), announcement.getTransportMode());
     }
 
     /**

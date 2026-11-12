@@ -48,6 +48,7 @@ public class TripRecurrenceService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final ActiveCurrencyResolver activeCurrencyResolver;
+    private final TransportModeGuard transportModeGuard;
     private final TripRecurrenceCalendar calendar = new TripRecurrenceCalendar();
 
     public TripRecurrenceService(TripRecurrenceRepository repository,
@@ -56,7 +57,8 @@ public class TripRecurrenceService {
                                  UserRepository userRepository,
                                  AuditService auditService,
                                  ApplicationEventPublisher eventPublisher,
-                                 ActiveCurrencyResolver activeCurrencyResolver) {
+                                 ActiveCurrencyResolver activeCurrencyResolver,
+                                 TransportModeGuard transportModeGuard) {
         this.repository = repository;
         this.announcementService = announcementService;
         this.announcementRepository = announcementRepository;
@@ -64,6 +66,7 @@ public class TripRecurrenceService {
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.activeCurrencyResolver = activeCurrencyResolver;
+        this.transportModeGuard = transportModeGuard;
     }
 
     /**
@@ -243,7 +246,8 @@ public class TripRecurrenceService {
         String code = e.getErrorCode();
         return com.yadony.api.travelerstatus.PublishingLimitGate.CODE_STATUS_REQUIRED.equals(code)
                 || com.yadony.api.travelerstatus.PublishingLimitGate.CODE_LIMIT_REACHED.equals(code)
-                || com.yadony.api.travelerstatus.PublishingLimitGate.CODE_GP_PRO_PENDING.equals(code);
+                || com.yadony.api.travelerstatus.PublishingLimitGate.CODE_GP_PRO_PENDING.equals(code)
+                || TransportModeGuard.ERROR_CODE.equals(code);
     }
 
     /**
@@ -346,10 +350,16 @@ public class TripRecurrenceService {
 
     private void applyFields(TripRecurrenceEntity e, TripRecurrenceRequest r,
                              java.util.function.Supplier<String> fallbackCurrency) {
+        // Mode normalisé (casse, espaces) puis contrôlé avant toute écriture ; le mode déjà enregistré
+        // (PLANE par défaut sur une entité neuve, donc sans effet à la création) laisse une récurrence bateau
+        // existant se modifier interrupteur éteint.
+        TransportMode mode = TransportMode.parse(r.transportMode());
+        transportModeGuard.assertTripModeAllowed(mode,
+                TransportMode.parseOrNull(e.getTransportMode()));
         e.setSourceTemplateId(r.sourceTemplateId());
         e.setDepartureCity(r.departureCity());
         e.setArrivalCity(r.arrivalCity());
-        e.setTransportMode(r.transportMode());
+        e.setTransportMode(mode.name());
         e.setCapacityUnit(r.capacityUnit());
         e.setAvailableKg(r.availableKg());
         e.setPricePerKg(r.pricePerKg());
@@ -368,7 +378,7 @@ public class TripRecurrenceService {
         e.setDepartureTime(r.departureTime());
         e.setArrivalTime(r.arrivalTime());
         e.setArrivalDayOffset(r.arrivalDayOffset() == null ? 0 : r.arrivalDayOffset());
-        e.setStopsCount(TripStops.normalize(r.stopsCount(), parseTransportMode(r.transportMode())));
+        e.setStopsCount(TripStops.normalize(r.stopsCount(), mode));
         e.setCashAccepted(r.cashAccepted());
         e.setWeekdays(r.weekdays());
         int publicationLeadDays = r.publicationLeadDays() != null
@@ -405,18 +415,6 @@ public class TripRecurrenceService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "payment-method-required", "problem.payment-method-required");
         }
         e.setCardDeclined(r.declinesCard());
-    }
-
-    /** Mode inconnu : aucune escale enregistrée, la validation du mode reste à la publication. */
-    private static TransportMode parseTransportMode(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        try {
-            return TransportMode.valueOf(raw.toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
     }
 
     private String joinCategories(List<String> categories) {

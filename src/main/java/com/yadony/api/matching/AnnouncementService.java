@@ -208,6 +208,9 @@ public class AnnouncementService {
     /** Net estimé des colis en possession du voyageur (implémenté dans {@code payments/}). */
     private final TravelerParcelsNetPort travelerParcelsNet;
 
+    /** Interrupteurs des modes de transport (bateau fermé tant qu'il n'est pas ouvert depuis l'admin). */
+    private final TransportModeGuard transportModeGuard;
+
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
 
@@ -237,7 +240,8 @@ public class AnnouncementService {
             TravelerPayoutNetworksPort travelerPayoutNetworks,
             TripRankingProperties rankingProperties,
             TripScoreCalculator tripScoreCalculator,
-            TravelerParcelsNetPort travelerParcelsNet
+            TravelerParcelsNetPort travelerParcelsNet,
+            TransportModeGuard transportModeGuard
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -262,6 +266,7 @@ public class AnnouncementService {
         this.rankingProperties = rankingProperties;
         this.tripScoreCalculator = tripScoreCalculator;
         this.travelerParcelsNet = travelerParcelsNet;
+        this.transportModeGuard = transportModeGuard;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -971,6 +976,12 @@ public class AnnouncementService {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
 
+        // Bateau fermé tant que l'interrupteur est éteint : avant toute écriture, brouillon compris.
+        // Une occurrence générée par une récurrence déjà enregistrée n'est pas une nouvelle ouverture
+        // du mode : la récurrence a passé la garde à sa création, ses trajets continuent de sortir.
+        transportModeGuard.assertTripModeAllowed(request.transportMode(),
+                recurrenceId != null ? request.transportMode() : null);
+
         // D4 : voyageur suspendu de publication (retour de colis non rendu, décision admin).
         // S'applique aussi bien à un brouillon qu'à une publication directe.
         assertPublishingNotSuspended(user);
@@ -1078,7 +1089,7 @@ public class AnnouncementService {
                 request.handoverDeadline(), TripTimezones.zoneOf(announcement.getTimezone()),
                 Instant.now());
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
-                request.arrivalDate(), request.arrivalTime());
+                request.arrivalDate(), request.arrivalTime(), request.transportMode());
         announcement.setHandoverDeadline(request.handoverDeadline());
         // Absent = prix ferme : un client pas encore à jour ne doit jamais ouvrir
         // un trajet à la négociation sans que le voyageur l'ait demandé.
@@ -1550,6 +1561,8 @@ public class AnnouncementService {
         }
 
         final com.yadony.api.matching.TransportMode oldTransportMode = announcement.getTransportMode();
+        // Un trajet bateau déjà en base reste modifiable interrupteur éteint ; y passer ne l'est pas.
+        transportModeGuard.assertTripModeAllowed(request.transportMode(), oldTransportMode);
         final String oldCurrency = announcement.getCurrency();
         final String newCurrency = resolveCurrencyOnUpdate(announcement, request.currency(), user.getId());
         final boolean currencyChanged = !newCurrency.equalsIgnoreCase(oldCurrency);
@@ -1562,7 +1575,7 @@ public class AnnouncementService {
         }
 
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
-                request.arrivalDate(), request.arrivalTime());
+                request.arrivalDate(), request.arrivalTime(), request.transportMode());
 
         // Calculés AVANT d'écraser les villes : une modification qui omet le code pays
         // (l'édition ne le recevait pas du détail) le conserve si la ville n'a pas changé,

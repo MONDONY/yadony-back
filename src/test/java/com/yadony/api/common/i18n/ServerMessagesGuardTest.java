@@ -82,6 +82,8 @@ class ServerMessagesGuardTest {
             "matching/TripRecurrenceService.java",
             "matching/TripRescheduleController.java",
             "matching/TripRescheduleService.java",
+            "matching/TransportMode.java",
+            "matching/TransportModeGuard.java",
             "matching/TripSeriesService.java",
             "matching/TripStops.java",
             "matching/TripsSummaryController.java",

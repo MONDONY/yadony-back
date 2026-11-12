@@ -194,4 +194,39 @@ class ConfigControllerPlatformSettingsIT {
         }
         assertThat(settings.flightsEnabled()).isFalse();
     }
+
+    /** Modes de transport : route et bateau éteints par défaut, forme exacte {road, boat}. */
+    @Test
+    void transportModes_defaultsToBothDisabled() throws Exception {
+        mockMvc.perform(get("/config/transport-modes"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.road").value(false))
+                .andExpect(jsonPath("$.boat").value(false))
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void transportModes_reflectsPlatformSettings() throws Exception {
+        settings.update(Map.of(PlatformSettingKey.TRANSPORT_BOAT_ENABLED, "true"), UUID.randomUUID());
+        try {
+            mockMvc.perform(get("/config/transport-modes"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.road").value(false))
+                    .andExpect(jsonPath("$.boat").value(true));
+            assertThat(settings.transportBoatEnabled()).isTrue();
+            assertThat(settings.transportRoadEnabled()).isFalse();
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.TRANSPORT_BOAT_ENABLED, "false"), UUID.randomUUID());
+        }
+
+        settings.update(Map.of(PlatformSettingKey.TRANSPORT_ROAD_ENABLED, "true"), UUID.randomUUID());
+        try {
+            mockMvc.perform(get("/config/transport-modes"))
+                    .andExpect(jsonPath("$.road").value(true))
+                    .andExpect(jsonPath("$.boat").value(false));
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.TRANSPORT_ROAD_ENABLED, "false"), UUID.randomUUID());
+        }
+        assertThat(settings.transportRoadEnabled()).isFalse();
+    }
 }

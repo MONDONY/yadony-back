@@ -132,7 +132,8 @@ class AnnouncementSearchRankingTest {
                 mock(AnnouncementViewService.class),
                 mock(TravelerPayoutNetworksPort.class),
                 props, scoreCalculator,
-                mock(TravelerParcelsNetPort.class));
+                mock(TravelerParcelsNetPort.class),
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
     }
 
     // ─── Fabriques ────────────────────────────────────────────────────────────

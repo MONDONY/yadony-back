@@ -98,8 +98,16 @@ class AnnouncementServiceTest {
 
     private AnnouncementService announcementService;
 
+    /** Garde réelle sur des interrupteurs simulés : route et bateau ouverts par défaut. */
+    private com.yadony.api.config.PlatformSettingsService transportSettings;
+    private TransportModeGuard transportModeGuard;
+
     @org.junit.jupiter.api.BeforeEach
     void initService() {
+        transportSettings = org.mockito.Mockito.mock(com.yadony.api.config.PlatformSettingsService.class);
+        org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(true);
+        org.mockito.Mockito.lenient().when(transportSettings.transportRoadEnabled()).thenReturn(true);
+        transportModeGuard = new TransportModeGuard(transportSettings);
         YadonyConfigProperties config = new YadonyConfigProperties(null, null,
                 new YadonyConfigProperties.Urgency(3), null);
         // Pass-through: return the key/URL as-is so avatar URL assertions remain valid
@@ -118,7 +126,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
-                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
+                transportModeGuard);
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -1044,6 +1053,92 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("bateau + interrupteur éteint → 422 transport-mode-disabled, rien n'est écrit")
+        void create_boat_whenBoatDisabled_throws422() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(FIREBASE_UID, buildRequest(TransportMode.BOAT)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled");
+                    });
+
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("étape de voyage bateau + interrupteur éteint → 422 transport-mode-disabled, rien n'est écrit")
+        void createTripLeg_boat_whenBoatDisabled_throws422() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+
+            assertThatThrownBy(() -> announcementService.createTripLeg(
+                    FIREBASE_UID, buildRequest(TransportMode.BOAT), UUID.randomUUID(), 1))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled");
+                    });
+
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("copie de série bateau + interrupteur éteint → 422 transport-mode-disabled, rien n'est écrit")
+        void createSeriesCopy_boat_whenBoatDisabled_throws422() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+
+            assertThatThrownBy(() -> announcementService.createSeriesCopy(
+                    FIREBASE_UID, buildRequest(TransportMode.BOAT), UUID.randomUUID()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled"));
+
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("occurrence d'une récurrence bateau déjà enregistrée + interrupteur éteint → générée quand même")
+        void createRecurringAnnouncement_boat_whenBoatDisabled_isAccepted() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            UUID recurrenceId = UUID.randomUUID();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse result = announcementService.createRecurringAnnouncement(
+                    FIREBASE_UID, buildRequest(TransportMode.BOAT), recurrenceId);
+
+            assertThat(result.transportMode()).isEqualTo(TransportMode.BOAT);
+        }
+
+        @Test
+        @DisplayName("voiture + interrupteur bateau éteint → création acceptée (seul le bateau est fermé)")
+        void create_car_whenBoatDisabled_isAccepted() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            org.mockito.Mockito.lenient().when(transportSettings.transportRoadEnabled()).thenReturn(false);
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            AnnouncementResponse result = announcementService.createAnnouncement(FIREBASE_UID, buildRequest(TransportMode.CAR));
+
+            assertThat(result.transportMode()).isEqualTo(TransportMode.CAR);
+        }
+
+        @Test
         @DisplayName("CASH sans carte commission → autorisé (vérification reportée à l'acceptation du bid)")
         void create_cashWithoutCommissionMethod_isAllowed() {
             // Règle métier : la carte de commission n'est plus requise à la création d'annonce.
@@ -1767,6 +1862,59 @@ class AnnouncementServiceTest {
             assertThat(result.departureCity()).isEqualTo("Lyon");
             assertThat(result.arrivalCity()).isEqualTo("Abidjan");
             verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("trajet bateau déjà en base + interrupteur éteint → reste modifiable")
+        void update_existingBoatTrip_whenBoatDisabled_keepsWorking() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setTransportMode(TransportMode.BOAT);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+
+            AnnouncementDetailResponse result = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequestWithMode(TransportMode.BOAT));
+
+            assertThat(result.transportMode()).isEqualTo(TransportMode.BOAT);
+            verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_UPDATED"), any(), any());
+        }
+
+        @Test
+        @DisplayName("passer un trajet existant au bateau + interrupteur éteint → 422 transport-mode-disabled")
+        void update_switchToBoat_whenBoatDisabled_throws422() {
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, updateRequestWithMode(TransportMode.BOAT)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled");
+                    });
+
+            verify(announcementRepository, never()).save(any());
+        }
+
+        private AnnouncementRequest updateRequestWithMode(TransportMode mode) {
+            AnnouncementRequest base = updateRequest("Lyon", "Abidjan", null, null);
+            return new AnnouncementRequest(
+                    base.departureCity(), base.arrivalCity(), base.departureDate(),
+                    base.departureTime(), base.arrivalTime(),
+                    base.pickupAddress(), base.deliveryAddress(),
+                    base.availableKg(), base.pricePerKg(), mode,
+                    null, null, null, null, null, null,
+                    null, null,
+                    base.handoverDeadline(),
+                    null,
+                    null,
+                null);
         }
 
         @Test
@@ -3410,7 +3558,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
-                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
+                transportModeGuard);
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -3781,7 +3930,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
-                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
+                transportModeGuard);
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -4001,7 +4151,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0),
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
-                org.mockito.Mockito.mock(TravelerParcelsNetPort.class));
+                org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
+                transportModeGuard);
         }
 
         @Test
