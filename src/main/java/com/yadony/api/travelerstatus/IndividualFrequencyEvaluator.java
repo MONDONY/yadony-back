@@ -120,7 +120,7 @@ public class IndividualFrequencyEvaluator {
     }
 
     /** Début du mois civil ({@value #ZONE_ID}) en UTC, comme {@code announcements.published_at}. */
-    private static LocalDateTime startUtc(YearMonth month) {
+    public static LocalDateTime startUtc(YearMonth month) {
         return month.atDay(1).atStartOfDay(ZONE).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
     }
 

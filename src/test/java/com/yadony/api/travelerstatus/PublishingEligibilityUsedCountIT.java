@@ -175,7 +175,7 @@ class PublishingEligibilityUsedCountIT {
     void trajetPublieLaDerniereSecondeDuMois_estCompte_intervalleSemiOuvert() {
         UUID id = trip(AnnouncementStatus.ACTIVE);
         AnnouncementEntity a = announcements.findById(id).orElseThrow();
-        a.setPublishedAt(java.time.YearMonth.now(ZoneOffset.UTC).atEndOfMonth().atTime(23, 59, 59, 500_000_000));
+        a.setPublishedAt(IndividualFrequencyEvaluator.startUtc(currentParisMonth().plusMonths(1)).minusNanos(500_000_000));
         announcements.saveAndFlush(a);
 
         assertThat(used()).isEqualTo(1);
@@ -185,9 +185,14 @@ class PublishingEligibilityUsedCountIT {
     void trajetPublieLeTouteDebutDuMoisSuivant_nEstPasCompteCeMois() {
         UUID id = trip(AnnouncementStatus.ACTIVE);
         AnnouncementEntity a = announcements.findById(id).orElseThrow();
-        a.setPublishedAt(java.time.YearMonth.now(ZoneOffset.UTC).plusMonths(1).atDay(1).atStartOfDay());
+        a.setPublishedAt(IndividualFrequencyEvaluator.startUtc(currentParisMonth().plusMonths(1)));
         announcements.saveAndFlush(a);
 
         assertThat(used()).isZero();
+    }
+
+    /** Mois civil Europe/Paris en cours : celui que compte la limite. */
+    private static java.time.YearMonth currentParisMonth() {
+        return IndividualFrequencyEvaluator.monthOf(java.time.LocalDateTime.now(ZoneOffset.UTC));
     }
 }

@@ -82,7 +82,7 @@ public class PublishingEligibilityService {
     }
 
     private PublishingEligibilityResponse decide(UserEntity user, int trips) {
-        YearMonth month = YearMonth.now(clock);
+        YearMonth month = currentMonth();
         LocalDate resetsOn = month.plusMonths(1).atDay(1);
         int used = usedThisMonth(user, month);
 
@@ -105,15 +105,21 @@ public class PublishingEligibilityService {
         return response(reason, limit, used, resetsOn, user);
     }
 
+    /** Mois civil en cours, fuseau Europe/Paris (celui de l'alerte « faux particuliers »). */
+    private YearMonth currentMonth() {
+        return IndividualFrequencyEvaluator.monthOf(LocalDateTime.ofInstant(clock.instant(), java.time.ZoneOffset.UTC));
+    }
+
     /** Trajets publiés (hors brouillons) dans le mois civil, brouillons publiés ce mois-ci compris. */
     public int usedThisMonth(UserEntity user) {
-        return usedThisMonth(user, YearMonth.now(clock));
+        return usedThisMonth(user, currentMonth());
     }
 
     private int usedThisMonth(UserEntity user, YearMonth month) {
-        LocalDateTime from = month.atDay(1).atStartOfDay();
-        // Intervalle semi-ouvert [1er du mois, 1er du mois suivant[.
-        LocalDateTime to = month.plusMonths(1).atDay(1).atStartOfDay();
+        // Intervalle semi-ouvert [1er du mois, 1er du mois suivant[, bornes à minuit Europe/Paris converties en
+        // UTC (comme announcements.published_at), le même mois civil que l'alerte « faux particuliers ».
+        LocalDateTime from = IndividualFrequencyEvaluator.startUtc(month);
+        LocalDateTime to = IndividualFrequencyEvaluator.startUtc(month.plusMonths(1));
         long count = announcementRepository.countPublishedInPeriod(user.getId(), from, to);
         return (int) Math.min(count, Integer.MAX_VALUE);
     }

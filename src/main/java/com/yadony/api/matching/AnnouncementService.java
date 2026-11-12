@@ -1806,8 +1806,9 @@ public class AnnouncementService {
         // pas (le KYC, Stripe et la date restent contrôlés). Publié un mois précédent (ou jamais) : il compte
         // dans le mois courant, la limite s'applique et la date de publication passe à ce mois.
         boolean alreadyCountedThisMonth = announcement.getPublishedAt() != null
-                && java.time.YearMonth.from(announcement.getPublishedAt())
-                        .equals(java.time.YearMonth.now(java.time.ZoneOffset.UTC));
+                && com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(announcement.getPublishedAt())
+                        .equals(com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(
+                                java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
         assertCanPublish(user, !alreadyCountedThisMonth);
         assertStripeCapability(user, announcement.getAcceptedPaymentMethods());
 
