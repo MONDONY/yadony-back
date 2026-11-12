@@ -63,7 +63,7 @@ public class Dac7NotificationListener {
             NotificationText text = NotificationTexts.taxStatement(m, event.year());
             List<long[]> quarters = event.quarters().stream()
                     .map(q -> new long[]{q.netEur(), q.operations(), q.feesEur()}).toList();
-            String detail = NotificationTexts.taxStatementDetail(m, event.year(), quarters);
+            String detail = NotificationTexts.taxStatementDetail(m, event.year(), quarters, event.currency());
             // Push et boîte de l'app : titre et phrase courte, sans aucun montant (écran verrouillé). Le détail par
             // trimestre ne part que par l'e-mail du voyageur.
             dispatcher.notifyUserWithEmailDetail(event.userId(), text.title(), text.body(), detail,

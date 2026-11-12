@@ -11,11 +11,21 @@ import java.util.List;
  * @param resCountryCode  État de résidence (code accepté par la DGFiP : un DOM est {@code FR})
  * @param tin             numéro d'identification fiscale
  * @param tinIssuedBy     pays d'émission du NIF
- * @param quarters        quatre trimestres, dans l'ordre, montants en euros entiers
+ * @param quarters        quatre trimestres, dans l'ordre, montants entiers dans la devise {@code currency}
+ * @param currency        devise des montants (code ISO 4217 de l'énumération du XSD) : celle des paiements sans
+ *                        conversion, ou l'euro
  */
 public record Dac7XmlSeller(boolean entity, String resCountryCode, String tin, String tinIssuedBy, String vat,
                             String firstName, String lastName, LocalDate birthDate, String businessName,
-                            String registrationNumber, Address address, List<Quarter> quarters) {
+                            String registrationNumber, Address address, List<Quarter> quarters, String currency) {
+
+    /** Compatibilité : montants en euros. */
+    public Dac7XmlSeller(boolean entity, String resCountryCode, String tin, String tinIssuedBy, String vat,
+                         String firstName, String lastName, LocalDate birthDate, String businessName,
+                         String registrationNumber, Address address, List<Quarter> quarters) {
+        this(entity, resCountryCode, tin, tinIssuedBy, vat, firstName, lastName, birthDate, businessName,
+                registrationNumber, address, quarters, "EUR");
+    }
 
     /**
      * Adresse détaillée ({@code city} non nul) ou libre ({@code free}). Le champ {@code building} est gardé pour la
@@ -29,7 +39,7 @@ public record Dac7XmlSeller(boolean entity, String resCountryCode, String tin, S
         }
     }
 
-    /** Montants en euros entiers (arrondis à l'export seulement) et nombre d'opérations. */
+    /** Montants entiers (arrondis à l'export seulement) dans la devise du vendeur, et nombre d'opérations. */
     public record Quarter(long consideration, int operations, long fees) {
     }
 

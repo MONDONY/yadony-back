@@ -122,7 +122,7 @@ class Dac7ExportServiceTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"IDENTITY_INCOMPLETE", "IDENTITY_UNAVAILABLE", "TAX_INFO_MISSING", "EUR_INCOMPLETE",
-            "COMMISSION_INCOMPLETE", "PENDING_SPLITS", "INVALID_PARTNER_JURISDICTION", "NO_SELLERS"})
+            "PENDING_SPLITS", "INVALID_PARTNER_JURISDICTION", "NO_SELLERS"})
     @DisplayName("FULL refusé en 409 dac7-export-blocked avec chaque code de blocage")
     void fullBloque(String code) {
         declaration(List.of(seller(List.of(code))), List.of(code));
@@ -171,11 +171,12 @@ class Dac7ExportServiceTest {
         assertThat(file.encrypted()).isFalse();
         assertThat(file.fileName()).isEqualTo("DPIDAC7_2026_123456789_001_20270115103005.xml");
         String xml = new String(file.content(), StandardCharsets.UTF_8);
-        // Arrondi à l'euro à l'export seulement : 95,50 → 96, 10,49 → 10, 5,50 → 6, 0,50 → 1.
+        // Arrondi à l'entier à l'export seulement : 95,50 → 96, 10,49 → 10. Frais retenus sur le voyageur : zéro
+        // (l'expéditeur paie la commission en plus du prix), même si la commission de Yadony est de 5,50.
         assertThat(xml).contains("<dpi:ConsQ1 currCode=\"EUR\">96</dpi:ConsQ1>")
                 .contains("<dpi:ConsQ4 currCode=\"EUR\">10</dpi:ConsQ4>")
-                .contains("<dpi:FeesQ1 currCode=\"EUR\">6</dpi:FeesQ1>")
-                .contains("<dpi:FeesQ4 currCode=\"EUR\">1</dpi:FeesQ4>")
+                .contains("<dpi:FeesQ1 currCode=\"EUR\">0</dpi:FeesQ1>")
+                .contains("<dpi:FeesQ4 currCode=\"EUR\">0</dpi:FeesQ4>")
                 // La Réunion est déclarée FR (annexe 6.4).
                 .contains("<dpi:ResCountryCode>FR</dpi:ResCountryCode>")
                 .contains("<dpi:TIN issuedBy=\"FR\">" + NIF + "</dpi:TIN>")
@@ -531,5 +532,82 @@ class Dac7ExportServiceTest {
         verify(audit).log(eq("DAC7_EXPORT"), any(), eq("DAC7_CONTROL_CSV_GENERATED"), eq(admin), payload.capture());
         assertThat(payload.getValue()).containsOnlyKeys("year", "travelers").containsEntry("travelers", 3);
         verify(audit, never()).log(anyString(), any(), eq("DAC7_EXPORT_GENERATED"), any(), any());
+    }
+
+    @Test
+    @DisplayName("voyageur payé en XOF : currCode XOF, montants entiers sans conversion, frais zéro, conforme au XSD")
+    void exportXof() {
+        UUID id = UUID.randomUUID();
+        UserEntity user = new UserEntity();
+        ReflectionTestUtils.setField(user, "id", id);
+        user.setTaxIdentificationNumber(NIF);
+        user.setTaxCountry("FR");
+        when(users.findAllById(any())).thenReturn(List.of(user));
+        Dac7SellerIdentity identity = new Dac7SellerIdentity(id, Dac7SellerIdentity.SellerType.INDIVIDUAL,
+                Dac7IdentityStatus.COMPLETE, List.of(), "Awa", "Diallo", LocalDate.of(1990, 1, 2),
+                new Dac7Address("1 rue de Paris", null, "69001", "Lyon", "FR", null), null, null);
+        List<QuarterReport> q = List.of(
+                new QuarterReport(1, 1, List.of(), new BigDecimal("100.00"), new BigDecimal("5.00"), true, true,
+                        new BigDecimal("65600.50"), true),
+                new QuarterReport(2, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true, true, BigDecimal.ZERO,
+                        true),
+                new QuarterReport(3, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true, true, BigDecimal.ZERO,
+                        true),
+                new QuarterReport(4, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true, true, BigDecimal.ZERO,
+                        true));
+        TravelerReport report = new TravelerReport(id, "FR", true, Dac7IdentityStatus.COMPLETE, q, "XOF");
+        Seller xof = new Seller(id, "Awa Diallo", "FR", true, Dac7IdentityStatus.COMPLETE, identity, 0, null, report,
+                1, new BigDecimal("100.00"), new BigDecimal("5.00"), true, true, List.of(), false, "XOF",
+                new BigDecimal("65600.50"), true);
+        declaration(List.of(xof), List.of());
+
+        Dac7ExportService.ExportFile file = service(operator(null)).export(2026, "FULL", 0, admin);
+
+        String xml = new String(file.content(), StandardCharsets.UTF_8);
+        assertThat(file.sellers()).isEqualTo(1);
+        assertThat(xml).contains("<dpi:ConsQ1 currCode=\"XOF\">65601</dpi:ConsQ1>")
+                .contains("<dpi:FeesQ1 currCode=\"XOF\">0</dpi:FeesQ1>")
+                .contains("<dpi:TaxesQ1 currCode=\"XOF\">0</dpi:TaxesQ1>")
+                .doesNotContain("currCode=\"EUR\"");
+    }
+
+    @Test
+    @DisplayName("des voyageurs déclarables mais aucun ne peut partir : aucun fichier, chiffres du rapport dans le 409")
+    void tousExclus_rapportDansLaReponse() {
+        Seller missing = seller(List.of("TAX_INFO_MISSING"));
+        when(declarations.declaration(2026, Dac7DeclarationService.IdentityMode.FRESH)).thenReturn(new Declaration(2026,
+                new Dac7Report(2026, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                        List.of()), List.of(missing), List.of(), List.of(), List.of("TAX_INFO_MISSING"), Map.of(), 0,
+                List.of(new Dac7DeclarationService.CollectionAnomaly(missing.userId(), "Awa Diallo",
+                        List.of("TAX_INFO_MISSING")))));
+
+        assertThatThrownBy(() -> service(operator(null)).export(2026, "PARTIAL", null, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("dac7-export-blocked");
+                    assertThat(e.getProperties()).containsEntry("report", "ALL_SELLERS_EXCLUDED")
+                            .containsEntry("declarableTravelers", 1).containsEntry("collectionAnomalies", 1)
+                            .containsEntry("excludedByReason", Map.of("TAX_INFO_MISSING", 1));
+                })
+                .satisfies(e -> assertThat(blockersOf(e)).contains("NO_SELLERS"));
+        verify(reads, never()).recordExport(anyInt(), any(), anyInt(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("personne à déclarer : aucun fichier, rapport « aucun vendeur à déclarer » (409 NO_SELLERS) tracé")
+    void aucunVendeur_rapportSansFichier() {
+        declaration(List.of(), List.of("NO_SELLERS"));
+
+        assertThatThrownBy(() -> service(operator(null)).export(2026, "FULL", null, admin))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("dac7-export-blocked");
+                    assertThat(e.getProperties()).containsEntry("report", "NO_SELLER_TO_DECLARE")
+                            .containsEntry("year", 2026).containsKey("nonDeclarableTravelers")
+                            .containsKey("unknownResidenceTravelers").containsKey("collectionAnomalies");
+                })
+                .satisfies(e -> assertThat(blockersOf(e)).containsExactly("NO_SELLERS"));
+        verify(audit).log(eq("DAC7_EXPORT"), any(), eq("DAC7_NO_SELLER_REPORT"), eq(admin), any());
+        verify(reads, never()).recordExport(anyInt(), any(), anyInt(), any(), any(), any(), any());
+        verify(reads, never()).insertRun(any(), anyInt(), anyInt(), any(), any(), anyInt(), any(), any());
     }
 }

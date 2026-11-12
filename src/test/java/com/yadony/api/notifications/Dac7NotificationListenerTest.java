@@ -82,6 +82,19 @@ class Dac7NotificationListenerTest {
     }
 
     @Test
+    void recapitulatif_detailEnDeviseDuVendeur() {
+        when(dispatcher.messagesFor(user)).thenReturn(TestMessages.fr());
+        listener.onTaxStatement(new Dac7TaxStatementEvent(user, 2026, List.of(
+                new Dac7TaxStatementEvent.Quarter(1, 950, 1, 0), new Dac7TaxStatementEvent.Quarter(2, 0, 0, 0),
+                new Dac7TaxStatementEvent.Quarter(3, 0, 0, 0), new Dac7TaxStatementEvent.Quarter(4, 0, 0, 0)),
+                "XOF"));
+        ArgumentCaptor<String> email = ArgumentCaptor.forClass(String.class);
+        verify(dispatcher).notifyUserWithEmailDetail(eq(user), any(), any(), email.capture(), any());
+        assertThat(email.getValue()).contains("Trimestre 1 : 950 XOF nets").contains("0 XOF de frais Yadony")
+                .doesNotContain("€");
+    }
+
+    @Test
     void echecDEnvoi_avale() {
         when(dispatcher.messagesFor(user)).thenReturn(TestMessages.fr());
         doThrow(new IllegalStateException("x")).when(dispatcher).notifyUser(any(), any(), any(), any());

@@ -91,7 +91,8 @@ public class Dac7SellerStatementService {
                     if (!reads.reserveStatement(seller.userId(), year, adminId, now)) {
                         return false;
                     }
-                    events.publishEvent(new Dac7TaxStatementEvent(seller.userId(), year, quarters(seller)));
+                    events.publishEvent(new Dac7TaxStatementEvent(seller.userId(), year, quarters(seller),
+                            seller.currency()));
                     return true;
                 });
                 if (Boolean.TRUE.equals(reserved)) {
@@ -116,8 +117,8 @@ public class Dac7SellerStatementService {
 
     private static List<Dac7TaxStatementEvent.Quarter> quarters(Seller seller) {
         return seller.report().quarters().stream()
-                .map(q -> new Dac7TaxStatementEvent.Quarter(q.quarter(), Dac7DeclarationService.roundEuro(q.netEur()),
-                        q.operations(), Dac7DeclarationService.roundEuro(q.commissionEur())))
+                .map(q -> new Dac7TaxStatementEvent.Quarter(q.quarter(), Dac7DeclarationService.roundAmount(q.net()),
+                        q.operations(), 0L))
                 .toList();
     }
 }

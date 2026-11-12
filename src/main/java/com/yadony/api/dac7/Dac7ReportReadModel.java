@@ -44,11 +44,21 @@ public class Dac7ReportReadModel {
      * @param commission        commission retenue par Yadony ; {@code null} si elle est introuvable
      * @param paidAt            versement (carte, mobile money), fin du partage admin, ou livraison (espèces)
      * @param countsAsOperation vrai pour un colis payé (paiement ou espèces), faux pour un supplément ou une modification
-     * @param dateEstimated     vrai si la date de livraison manque et que la dernière mise à jour du colis la remplace
+     * @param dateEstimated     vrai si ni la remise ni la livraison ne sont connues et que la dernière mise à jour du
+     *                          colis les remplace
+     * @param deliveryFallback  vrai pour un colis en espèces sans remise confirmée dans l'app (scan de départ) : la date
+     *                          de livraison la remplace (BOI-INT-AEA-30-40 : mise à disposition), choix à noter
      */
     public record OperationRow(Dac7Source source, UUID sourceId, UUID travelerId, String rail, String currency,
                                BigDecimal net, BigDecimal commission, Instant paidAt, boolean countsAsOperation,
-                               boolean dateEstimated) {
+                               boolean dateEstimated, boolean deliveryFallback) {
+
+        public OperationRow(Dac7Source source, UUID sourceId, UUID travelerId, String rail, String currency,
+                            BigDecimal net, BigDecimal commission, Instant paidAt, boolean countsAsOperation,
+                            boolean dateEstimated) {
+            this(source, sourceId, travelerId, rail, currency, net, commission, paidAt, countsAsOperation,
+                    dateEstimated, false);
+        }
     }
 
     /**
@@ -58,10 +68,45 @@ public class Dac7ReportReadModel {
      * @param amount              montant de CE remboursement, dans la devise d'origine
      * @param refundDateEstimated vrai si la date vient de la dernière mise à jour du paiement, faute d'audit
      * @param afterRelease        vrai si le remboursement a eu lieu après le versement au voyageur
+     * @param reimbursedAt        date à laquelle Yadony a repris l'argent au voyageur (transfert Stripe annulé, audit
+     *                            {@code TRANSFER_REVERSED}, la plus ancienne) ; nul sinon : Yadony rembourse alors
+     *                            l'expéditeur sur ses fonds et le voyageur GARDE l'argent (aucune autre reprise
+     *                            n'existe dans le code)
+     * @param paymentAmount       montant brut du paiement remboursé (ce que l'expéditeur a payé) ; nul hors paiement
+     * @param paymentNet          part du voyageur dans ce paiement (brut moins commission) ; nul hors paiement
      */
     public record RefundRow(Dac7Source source, UUID sourceId, UUID travelerId, String currency, BigDecimal amount,
                             Instant operationPaidAt, Instant refundedAt, boolean refundDateEstimated,
-                            boolean afterRelease) {
+                            boolean afterRelease, Instant reimbursedAt, BigDecimal paymentAmount,
+                            BigDecimal paymentNet) {
+
+        public RefundRow(Dac7Source source, UUID sourceId, UUID travelerId, String currency, BigDecimal amount,
+                         Instant operationPaidAt, Instant refundedAt, boolean refundDateEstimated,
+                         boolean afterRelease) {
+            this(source, sourceId, travelerId, currency, amount, operationPaidAt, refundedAt, refundDateEstimated,
+                    afterRelease, null, null, null);
+        }
+
+        public boolean travelerReimbursed() {
+            return reimbursedAt != null;
+        }
+
+        /**
+         * Part du remboursement qui porte sur ce que le voyageur a reçu : le remboursement est calculé sur le brut payé
+         * par l'expéditeur (commission comprise), le voyageur n'a reçu que le net, et un transfert annulé ne lui reprend
+         * pas plus que ce net. Au prorata du net sur le brut ; sans brut connu, le montant entier.
+         */
+        public BigDecimal travelerShare() {
+            if (paymentAmount == null || paymentNet == null || paymentAmount.signum() <= 0) {
+                return amount;
+            }
+            BigDecimal share = amount.multiply(paymentNet).divide(paymentAmount, 10, java.math.RoundingMode.HALF_UP);
+            return share.min(paymentNet);
+        }
+    }
+
+    /** Colis en espèces remis dans la fenêtre mais pas encore livré : encore non déclarable, à ne pas oublier. */
+    public record CashInFlightRow(UUID bidId, UUID travelerId, String currency, Instant handedOverAt) {
     }
 
     /** Partage admin décidé dont le versement au voyageur n'est pas terminé. */
@@ -85,7 +130,9 @@ public class Dac7ReportReadModel {
      * voyageur, commission acquise, sans bon ; un partage tranché à 0 pour le voyageur n'est pas une opération.
      * Voyageur : celui du trajet du colis, ou celui du fil de négociation ; colis du bon : celui du paiement, sinon le
      * colis matérialisé du fil.
-     * 2. Espèces : colis CASH livré (COMPLETED), daté de la livraison (repli signalé : dernière mise à jour). Devise du
+     * 2. Espèces : colis CASH livré (COMPLETED), daté de la REMISE confirmée dans l'app (premier scan DEPART, heure
+     * hors ligne si elle existe), à défaut de la livraison (repli noté), puis de la dernière mise à jour du colis
+     * (repli signalé) ; un colis annulé avant la remise n'est jamais COMPLETED, donc jamais déclaré. Devise du
      * COLIS, sauf pour un colis au net négocié sur un fil : celle du fil, où ce net est fixé. Net = net négocié, sinon poids × prix
      * au kilo du trajet plus les articles de la grille (même base que {@code CashCommissionService}). Commission
      * prélevée au voyageur : {@code cash_commission_charged_amount}, sinon celle du fil (audit
@@ -106,7 +153,8 @@ public class Dac7ReportReadModel {
                             THEN COALESCE(ps.completed_at AT TIME ZONE 'UTC', p.escrow_released_at)
                             ELSE p.escrow_released_at END AS paid_at,
                        TRUE AS counts,
-                       (ps.id IS NOT NULL AND ps.completed_at IS NULL) AS date_estimated
+                       (ps.id IS NOT NULL AND ps.completed_at IS NULL) AS date_estimated,
+                       FALSE AS delivery_fallback
                 FROM payments p
                 LEFT JOIN bids b ON b.id = p.bid_id
                 LEFT JOIN announcements a ON a.id = b.announcement_id
@@ -133,12 +181,17 @@ public class Dac7ReportReadModel {
                        CASE WHEN b.commission_status = 'CHARGED'
                             THEN COALESCE(b.cash_commission_charged_amount, tc.commission,
                                           b.negotiated_gross_eur - b.negotiated_net_eur) END,
-                       COALESCE(b.delivered_at AT TIME ZONE 'UTC', b.updated_at),
+                       COALESCE(h.at, b.delivered_at AT TIME ZONE 'UTC', b.updated_at),
                        TRUE,
-                       b.delivered_at IS NULL
+                       h.at IS NULL AND b.delivered_at IS NULL,
+                       h.at IS NULL AND b.delivered_at IS NOT NULL
                 FROM bids b
                 JOIN announcements a ON a.id = b.announcement_id
                 LEFT JOIN negotiation_threads nt ON nt.id = b.linked_negotiation_thread_id
+                LEFT JOIN LATERAL (
+                    SELECT MIN(COALESCE(te.offline_timestamp, te.scanned_at)) AS at
+                    FROM tracking_events te
+                    WHERE te.bid_id = b.id AND te.event_type = 'DEPART') h ON TRUE
                 LEFT JOIN LATERAL (
                     SELECT CAST(al.payload ->> 'commission' AS NUMERIC) AS commission
                     FROM audit_log al
@@ -151,7 +204,8 @@ public class Dac7ReportReadModel {
                        CASE WHEN s.rail = 'CASH' THEN COALESCE(b.delivered_at AT TIME ZONE 'UTC', b.updated_at)
                             ELSE s.paid_out_at AT TIME ZONE 'UTC' END,
                        FALSE,
-                       s.rail = 'CASH' AND b.delivered_at IS NULL
+                       s.rail = 'CASH' AND b.delivered_at IS NULL,
+                       FALSE
                 FROM bid_supplements s
                 JOIN bids b ON b.id = s.bid_id
                 WHERE s.deleted_at IS NULL
@@ -162,7 +216,8 @@ public class Dac7ReportReadModel {
                        CASE WHEN m.rail = 'CASH' THEN COALESCE(b.delivered_at AT TIME ZONE 'UTC', b.updated_at)
                             ELSE m.paid_out_at AT TIME ZONE 'UTC' END,
                        FALSE,
-                       m.rail = 'CASH' AND b.delivered_at IS NULL
+                       m.rail = 'CASH' AND b.delivered_at IS NULL,
+                       FALSE
                 FROM bid_amendments m
                 JOIN bids b ON b.id = m.bid_id
                 WHERE m.deleted_at IS NULL
@@ -189,7 +244,12 @@ public class Dac7ReportReadModel {
     private static final String REFUNDS_SQL = """
             WITH pay AS (
                 SELECT p.id, COALESCE(a.traveler_id, nt.traveler_id) AS traveler_id, p.currency, p.refunded_amount,
-                       p.escrow_released_at, p.updated_at
+                       p.escrow_released_at, p.updated_at,
+                       (SELECT MIN(tr.created_at) FROM audit_log tr
+                        WHERE p.stripe_transfer_id IS NOT NULL
+                          AND tr.entity_type = 'TRANSFER' AND tr.action = 'TRANSFER_REVERSED'
+                          AND tr.payload ->> 'transferId' = p.stripe_transfer_id) AS reimbursed_at,
+                       p.amount AS payment_amount, p.amount - p.commission_amount AS payment_net
                 FROM payments p
                 LEFT JOIN bids b ON b.id = p.bid_id
                 LEFT JOIN announcements a ON a.id = b.announcement_id
@@ -217,26 +277,31 @@ public class Dac7ReportReadModel {
                 SELECT 'PAYMENT' AS source, pay.id AS source_id, pay.traveler_id, pay.currency, s.amount,
                        pay.escrow_released_at AS operation_paid_at, s.at AS refunded_at,
                        FALSE AS estimated,
-                       (s.action = 'REFUND_AFTER_RELEASE' OR s.at > pay.escrow_released_at) AS after_release
+                       (s.action = 'REFUND_AFTER_RELEASE' OR s.at > pay.escrow_released_at) AS after_release,
+                       pay.reimbursed_at AS reimbursed_at, pay.payment_amount AS payment_amount,
+                       pay.payment_net AS payment_net
                 FROM steps s JOIN pay ON pay.id = s.payment_id
                 WHERE s.amount > 0
                 UNION ALL
                 SELECT 'PAYMENT', pay.id, pay.traveler_id, pay.currency,
                        pay.refunded_amount - COALESCE((SELECT MAX(e.cumulative) FROM events e
                                                        WHERE e.payment_id = pay.id), 0),
-                       pay.escrow_released_at, pay.updated_at, TRUE, TRUE
+                       pay.escrow_released_at, pay.updated_at, TRUE, TRUE, pay.reimbursed_at, pay.payment_amount,
+                       pay.payment_net
                 FROM pay
                 WHERE pay.refunded_amount > COALESCE((SELECT MAX(e.cumulative) FROM events e
                                                       WHERE e.payment_id = pay.id), 0)
                 UNION ALL
                 SELECT 'SUPPLEMENT', s.id, s.traveler_id, s.currency, s.net_amount,
-                       s.paid_out_at AT TIME ZONE 'UTC', s.refunded_at AT TIME ZONE 'UTC', FALSE, TRUE
+                       s.paid_out_at AT TIME ZONE 'UTC', s.refunded_at AT TIME ZONE 'UTC', FALSE, TRUE,
+                       CAST(NULL AS TIMESTAMPTZ), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC)
                 FROM bid_supplements s
                 WHERE s.deleted_at IS NULL AND s.rail <> 'CASH' AND s.status = 'REFUNDED'
                   AND s.paid_out_at IS NOT NULL AND s.refunded_at IS NOT NULL
                 UNION ALL
                 SELECT 'AMENDMENT', m.id, m.traveler_id, m.currency, m.net_amount,
-                       m.paid_out_at AT TIME ZONE 'UTC', m.refunded_at AT TIME ZONE 'UTC', FALSE, TRUE
+                       m.paid_out_at AT TIME ZONE 'UTC', m.refunded_at AT TIME ZONE 'UTC', FALSE, TRUE,
+                       CAST(NULL AS TIMESTAMPTZ), CAST(NULL AS NUMERIC), CAST(NULL AS NUMERIC)
                 FROM bid_amendments m
                 WHERE m.deleted_at IS NULL AND m.rail <> 'CASH' AND m.status = 'REFUNDED'
                   AND m.paid_out_at IS NOT NULL AND m.refunded_at IS NOT NULL
@@ -244,6 +309,24 @@ public class Dac7ReportReadModel {
             SELECT * FROM refunds
             WHERE refunded_at >= :from AND refunded_at < :to
             ORDER BY refunded_at, source_id
+            """;
+
+    /**
+     * Colis en espèces dont la remise (scan DEPART) tombe dans la fenêtre mais qui ne sont pas encore livrés : ils
+     * ne sont comptés qu'une fois COMPLETED, à la date de leur remise. Un colis remis en décembre et livré en janvier
+     * manque donc au fichier de l'année de la remise s'il est généré avant la livraison.
+     */
+    private static final String CASH_IN_FLIGHT_SQL = """
+            SELECT b.id, a.traveler_id, b.currency, h.at AS handed_over_at
+            FROM bids b
+            JOIN announcements a ON a.id = b.announcement_id
+            JOIN LATERAL (
+                SELECT MIN(COALESCE(te.offline_timestamp, te.scanned_at)) AS at
+                FROM tracking_events te
+                WHERE te.bid_id = b.id AND te.event_type = 'DEPART') h ON h.at IS NOT NULL
+            WHERE b.payment_method = 'CASH' AND b.status IN ('HANDED_OVER', 'IN_TRANSIT', 'ARRIVED')
+              AND h.at >= :from AND h.at < :to
+            ORDER BY h.at, b.id
             """;
 
     /** Partages admin décidés, part du voyageur non nulle, transfert pas encore terminé (état courant, sans fenêtre). */
@@ -360,7 +443,8 @@ public class Dac7ReportReadModel {
                 rs.getBigDecimal("commission"),
                 instant(rs, "paid_at"),
                 rs.getBoolean("counts"),
-                rs.getBoolean("date_estimated")));
+                rs.getBoolean("date_estimated"),
+                rs.getBoolean("delivery_fallback")));
     }
 
     /** Remboursements datés dans {@code [from, to[}. */
@@ -374,7 +458,19 @@ public class Dac7ReportReadModel {
                 instant(rs, "operation_paid_at"),
                 instant(rs, "refunded_at"),
                 rs.getBoolean("estimated"),
-                rs.getBoolean("after_release")));
+                rs.getBoolean("after_release"),
+                instant(rs, "reimbursed_at"),
+                rs.getBigDecimal("payment_amount"),
+                rs.getBigDecimal("payment_net")));
+    }
+
+    /** Colis espèces remis dans {@code [from, to[} et pas encore livrés. */
+    public List<CashInFlightRow> cashInFlight(Instant from, Instant to) {
+        return jdbc.query(CASH_IN_FLIGHT_SQL, window(from, to), (rs, i) -> new CashInFlightRow(
+                uuid(rs, "id"),
+                uuid(rs, "traveler_id"),
+                rs.getString("currency"),
+                instant(rs, "handed_over_at")));
     }
 
     public List<PendingSplitRow> pendingSplits() {

@@ -86,7 +86,9 @@ class Dac7SellerStatementServiceTest {
         ArgumentCaptor<Dac7TaxStatementEvent> event = ArgumentCaptor.forClass(Dac7TaxStatementEvent.class);
         verify(events, times(1)).publishEvent(event.capture());
         assertThat(event.getValue().userId()).isEqualTo(ok.userId());
-        assertThat(event.getValue().quarters().get(0)).isEqualTo(new Dac7TaxStatementEvent.Quarter(1, 96, 1, 5));
+        assertThat(event.getValue().quarters().get(0)).isEqualTo(new Dac7TaxStatementEvent.Quarter(1, 96, 1, 0));
+        // Frais retenus sur le voyageur : zéro, même si la commission de Yadony est de 5 ; devise = celle du vendeur.
+        assertThat(event.getValue().currency()).isEqualTo("EUR");
         verify(reads, never()).reserveStatement(eq(excluded.userId()), anyInt(), any(), any());
         verify(audit, times(2)).log(eq("DAC7_STATEMENTS"), any(), eq("DAC7_STATEMENTS_SENT"), eq(admin), any());
     }

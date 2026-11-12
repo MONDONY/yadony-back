@@ -209,4 +209,84 @@ class Dac7DeclarationServiceTest {
         assertThat(Dac7DeclarationService.roundEuro(new BigDecimal("1250.50"))).isEqualTo(1251);
         assertThat(Dac7DeclarationService.roundEuro(null)).isZero();
     }
+
+    private static List<QuarterReport> xofQuarters(boolean declaredComplete, boolean commissionComplete) {
+        QuarterReport q1 = new QuarterReport(1, 1, List.of(), new BigDecimal("100.00"), new BigDecimal("0.00"), false,
+                commissionComplete, new BigDecimal("65600.40"), declaredComplete);
+        QuarterReport empty = new QuarterReport(2, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true, true,
+                BigDecimal.ZERO, true);
+        return List.of(q1, empty, new QuarterReport(3, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true, true,
+                BigDecimal.ZERO, true), new QuarterReport(4, 0, List.of(), BigDecimal.ZERO, BigDecimal.ZERO, true,
+                true, BigDecimal.ZERO, true));
+    }
+
+    @Test
+    @DisplayName("XOF seul : montant déclaré en XOF ; ni euros indicatifs manquants ni commission inconnue ne bloquent")
+    void xofDeclare_sansBlocage() {
+        UUID xof = UUID.randomUUID();
+        when(reports.annualReport(2026)).thenReturn(new Dac7Report(2026,
+                List.of(new TravelerReport(xof, "FR", true, Dac7IdentityStatus.COMPLETE, xofQuarters(true, false),
+                        "XOF")), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        when(users.findAllById(any())).thenReturn(List.of(user(xof, true)));
+        when(reads.lastDiligence(any())).thenReturn(Map.of());
+        when(port.verifiedIdentity(any())).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
+
+        Declaration d = service(new Dac7Properties(false, List.of()), configured()).declaration(2026, true);
+
+        Dac7DeclarationService.Seller seller = d.sellers().get(0);
+        assertThat(seller.currency()).isEqualTo("XOF");
+        assertThat(seller.declaredNet()).isEqualByComparingTo("65600.40");
+        assertThat(seller.declaredComplete()).isTrue();
+        assertThat(seller.eurComplete()).isFalse();
+        assertThat(seller.commissionComplete()).isFalse();
+        assertThat(seller.exclusions()).isEmpty();
+        assertThat(d.blockers()).doesNotContain("EUR_INCOMPLETE");
+    }
+
+    @Test
+    @DisplayName("montant déclaré partiel (conversion en euros manquante) : EUR_INCOMPLETE bloque")
+    void declarePartiel_bloque() {
+        UUID id = UUID.randomUUID();
+        when(reports.annualReport(2026)).thenReturn(new Dac7Report(2026,
+                List.of(new TravelerReport(id, "FR", true, Dac7IdentityStatus.COMPLETE, xofQuarters(false, true),
+                        "EUR")), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        when(users.findAllById(any())).thenReturn(List.of(user(id, true)));
+        when(reads.lastDiligence(any())).thenReturn(Map.of());
+        when(port.verifiedIdentity(any())).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
+
+        Declaration d = service(new Dac7Properties(false, List.of()), configured()).declaration(2026, true);
+
+        assertThat(d.sellers().get(0).exclusions()).containsExactly("EUR_INCOMPLETE");
+        assertThat(d.blockers()).contains("EUR_INCOMPLETE");
+    }
+
+    @Test
+    @DisplayName("rapport d'anomalies : voyageur payé sans numéro fiscal ou à l'identité incomplète, jamais en silence")
+    void anomaliesDeCollecte() {
+        UUID noTax = UUID.randomUUID();
+        UUID ok = UUID.randomUUID();
+        when(reports.annualReport(2026)).thenReturn(new Dac7Report(2026,
+                List.of(new TravelerReport(noTax, "FR", false, Dac7IdentityStatus.COMPLETE, quarters("50.00")),
+                        new TravelerReport(ok, "FR", true, Dac7IdentityStatus.COMPLETE, quarters("50.00"))),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        when(users.findAllById(any())).thenReturn(List.of(user(noTax, true), user(ok, true)));
+        when(reads.lastDiligence(any())).thenReturn(Map.of());
+        when(port.verifiedIdentity(any())).thenReturn(Dac7VerifiedIdentityPort.Lookup.none());
+
+        Declaration d = service(new Dac7Properties(false, List.of()), configured()).declaration(2026, true);
+
+        assertThat(d.collectionAnomalies()).singleElement().satisfies(a -> {
+            assertThat(a.userId()).isEqualTo(noTax);
+            assertThat(a.reasons()).containsExactly("TAX_INFO_MISSING");
+        });
+    }
+
+    @Test
+    @DisplayName("arrondi du montant déclaré : à l'entier, 0,50 compte pour 1, quelle que soit la devise")
+    void arrondiEntier() {
+        assertThat(Dac7DeclarationService.roundAmount(new BigDecimal("65600.50"))).isEqualTo(65601);
+        assertThat(Dac7DeclarationService.roundAmount(new BigDecimal("10.49"))).isEqualTo(10);
+        assertThat(Dac7DeclarationService.roundAmount(null)).isZero();
+        assertThat(Dac7DeclarationService.roundEuro(new BigDecimal("0.50"))).isEqualTo(1);
+    }
 }

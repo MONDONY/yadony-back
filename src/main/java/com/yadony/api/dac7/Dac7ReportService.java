@@ -6,7 +6,9 @@ import com.yadony.api.dac7.Dac7Report.CurrencyAmounts;
 import com.yadony.api.dac7.Dac7Report.PendingSplit;
 import com.yadony.api.dac7.Dac7Report.QuarterReport;
 import com.yadony.api.dac7.Dac7Report.RefundToReconcile;
+import com.yadony.api.dac7.Dac7Report.RefundTreatment;
 import com.yadony.api.dac7.Dac7Report.TravelerReport;
+import com.yadony.api.dac7.Dac7ReportReadModel.CashInFlightRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.OperationRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.PendingSplitRow;
 import com.yadony.api.dac7.Dac7ReportReadModel.RefundRow;
@@ -36,16 +38,21 @@ import java.util.UUID;
  * versée nette de la commission de Yadony, commission séparée, nombre d'opérations, par devise d'origine puis en
  * euros au taux de référence du jour du versement. Tous les rails : carte, mobile money, espèces.
  *
+ * <p>Montant DÉCLARÉ (tâche 3 de la collecte ciblée, BOI-INT-AEA-30-40) : la devise du paiement, SANS conversion (§ 280),
+ * quand le voyageur n'a reçu qu'une devise dans l'année ; sinon tout en euros au taux du jour de chaque opération. Frais
+ * retenus sur le voyageur : zéro (l'expéditeur paie la commission en plus du prix). Les espèces sont datées de la remise
+ * confirmée dans l'app, à défaut de la livraison (repli tracé).
+ *
  * <p>Règles (hypothèses H4 à H8 de la conception provisoire, et décisions de la relecture n° 1, à confirmer par
  * l'expert-comptable) :
  * <ul>
  *   <li>aucun seuil : une seule opération rend le voyageur déclarable ;</li>
  *   <li>date retenue : versement pour la carte et le mobile money, fin du partage admin, livraison pour les espèces
  *       (repli sur la dernière mise à jour du colis signalé, jamais silencieux) ;</li>
- *   <li>aucun remboursement n'est jamais déduit, ni avant ni après le versement : la contrepartie reste le montant
- *       versé au voyageur (la livraison et la libération forcée refusent de verser un paiement déjà remboursé, et tout
- *       versement part du montant entier). Chaque remboursement daté de l'année est listé à réconcilier, une seule fois,
- *       avec l'année de l'opération ;</li>
+ *   <li>remboursements (§ 260) : déduits du trimestre de l'opération seulement si Yadony a repris l'argent au voyageur
+ *       (transfert annulé) la MÊME année civile ; repris l'année suivante, l'année de l'opération est signalée « à
+ *       rectifier » (rectificative hors périmètre) ; sinon le voyageur a gardé l'argent (Yadony rembourse l'expéditeur
+ *       sur ses fonds) et rien n'est déduit. Chaque remboursement daté de l'année est listé une seule fois ;</li>
  *   <li>un partage admin dont le transfert n'est pas terminé n'est pas compté : il est listé en attente ; tranché à 0
  *       pour le voyageur, ce n'est pas une opération ;</li>
  *   <li>un supplément ou une modification ajoute au montant sans compter une opération de plus ;</li>
@@ -79,8 +86,10 @@ public class Dac7ReportService {
         Instant to = LocalDate.of(year + 1, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
         List<OperationRow> operations = readModel.operations(from, to);
         List<RefundRow> refunds = readModel.refunds(from, to);
+        List<CashInFlightRow> inFlight = readModel.cashInFlight(from, to);
 
         Set<UUID> ids = new LinkedHashSet<>();
+        inFlight.stream().map(CashInFlightRow::travelerId).filter(java.util.Objects::nonNull).forEach(ids::add);
         operations.stream().map(OperationRow::travelerId).filter(java.util.Objects::nonNull).forEach(ids::add);
         refunds.stream().map(RefundRow::travelerId).filter(java.util.Objects::nonNull).forEach(ids::add);
         Map<UUID, TravelerRow> facts = new HashMap<>();
@@ -99,6 +108,13 @@ public class Dac7ReportService {
             statuses.put(id, residency.statusOf(country));
             identities.put(id, row != null && row.identityComplete()
                     ? Dac7IdentityStatus.COMPLETE : Dac7IdentityStatus.INCOMPLETE);
+        }
+
+        Map<UUID, Set<String>> currencies = new HashMap<>();
+        for (OperationRow op : operations) {
+            if (op.travelerId() != null) {
+                currencies.computeIfAbsent(op.travelerId(), id -> new java.util.TreeSet<>()).add(op.currency());
+            }
         }
 
         Map<UUID, TravelerAcc> declarable = new TreeMap<>();
@@ -124,9 +140,21 @@ public class Dac7ReportService {
                 anomalies.add(new Anomaly(AnomalyType.DELIVERY_DATE_ESTIMATED, op.travelerId(), op.source(),
                         op.sourceId(), op.currency(), day(op.paidAt())));
             }
+            if (op.deliveryFallback()) {
+                anomalies.add(new Anomaly(AnomalyType.CASH_DATE_FROM_DELIVERY, op.travelerId(), op.source(),
+                        op.sourceId(), op.currency(), day(op.paidAt())));
+            }
             declarable.computeIfAbsent(op.travelerId(), id -> new TravelerAcc(id, countries.get(id),
-                            row != null && row.taxInfoProvided(), identities.get(id)))
+                            row != null && row.taxInfoProvided(), identities.get(id),
+                            reportingCurrency(currencies.get(id))))
                     .quarter(op.paidAt()).add(op, rate(op.currency(), op.paidAt()), anomalies);
+        }
+
+        for (CashInFlightRow row : inFlight) {
+            if (row.travelerId() != null && statuses.get(row.travelerId()) == Dac7ResidencyStatus.DECLARABLE) {
+                anomalies.add(new Anomaly(AnomalyType.CASH_NOT_COMPLETED_YET, row.travelerId(), Dac7Source.CASH,
+                        row.bidId(), row.currency(), day(row.handedOverAt())));
+            }
         }
 
         List<RefundToReconcile> toReconcile = new ArrayList<>();
@@ -139,13 +167,35 @@ public class Dac7ReportService {
                 anomalies.add(new Anomaly(AnomalyType.REFUND_DATE_ESTIMATED, refund.travelerId(), refund.source(),
                         refund.sourceId(), refund.currency(), day(refund.refundedAt())));
             }
-            // Jamais déduit : la contrepartie reste le montant versé. À réconcilier à la main.
-            Optional<BigDecimal> rate = rate(refund.currency(), refund.operationPaidAt())
-                    .map(ExchangeRateProvider.Rate::unitsPerEur);
+            Optional<ExchangeRateProvider.Rate> refundRate = rate(refund.currency(), refund.operationPaidAt());
+            int operationYear = year(refund.operationPaidAt());
+            RefundTreatment treatment;
+            BigDecimal deducted = BigDecimal.ZERO;
+            if (!refund.travelerReimbursed()) {
+                // Yadony a remboursé l'expéditeur sur ses fonds : le voyageur garde l'argent, rien n'est déduit.
+                treatment = RefundTreatment.KEPT_BY_TRAVELER;
+            } else if (operationYear != year || year(refund.reimbursedAt()) != year) {
+                // Opération d'une année précédente, ou argent repris l'année suivante : jugé sur la date de la reprise.
+                treatment = RefundTreatment.TO_RECTIFY;
+            } else {
+                TravelerAcc acc = declarable.get(refund.travelerId());
+                BigDecimal converted = acc == null ? null : acc.inReportingCurrency(refund, refundRate);
+                if (converted == null) {
+                    anomalies.add(new Anomaly(AnomalyType.REFUND_DEDUCTION_UNAVAILABLE, refund.travelerId(),
+                            refund.source(), refund.sourceId(), refund.currency(), day(refund.refundedAt())));
+                    treatment = RefundTreatment.TO_RECTIFY;
+                } else {
+                    acc.quarter(refund.operationPaidAt()).deduct(refund, converted, refundRate);
+                    treatment = RefundTreatment.DEDUCTED;
+                    deducted = converted.setScale(EUR_SCALE, RoundingMode.HALF_UP);
+                }
+            }
+            Optional<BigDecimal> rate = refundRate.map(ExchangeRateProvider.Rate::unitsPerEur);
             toReconcile.add(new RefundToReconcile(refund.travelerId(), refund.source(), refund.sourceId(),
-                    refund.currency(), refund.amount(), refund.operationPaidAt(), year(refund.operationPaidAt()),
+                    refund.currency(), refund.amount(), refund.operationPaidAt(), operationYear,
                     refund.refundedAt(), year(refund.refundedAt()), !refund.afterRelease(),
-                    refund.refundDateEstimated(), rate.map(r -> toEur(refund.amount(), r)).orElse(null)));
+                    refund.refundDateEstimated(), rate.map(r -> toEur(refund.amount(), r)).orElse(null), treatment,
+                    deducted));
         }
 
         List<PendingSplit> pendingSplits = new ArrayList<>();
@@ -172,6 +222,11 @@ public class Dac7ReportService {
         }
         return new Dac7Report(year, complete, review, toReconcile, pendingSplits, List.copyOf(unknown),
                 List.copyOf(nonDeclarable), residency.invalidPartnerJurisdictions(), anomalies);
+    }
+
+    /** Une seule devise reçue dans l'année : cette devise, sans conversion ; plusieurs : l'euro. */
+    static String reportingCurrency(Set<String> received) {
+        return received != null && received.size() == 1 ? received.iterator().next() : "EUR";
     }
 
     private Optional<ExchangeRateProvider.Rate> rate(String currency, Instant at) {
@@ -208,14 +263,27 @@ public class Dac7ReportService {
         private final String country;
         private final boolean taxInfoProvided;
         private final Dac7IdentityStatus identity;
-        private final QuarterAcc[] quarters = {new QuarterAcc(1), new QuarterAcc(2), new QuarterAcc(3),
-                new QuarterAcc(4)};
+        private final String currency;
+        private final QuarterAcc[] quarters;
 
-        TravelerAcc(UUID travelerId, String country, boolean taxInfoProvided, Dac7IdentityStatus identity) {
+        TravelerAcc(UUID travelerId, String country, boolean taxInfoProvided, Dac7IdentityStatus identity,
+                    String currency) {
             this.travelerId = travelerId;
             this.country = country;
             this.taxInfoProvided = taxInfoProvided;
             this.identity = identity == null ? Dac7IdentityStatus.INCOMPLETE : identity;
+            this.currency = currency;
+            this.quarters = new QuarterAcc[]{new QuarterAcc(1, currency), new QuarterAcc(2, currency),
+                    new QuarterAcc(3, currency), new QuarterAcc(4, currency)};
+        }
+
+        /** Montant d'un remboursement dans la devise déclarée ; nul si une conversion est nécessaire et le taux manque. */
+        BigDecimal inReportingCurrency(RefundRow refund, Optional<ExchangeRateProvider.Rate> rate) {
+            BigDecimal share = refund.travelerShare();
+            if (refund.currency().equals(currency)) {
+                return share;
+            }
+            return rate.map(r -> share.divide(r.unitsPerEur(), RATE_SCALE, RoundingMode.HALF_UP)).orElse(null);
         }
 
         /** Trimestre civil UTC : 31/03 23:59:59 est au 1er, 01/04 00:00:00 au 2e. */
@@ -228,22 +296,37 @@ public class Dac7ReportService {
             for (QuarterAcc q : quarters) {
                 list.add(q.report());
             }
-            return new TravelerReport(travelerId, country, taxInfoProvided, identity, list);
+            return new TravelerReport(travelerId, country, taxInfoProvided, identity, list, currency);
         }
     }
 
     private static final class QuarterAcc {
         private final int quarter;
+        private final String currency;
         private final Map<String, CurrencyAcc> byCurrency = new TreeMap<>();
         private int operations;
+        // Montant déclaré : devise du voyageur, sans conversion si c'est celle de l'opération.
+        private BigDecimal declared = BigDecimal.ZERO;
+        private boolean declaredComplete = true;
         // Euros à pleine précision, arrondis une seule fois au rendu.
         private BigDecimal netEur = BigDecimal.ZERO;
         private BigDecimal commissionEur = BigDecimal.ZERO;
         private boolean eurComplete = true;
         private boolean commissionComplete = true;
 
-        QuarterAcc(int quarter) {
+        QuarterAcc(int quarter, String currency) {
             this.quarter = quarter;
+            this.currency = currency;
+        }
+
+        /** Retire un remboursement repris au voyageur : déclaré, détail de la devise d'origine et euros indicatifs. */
+        void deduct(RefundRow refund, BigDecimal inReportingCurrency, Optional<ExchangeRateProvider.Rate> rate) {
+            declared = declared.subtract(inReportingCurrency);
+            CurrencyAcc acc = byCurrency.computeIfAbsent(refund.currency(), c -> new CurrencyAcc());
+            BigDecimal share = refund.travelerShare();
+            acc.net = acc.net.subtract(share);
+            rate.ifPresent(r -> netEur = netEur.subtract(share
+                    .divide(r.unitsPerEur(), RATE_SCALE, RoundingMode.HALF_UP)));
         }
 
         void add(OperationRow op, Optional<ExchangeRateProvider.Rate> rate, List<Anomaly> anomalies) {
@@ -261,18 +344,29 @@ public class Dac7ReportService {
                 acc.operations++;
                 operations++;
             }
+            // Sans conversion quand l'opération est déjà dans la devise déclarée : le taux ne sert qu'aux euros indicatifs.
+            boolean converted = !op.currency().equals(currency);
+            if (!converted) {
+                declared = declared.add(op.net());
+            }
             if (rate.isPresent()) {
                 BigDecimal units = rate.get().unitsPerEur();
                 netEur = netEur.add(op.net().divide(units, RATE_SCALE, RoundingMode.HALF_UP));
                 commissionEur = commissionEur.add(commission.divide(units, RATE_SCALE, RoundingMode.HALF_UP));
-                if (!rate.get().rateDate().equals(day(op.paidAt()))) {
-                    anomalies.add(new Anomaly(AnomalyType.RATE_DATE_ESTIMATED, op.travelerId(), op.source(),
-                            op.sourceId(), op.currency(), day(op.paidAt())));
+                if (converted) {
+                    declared = declared.add(op.net().divide(units, RATE_SCALE, RoundingMode.HALF_UP));
+                    if (!rate.get().rateDate().equals(day(op.paidAt()))) {
+                        anomalies.add(new Anomaly(AnomalyType.RATE_DATE_ESTIMATED, op.travelerId(), op.source(),
+                                op.sourceId(), op.currency(), day(op.paidAt())));
+                    }
                 }
             } else {
                 eurComplete = false;
-                anomalies.add(new Anomaly(AnomalyType.EXCHANGE_RATE_MISSING, op.travelerId(), op.source(),
-                        op.sourceId(), op.currency(), day(op.paidAt())));
+                if (converted) {
+                    declaredComplete = false;
+                    anomalies.add(new Anomaly(AnomalyType.EXCHANGE_RATE_MISSING, op.travelerId(), op.source(),
+                            op.sourceId(), op.currency(), day(op.paidAt())));
+                }
             }
         }
 
@@ -282,7 +376,7 @@ public class Dac7ReportService {
                             e.getValue().operations))
                     .toList();
             return new QuarterReport(quarter, operations, amounts, round(netEur), round(commissionEur),
-                    eurComplete, commissionComplete);
+                    eurComplete, commissionComplete, round(declared), declaredComplete);
         }
 
         private static BigDecimal round(BigDecimal eur) {

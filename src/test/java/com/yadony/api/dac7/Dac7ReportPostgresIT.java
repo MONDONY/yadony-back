@@ -600,6 +600,75 @@ class Dac7ReportPostgresIT {
     // ── Année suivante, « déjà payé », registre ──────────────────────────────
 
     @Test
+    @DisplayName("tâche 3 : espèces datées de la remise (DEPART, heure hors ligne d'abord), repli livraison, annulé exclu ; "
+            + "remboursement déduit seulement si le transfert a été repris au voyageur")
+    void montants2028() {
+        UUID traveler = UUID.randomUUID();
+        user(traveler, "FR");
+        UUID trip = trip(traveler, "EUR", "10.00");
+
+        // Remise scannée hors ligne le 30/06 23:59:59 UTC, synchronisée le 02/07 ; livraison le 03/07 : T2 (remise).
+        UUID handedOver = bid(trip, "COMPLETED", "CASH", "EUR");
+        jdbc.update("UPDATE bids SET delivered_at = TIMESTAMP '2028-07-03 09:00:00' WHERE id = ?", handedOver);
+        jdbc.update("INSERT INTO tracking_events (id, bid_id, event_type, scanned_at, offline_timestamp) VALUES "
+                + "(?, ?, 'DEPART', TIMESTAMPTZ '2028-07-02 10:00:00+00', TIMESTAMPTZ '2028-06-30 23:59:59+00')",
+                UUID.randomUUID(), handedOver);
+        // Sans scan de remise : livraison du 01/07 00:00 (T3), repli tracé.
+        UUID noScan = bid(trip, "COMPLETED", "CASH", "EUR");
+        jdbc.update("UPDATE bids SET delivered_at = TIMESTAMP '2028-07-01 00:00:00' WHERE id = ?", noScan);
+        // Remis le 28/12 mais pas encore livré : jamais compté, signalé (à attendre avant de générer le fichier).
+        UUID inFlight = bid(trip, "IN_TRANSIT", "CASH", "EUR");
+        jdbc.update("INSERT INTO tracking_events (id, bid_id, event_type, scanned_at) VALUES "
+                + "(?, ?, 'DEPART', TIMESTAMPTZ '2028-12-28 10:00:00+00')", UUID.randomUUID(), inFlight);
+        // Annulé avant la remise : jamais COMPLETED, jamais déclaré.
+        UUID cancelled = bid(trip, "CANCELLED", "CASH", "EUR");
+        jdbc.update("INSERT INTO tracking_events (id, bid_id, event_type, scanned_at) VALUES "
+                + "(?, ?, 'DEPART', TIMESTAMPTZ '2028-05-01 10:00:00+00')", UUID.randomUUID(), cancelled);
+
+        // Carte versée le 10/04, remboursée 20 après versement ET transfert repris au voyageur : déduite.
+        UUID reversed = payment(bid(trip, "COMPLETED", "STRIPE", "EUR"), null, "STRIPE", "EUR", "100.00", "5.00",
+                "2028-04-10T10:00:00Z", "20.00");
+        jdbc.update("UPDATE payments SET stripe_transfer_id = 'tr_dac7_reversed' WHERE id = ?", reversed);
+        refundAudit(reversed, "REFUND_AFTER_RELEASE", "20.00", "2028-09-01T08:00:00Z");
+        jdbc.update("INSERT INTO audit_log (entity_type, entity_id, action, payload, created_at) VALUES "
+                + "('TRANSFER', NULL, 'TRANSFER_REVERSED', CAST('{\"transferId\": \"tr_dac7_reversed\"}' AS JSONB), "
+                + "TIMESTAMPTZ '2028-09-01 09:00:00+00')");
+        // Carte versée le 10/05, remboursée 10 après versement, transfert gardé par le voyageur : rien déduit.
+        UUID kept = payment(bid(trip, "COMPLETED", "STRIPE", "EUR"), null, "STRIPE", "EUR", "50.00", "2.50",
+                "2028-05-10T10:00:00Z", "10.00");
+        jdbc.update("UPDATE payments SET stripe_transfer_id = 'tr_dac7_kept' WHERE id = ?", kept);
+        refundAudit(kept, "REFUND_AFTER_RELEASE", "10.00", "2028-09-02T08:00:00Z");
+
+        Dac7Report r2028 = service().annualReport(2028);
+
+        TravelerReport t = r2028.travelers().stream().filter(x -> x.travelerId().equals(traveler)).findFirst()
+                .orElseThrow();
+        assertThat(t.currency()).isEqualTo("EUR");
+        // T2 : espèces (remise) 10 + carte 95 − 19 repris (20 remboursés sur 100 bruts, au prorata du net de 95) + carte
+        // 47,50 gardée ; T3 : espèces sans scan, livraison.
+        assertThat(t.quarters().get(1).net()).isEqualByComparingTo("133.50");
+        assertThat(t.quarters().get(1).operations()).isEqualTo(3);
+        assertThat(t.quarters().get(2).net()).isEqualByComparingTo("10.00");
+        assertThat(t.quarters().get(2).operations()).isEqualTo(1);
+        assertThat(t.quarters().get(0).operations()).isZero();
+        assertThat(t.quarters().get(3).operations()).isZero();
+        assertThat(r2028.refundsToReconcile())
+                .extracting(RefundToReconcile::sourceId, RefundToReconcile::treatment)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(reversed, Dac7Report.RefundTreatment.DEDUCTED),
+                        org.assertj.core.groups.Tuple.tuple(kept, Dac7Report.RefundTreatment.KEPT_BY_TRAVELER));
+        assertThat(r2028.anomalies()).filteredOn(a -> traveler.equals(a.travelerId()))
+                .filteredOn(a -> a.type() == AnomalyType.CASH_DATE_FROM_DELIVERY)
+                .extracting(Dac7Report.Anomaly::sourceId).containsExactly(noScan);
+        assertThat(r2028.anomalies()).noneMatch(a -> cancelled.equals(a.sourceId()));
+        assertThat(r2028.anomalies()).filteredOn(a -> a.type() == AnomalyType.CASH_NOT_COMPLETED_YET)
+                .filteredOn(a -> traveler.equals(a.travelerId())).extracting(Dac7Report.Anomaly::sourceId)
+                .containsExactly(inFlight);
+        assertThat(r2028.refundsToReconcile()).filteredOn(r -> r.sourceId().equals(reversed))
+                .singleElement().satisfies(r -> assertThat(r.deductedAmount()).isEqualByComparingTo("19.00"));
+    }
+
+    @Test
     @DisplayName("devise flottante sans taux historique : jamais devinée ; seul le remboursement daté de 2027 y est listé")
     void deviseFlottanteSansTaux() {
         UUID trip = trip(FRENCH, "USD", "10.00");
@@ -608,9 +677,15 @@ class Dac7ReportPostgresIT {
         Dac7Report next = service().annualReport(2027);
         QuarterReport q1 = next.travelers().stream().filter(t -> t.travelerId().equals(FRENCH)).findFirst()
                 .orElseThrow().quarters().get(0);
+        // Euros indicatifs incomplets (jamais devinés), mais le voyageur n'a reçu que des dollars en 2027 : le montant
+        // déclaré est en USD, sans conversion, donc complet et sans anomalie de taux.
         assertThat(q1.eurComplete()).isFalse();
         assertThat(amounts(q1, "USD").net()).isEqualByComparingTo("95.00");
-        assertThat(next.anomalies()).anySatisfy(a -> {
+        assertThat(next.travelers().stream().filter(t -> t.travelerId().equals(FRENCH)).findFirst().orElseThrow()
+                .currency()).isEqualTo("USD");
+        assertThat(q1.net()).isEqualByComparingTo("95.00");
+        assertThat(q1.declaredComplete()).isTrue();
+        assertThat(next.anomalies()).noneSatisfy(a -> {
             assertThat(a.type()).isEqualTo(AnomalyType.EXCHANGE_RATE_MISSING);
             assertThat(a.sourceId()).isEqualTo(usd);
         });

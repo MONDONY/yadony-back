@@ -42,7 +42,6 @@ public class Dac7DeclarationService {
     public static final String IDENTITY_INCOMPLETE = "IDENTITY_INCOMPLETE";
     public static final String TAX_INFO_MISSING = "TAX_INFO_MISSING";
     public static final String EUR_INCOMPLETE = "EUR_INCOMPLETE";
-    public static final String COMMISSION_INCOMPLETE = "COMMISSION_INCOMPLETE";
     public static final String INVALID_PARTNER_JURISDICTION = "INVALID_PARTNER_JURISDICTION";
     public static final String NO_SELLERS = "NO_SELLERS";
     /** Ajout au contrat : SIREN, raison sociale ou ville du siège de Yadony absents de la configuration. */
@@ -80,12 +79,27 @@ public class Dac7DeclarationService {
      *
      * @param identity     identité complète, seulement quand elle a été relue ({@code freshIdentity}), sinon nul
      * @param exclusions   raisons qui l'écartent du fichier, vide s'il part
+     * @param currency     devise du montant déclaré : celle des paiements sans conversion, sinon l'euro
+     * @param declaredNet  montant déclaré de l'année dans cette devise (net des remboursements déduits, frais retenus 0)
+     * @param declaredComplete faux si une conversion en euros manque : le montant déclaré est alors partiel
      */
     public record Seller(UUID userId, String displayName, String residenceCountry, boolean taxInfoProvided,
                          Dac7IdentityStatus identityStatus, Dac7SellerIdentity identity, int remindersSent,
                          Instant lastDiligenceAt, TravelerReport report, int operations, BigDecimal netEur,
                          BigDecimal commissionEur, boolean eurComplete, boolean commissionComplete,
-                         List<String> exclusions, boolean alreadyExported) {
+                         List<String> exclusions, boolean alreadyExported, String currency, BigDecimal declaredNet,
+                         boolean declaredComplete) {
+
+        /** Compatibilité : montants en euros, déclarés tels quels. */
+        public Seller(UUID userId, String displayName, String residenceCountry, boolean taxInfoProvided,
+                      Dac7IdentityStatus identityStatus, Dac7SellerIdentity identity, int remindersSent,
+                      Instant lastDiligenceAt, TravelerReport report, int operations, BigDecimal netEur,
+                      BigDecimal commissionEur, boolean eurComplete, boolean commissionComplete,
+                      List<String> exclusions, boolean alreadyExported) {
+            this(userId, displayName, residenceCountry, taxInfoProvided, identityStatus, identity, remindersSent,
+                    lastDiligenceAt, report, operations, netEur, commissionEur, eurComplete, commissionComplete,
+                    exclusions, alreadyExported, "EUR", netEur, eurComplete);
+        }
     }
 
     /** Voyageur payé dans l'année mais non déclaré (résidence inconnue ou hors périmètre). */
@@ -95,12 +109,28 @@ public class Dac7DeclarationService {
     }
 
     /**
-     * @param warnings remboursements à réconcilier + anomalies de l'année : jamais bloquants (décision du lot 3a :
-     *                 rien n'est déduit, le montant déclaré reste le montant versé), montrés avant l'export
+     * Voyageur payé dont les informations fiscales manquent (statut de collecte à compléter) : jamais exporté en
+     * silence, listé à part avec la raison (rapport d'anomalies).
+     */
+    public record CollectionAnomaly(UUID userId, String displayName, List<String> reasons) {
+    }
+
+    /**
+     * @param warnings remboursements à réconcilier + anomalies de l'année : jamais bloquants, montrés avant l'export
+     *                 (les remboursements repris au voyageur la même année sont déjà déduits du montant déclaré)
+     * @param collectionAnomalies voyageurs déclarables payés dont le numéro fiscal ou l'identité manquent
      */
     public record Declaration(int year, Dac7Report report, List<Seller> sellers, List<Other> others,
                               List<String> invalidPartnerJurisdictions, List<String> blockers,
-                              Map<UUID, String> displayNames, int warnings) {
+                              Map<UUID, String> displayNames, int warnings,
+                              List<CollectionAnomaly> collectionAnomalies) {
+
+        public Declaration(int year, Dac7Report report, List<Seller> sellers, List<Other> others,
+                           List<String> invalidPartnerJurisdictions, List<String> blockers,
+                           Map<UUID, String> displayNames, int warnings) {
+            this(year, report, sellers, others, invalidPartnerJurisdictions, blockers, displayNames, warnings,
+                    List.of());
+        }
     }
 
     private final Dac7ReportService reports;
@@ -207,9 +237,14 @@ public class Dac7DeclarationService {
         for (UUID id : report.nonDeclarableTravelers()) {
             others.add(other(id, byId.get(id), Dac7ResidencyStatus.NON_DECLARABLE, names, lastDiligence));
         }
+        List<CollectionAnomaly> collectionAnomalies = sellers.stream()
+                .filter(s -> s.exclusions().contains(TAX_INFO_MISSING) || s.exclusions().contains(IDENTITY_INCOMPLETE))
+                .map(s -> new CollectionAnomaly(s.userId(), s.displayName(), s.exclusions().stream()
+                        .filter(r -> TAX_INFO_MISSING.equals(r) || IDENTITY_INCOMPLETE.equals(r)).toList()))
+                .toList();
         return new Declaration(year, report, sellers, others, invalidPartners,
                 blockers(sellers, invalidPartners, exportProperties.operatorConfigured()), names,
-                report.refundsToReconcile().size() + report.anomalies().size());
+                report.refundsToReconcile().size() + report.anomalies().size(), collectionAnomalies);
     }
 
     private Seller seller(int year, TravelerReport traveler, UserEntity user, Map<UUID, String> names,
@@ -232,15 +267,19 @@ public class Dac7DeclarationService {
         int operations = 0;
         BigDecimal net = BigDecimal.ZERO;
         BigDecimal commission = BigDecimal.ZERO;
+        BigDecimal declaredNet = BigDecimal.ZERO;
         long roundedConsideration = 0;
         boolean eur = true;
+        boolean declaredComplete = true;
         boolean commissionComplete = true;
         for (QuarterReport q : traveler.quarters()) {
             operations += q.operations();
             net = net.add(q.netEur());
             commission = commission.add(q.commissionEur());
-            roundedConsideration += roundEuro(q.netEur());
+            declaredNet = declaredNet.add(q.net());
+            roundedConsideration += roundAmount(q.net());
             eur &= q.eurComplete();
+            declaredComplete &= q.declaredComplete();
             commissionComplete &= q.commissionComplete();
         }
         List<String> exclusions = new ArrayList<>();
@@ -248,15 +287,17 @@ public class Dac7DeclarationService {
         else if (status == Dac7IdentityStatus.NOT_CHECKED) exclusions.add(IDENTITY_NOT_CHECKED);
         else if (status != Dac7IdentityStatus.COMPLETE) exclusions.add(IDENTITY_INCOMPLETE);
         if (!traveler.taxInfoProvided()) exclusions.add(TAX_INFO_MISSING);
-        if (!eur) exclusions.add(EUR_INCOMPLETE);
-        if (!commissionComplete) exclusions.add(COMMISSION_INCOMPLETE);
+        // Montant déclaré partiel : une conversion en euros manque. Une commission introuvable ne bloque plus : aucun
+        // frais n'est retenu sur le voyageur, elle ne part dans aucun montant déclaré.
+        if (!declaredComplete) exclusions.add(EUR_INCOMPLETE);
         if (!Dac7DgfipRules.transmitted(year, traveler.residenceCountry())) exclusions.add(RESIDENCE_NOT_TRANSMITTED);
-        if (eur && roundedConsideration <= 0) exclusions.add(ZERO_CONSIDERATION);
+        if (declaredComplete && roundedConsideration <= 0) exclusions.add(ZERO_CONSIDERATION);
         if (pendingSplit.contains(id)) exclusions.add(PENDING_SPLITS);
         return new Seller(id, names.get(id), traveler.residenceCountry(), traveler.taxInfoProvided(), status, identity,
                 user == null ? 0 : user.getTaxReminderCount(), lastDiligence, traveler, operations,
                 net.setScale(2, RoundingMode.HALF_UP), commission.setScale(2, RoundingMode.HALF_UP), eur,
-                commissionComplete, List.copyOf(exclusions), exported.contains(id));
+                commissionComplete, List.copyOf(exclusions), exported.contains(id), traveler.currency(),
+                declaredNet.setScale(2, RoundingMode.HALF_UP), declaredComplete);
     }
 
     private Other other(UUID id, UserEntity user, Dac7ResidencyStatus status, Map<UUID, String> names,
@@ -297,7 +338,7 @@ public class Dac7DeclarationService {
         if (sellers.stream().anyMatch(s -> s.exclusions().contains(IDENTITY_NOT_CHECKED))) {
             blockers.add(IDENTITY_NOT_CHECKED);
         }
-        for (String code : List.of(TAX_INFO_MISSING, EUR_INCOMPLETE, COMMISSION_INCOMPLETE, PENDING_SPLITS)) {
+        for (String code : List.of(TAX_INFO_MISSING, EUR_INCOMPLETE, PENDING_SPLITS)) {
             if (sellers.stream().anyMatch(s -> s.exclusions().contains(code))) blockers.add(code);
         }
         if (!invalidPartners.isEmpty()) blockers.add(INVALID_PARTNER_JURISDICTION);
@@ -306,9 +347,17 @@ public class Dac7DeclarationService {
         return List.copyOf(blockers);
     }
 
-    /** Euros entiers, la fraction de 0,50 ou plus comptée pour 1 (cahier des charges, zones ConsQ et FeesQ). */
+    /**
+     * Montant entier, la fraction de 0,50 ou plus comptée pour 1. Le XSD DGFiP type les montants {@code xsd:integer}
+     * avec un code devise : l'arrondi vaut pour toute devise (zones ConsQ et FeesQ).
+     */
+    public static long roundAmount(BigDecimal amount) {
+        return amount == null ? 0 : amount.setScale(0, RoundingMode.HALF_UP).longValueExact();
+    }
+
+    /** Euros entiers (compatibilité) : même arrondi que {@link #roundAmount}. */
     public static long roundEuro(BigDecimal eur) {
-        return eur == null ? 0 : eur.setScale(0, RoundingMode.HALF_UP).longValueExact();
+        return roundAmount(eur);
     }
 
     static String displayName(UserEntity user) {
