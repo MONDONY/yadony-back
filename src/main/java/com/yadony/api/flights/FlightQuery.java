@@ -78,20 +78,20 @@ public record FlightQuery(String origin, String destination, FlightDate departur
         String from = iata(origin, "origin");
         String to = iata(destination, "destination");
         if (from.equals(to)) {
-            throw FlightErrors.invalid("flights-same-airport", "Le départ et l'arrivée doivent être différents.");
+            throw FlightErrors.invalid("flights-same-airport", "problem.flights-same-airport");
         }
         LocalDate today = LocalDate.now(clock);
         FlightDate out = date(departure, "departureDate");
         if (out != null && out.last().isBefore(today)) {
-            throw FlightErrors.invalid("flights-date-past", "La date de départ est déjà passée.");
+            throw FlightErrors.invalid("flights-date-past", "problem.flights-date-past.departure");
         }
         FlightDate back = date(returnDate, "returnDate");
         if (back != null && out != null && back.last().isBefore(out.first())) {
             throw FlightErrors.invalid("flights-return-before-departure",
-                    "Le retour ne peut pas précéder le départ.");
+                    "problem.flights-return-before-departure");
         }
         if (back != null && back.last().isBefore(today)) {
-            throw FlightErrors.invalid("flights-date-past", "La date de retour est déjà passée.");
+            throw FlightErrors.invalid("flights-date-past", "problem.flights-date-past.return");
         }
         return new FlightQuery(from, to, out, back, directOnly, currency(currency));
     }
@@ -99,7 +99,7 @@ public record FlightQuery(String origin, String destination, FlightDate departur
     static String iata(String raw, String field) {
         String code = raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT);
         if (!IATA.matcher(code).matches()) {
-            throw FlightErrors.invalid("flights-invalid-code", field + " doit être un code de 3 lettres (ex. PAR).");
+            throw FlightErrors.invalid("flights-invalid-code", "problem.flights-invalid-code", field);
         }
         return code;
     }
@@ -108,7 +108,7 @@ public record FlightQuery(String origin, String destination, FlightDate departur
         if (raw == null || raw.isBlank()) return DEFAULT_CURRENCY;
         String c = raw.trim().toUpperCase(Locale.ROOT);
         if (!CURRENCIES.contains(c)) {
-            throw FlightErrors.invalid("flights-invalid-currency", "Devise non prise en charge : " + c + ".");
+            throw FlightErrors.invalid("flights-invalid-currency", "problem.flights-invalid-currency", c);
         }
         return c;
     }
@@ -118,7 +118,7 @@ public record FlightQuery(String origin, String destination, FlightDate departur
             return FlightDate.parse(raw);
         } catch (DateTimeParseException e) {
             throw FlightErrors.invalid("flights-invalid-date",
-                    field + " doit être au format AAAA-MM-JJ (jour) ou AAAA-MM (mois entier).");
+                    "problem.flights-invalid-date", field);
         }
     }
 }

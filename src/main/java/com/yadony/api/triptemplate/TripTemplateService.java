@@ -176,9 +176,7 @@ public class TripTemplateService {
         }
         SupportedCurrency currency = SupportedCurrency.fromCode(requested);
         if (currency == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "currency-unsupported", "Currency Unsupported",
-                    "Cette devise n'est pas prise en charge par yadony.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
         }
         return currency;
     }
@@ -211,14 +209,10 @@ public class TripTemplateService {
                 ? EnumSet.of(PaymentMethod.STRIPE) : EnumSet.copyOf(requested);
         for (PaymentMethod method : methods) {
             if (!ALLOWED_METHODS.contains(method)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "trip-template/payment-method-invalid", "Payment Method Invalid",
-                        "Ce moyen de paiement n'est plus proposé.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-template/payment-method-invalid", "problem.trip-template-payment-method-invalid");
             }
             if (!CurrencyPaymentRails.allows(currency, method)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "trip-template/payment-method-not-available", "Payment Method Not Available",
-                        "Ce moyen de paiement n'est pas disponible dans cette devise.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-template/payment-method-not-available", "problem.trip-template-payment-method-not-available");
             }
         }
         return methods;
@@ -233,9 +227,7 @@ public class TripTemplateService {
     private void assertPricePerKg(Double pricePerKg, String pricingMode, SupportedCurrency currency) {
         if (pricePerKg == null || pricePerKg <= 0) {
             if ("KG".equals(pricingMode)) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "trip-template/price-required", "Price Required",
-                        "Un prix au kilo est requis en tarification au kilo.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-template/price-required", "problem.trip-template-price-required");
             }
             return;
         }
@@ -250,9 +242,7 @@ public class TripTemplateService {
         boolean complete = address.label() != null && !address.label().isBlank()
                 && address.lat() != null && address.lng() != null;
         if (!complete) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "trip-template/address-incomplete", "Address Incomplete",
-                    "Une adresse doit comporter un libellé et des coordonnées.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-template/address-incomplete", "problem.trip-template-address-incomplete");
         }
     }
 

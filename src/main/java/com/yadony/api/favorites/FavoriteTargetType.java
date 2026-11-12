@@ -18,11 +18,7 @@ public enum FavoriteTargetType {
         return switch (path) {
             case "trip" -> TRIP;
             case "package-request" -> PACKAGE_REQUEST;
-            default -> throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST,
-                    "favorites/unknown-type",
-                    "Unknown Favorite Type",
-                    "Type de favori inconnu: " + path);
+            default -> throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "favorites/unknown-type", "problem.favorites-unknown-type", path);
         };
     }
 }

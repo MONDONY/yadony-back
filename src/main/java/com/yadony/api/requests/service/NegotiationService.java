@@ -143,9 +143,7 @@ public class NegotiationService {
      */
     private void assertPublishingNotSuspended(UserEntity traveler) {
         if (traveler.isPublishingSuspended()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "publishing-suspended",
-                    "Publishing Suspended",
-                    "La publication de trajets est suspendue. Contactez le support.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "publishing-suspended", "problem.publishing-suspended");
         }
     }
 
@@ -201,8 +199,7 @@ public class NegotiationService {
         }
         UserEntity sender = userRepository.findById(senderId).orElse(null);
         if (sender != null && sender.isContactKycOnly()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "contact-kyc-required",
-                "KYC Required", "Cet utilisateur n'accepte que les profils vérifiés");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "contact-kyc-required", "problem.contact-kyc-required");
         }
     }
 
@@ -584,11 +581,7 @@ public class NegotiationService {
     }
 
     private static YadonyBusinessException offerAcceptedAwaitingPayment(NegotiationThreadStatus st) {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, OFFER_ACCEPTED_AWAITING_PAYMENT,
-            "Offer Accepted Awaiting Payment",
-            "L'expéditeur a accepté votre offre et procède au paiement : "
-                + "vous ne pouvez plus la retirer pendant le délai de paiement.",
-            Map.of("negotiationStatus", st.name()));
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, OFFER_ACCEPTED_AWAITING_PAYMENT, "problem.offer-accepted-awaiting-payment.withdraw", Map.of("negotiationStatus", st.name()));
     }
 
     private void reopenRequestWhenNoActiveNegotiation(PackageRequestEntity request) {
@@ -2587,10 +2580,7 @@ public class NegotiationService {
      */
     private static void assertTerminal(NegotiationThreadEntity thread) {
         if (thread.getStatus().isActive()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "negotiation-still-open",
-                "Negotiation Still Open",
-                "Seule une discussion de prix terminée peut être archivée ou supprimée.",
-                Map.of("negotiationStatus", thread.getStatus().name()));
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "negotiation-still-open", "problem.negotiation-still-open", Map.of("negotiationStatus", thread.getStatus().name()));
         }
     }
 

@@ -42,18 +42,14 @@ public class StripeBillingService {
      */
     public String createCheckoutSession(UUID userId, BillingCycle cycle) {
         if (!properties.stripePricesConfigured()) {
-            throw new YadonyBusinessException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "billing-not-configured", "Billing Unavailable",
-                    "Le service de billing de l'abonnement PRO n'est pas encore disponible.");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "billing-not-configured", "problem.billing-not-configured");
         }
 
         Optional<ProSubscriptionEntity> existingSubscription = repository.findByUserId(userId);
 
         existingSubscription.ifPresent(sub -> {
             if (!sub.getStatus().allowsNewCheckout()) {
-                throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                        "subscription-already-active", "Already Subscribed",
-                        "Vous avez déjà un abonnement PRO en cours.");
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "subscription-already-active", "problem.subscription-already-active");
             }
         });
 
@@ -121,9 +117,7 @@ public class StripeBillingService {
         String customerId = repository.findByUserId(userId)
                 .map(ProSubscriptionEntity::getStripeCustomerId)
                 .filter(id -> !id.isBlank())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "no-stripe-customer", "No Billing Account",
-                        "Aucun abonnement payant n'est rattaché à ce compte."));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "no-stripe-customer", "problem.no-stripe-customer"));
 
         try {
             com.stripe.param.billingportal.SessionCreateParams params =

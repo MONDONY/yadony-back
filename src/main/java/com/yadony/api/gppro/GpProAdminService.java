@@ -116,8 +116,7 @@ public class GpProAdminService {
     @Transactional(readOnly = true)
     public AdminGpProApplicationDetail detail(UUID applicationId) {
         GpProApplicationEntity app = applications.findById(applicationId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "gp-pro-application-not-found", "Application Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "gp-pro-application-not-found", "problem.gp-pro-application-not-found"));
         UUID userId = app.getUserId();
         UserEntity user = users.findById(userId).orElse(null);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -174,11 +173,9 @@ public class GpProAdminService {
     @Transactional
     public void dismissFlag(UUID flagId, UUID adminId) {
         GpProReviewFlagEntity flag = flags.findById(flagId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "gp-pro-flag-not-found", "Flag Not Found", "Signalement de revue introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "gp-pro-flag-not-found", "problem.gp-pro-flag-not-found"));
         if (flag.getResolvedAt() != null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "gp-pro-flag-resolved", "Flag Resolved", "Ce signalement de revue est déjà clos");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "gp-pro-flag-resolved", "problem.gp-pro-flag-resolved");
         }
         if (flag.getDismissedAt() != null) {
             return;
@@ -233,8 +230,7 @@ public class GpProAdminService {
     public void grant(UUID userId, UUID adminId, String note) {
         UserEntity user = lockedUser(userId);
         if (user.isGpPro()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "gp-pro-already-active", "Already Active", "Le badge GP Pro est déjà actif");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "gp-pro-already-active", "problem.gp-pro-already-active");
         }
         assertEligible(user);
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -270,8 +266,7 @@ public class GpProAdminService {
         String reason = requireReason(rawReason);
         UserEntity user = lockedUser(userId);
         if (!user.isGpPro()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "gp-pro-not-active", "Not Active", "Le badge GP Pro n'est pas actif");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "gp-pro-not-active", "problem.gp-pro-not-active");
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         user.setGpPro(false);
@@ -320,45 +315,37 @@ public class GpProAdminService {
     /** Gardes communes à la validation et à l'attribution directe, avant toute écriture. */
     private static void assertEligible(UserEntity user) {
         if (user.getKycStatus() != KycStatus.VERIFIED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-kyc-required", "KYC Required", "La vérification d'identité est requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-kyc-required", "problem.gp-pro-kyc-required");
         }
         if (user.getStatus() != UserStatus.ACTIVE || user.getDeletionRequestedAt() != null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "gp-pro-user-not-eligible", "User Not Eligible",
-                    "Le compte est suspendu, banni ou en cours de suppression");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "gp-pro-user-not-eligible", "problem.gp-pro-user-not-eligible");
         }
     }
 
     private static String requireReason(String reason) {
         String trimmed = reason == null ? "" : reason.trim();
         if (trimmed.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "gp-pro-reason-required", "Reason Required", "Un motif est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "gp-pro-reason-required", "problem.gp-pro-reason-required");
         }
         return trimmed;
     }
 
     private GpProApplicationEntity applicationOf(UUID applicationId) {
         return applications.findById(applicationId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "gp-pro-application-not-found", "Application Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "gp-pro-application-not-found", "problem.gp-pro-application-not-found"));
     }
 
     private void decideOrConflict(UUID applicationId, GpProApplicationStatus status, UUID adminId, String reason) {
         int updated = applications.decide(applicationId, status, adminId, reason,
                 LocalDateTime.now(ZoneOffset.UTC));
         if (updated == 0) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "gp-pro-application-not-pending", "Application Not Pending",
-                    "La demande a déjà été décidée");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "gp-pro-application-not-pending", "problem.gp-pro-application-not-pending");
         }
     }
 
     private UserEntity lockedUser(UUID userId) {
         return users.findByIdForUpdate(userId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private static void grantBadge(UserEntity user) {

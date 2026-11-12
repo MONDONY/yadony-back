@@ -58,8 +58,7 @@ public class IndividualFrequencyAdminService {
     @Transactional
     public void dismiss(UUID flagId, UUID adminId) {
         IndividualFrequencyFlagEntity flag = flags.findById(flagId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "individual-frequency-flag-not-found", "Flag Not Found", "Signalement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "individual-frequency-flag-not-found", "problem.individual-frequency-flag-not-found"));
         // Lu avant l'UPDATE, qui vide le contexte de persistance.
         UUID userId = flag.getUserId();
         int tripsCount = flag.getTripsCount();

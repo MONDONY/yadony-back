@@ -92,9 +92,7 @@ public final class CommissionCalculator {
         long lo = 1;
         long hi = gross.setScale(c.minorUnit(), RoundingMode.FLOOR).movePointRight(c.minorUnit()).longValueExact();
         if (hi < lo || grossOf(lo, c, g, reductions).compareTo(gross) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "budget-below-commission-minimum", "Budget Below Commission Minimum",
-                    "Le montant ne couvre pas la commission minimum de Yadony");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "budget-below-commission-minimum", "problem.budget-below-commission-minimum");
         }
         // Invariant : grossOf(lo) ≤ gross ; on cherche le plus grand lo qui le respecte.
         while (lo < hi) {

@@ -153,7 +153,96 @@ class ServerMessagesGuardTest {
             "payments/wallet/topupcode/WalletTopupCodeController.java",
             "tracking/PickupCodeRequestService.java",
             "tracking/TrackingService.java",
-            "tracking/TripPositionService.java");
+            "tracking/TripPositionService.java",
+            // Paquet 5 : petits packages (priorité 2) : stockage et images, grille de commission, GP Pro, codes
+            // SMS et e-mail, adresses, messagerie, support, demandes, signalements, alertes, appels, parrainage,
+            // codes promo, vols, statut voyageur, litiges, abonnement PRO, réglages, carnet d'adresses,
+            // notifications, modèles de trajet, favoris, activation, recherche, maintenance, export.
+            "activation/ActivationService.java",
+            "address/AddressController.java",
+            "addressbook/delivery/DeliveryAddressController.java",
+            "addressbook/invitation/RecipientInvitationService.java",
+            "addressbook/pickup/PickupAddressController.java",
+            "addressbook/recipient/RecipientController.java",
+            "billing/BillingController.java",
+            "billing/ProSubscriptionService.java",
+            "billing/StripeBillingService.java",
+            "calls/CallService.java",
+            "common/ImageProcessingService.java",
+            "common/StorageController.java",
+            "common/commission/CommissionGridService.java",
+            "common/stripe/StripeUnavailable.java",
+            "common/stripe/StripeWebhookIngestService.java",
+            "disputes/AdminDisputeOpeningService.java",
+            "disputes/DisputeController.java",
+            "emailotp/EmailOtpController.java",
+            "emailotp/EmailOtpService.java",
+            "emailotp/ResendEmailService.java",
+            "export/UserDataExportController.java",
+            "favorites/FavoriteService.java",
+            "favorites/FavoriteTargetType.java",
+            "flights/FlightAlertOffersScope.java",
+            "flights/FlightAlertService.java",
+            "flights/FlightClickService.java",
+            "flights/FlightErrors.java",
+            "flights/FlightQuery.java",
+            "gppro/GpProAdminService.java",
+            "gppro/GpProApplicationService.java",
+            "gppro/GpProController.java",
+            "gppro/GpProDocumentController.java",
+            "gppro/GpProDocumentService.java",
+            "maintenance/MaintenanceService.java",
+            "messaging/ConversationMediaController.java",
+            "messaging/ConversationMediaPolicy.java",
+            "messaging/RecipientConversationController.java",
+            "messaging/RecipientConversationService.java",
+            "notifications/NotificationController.java",
+            "notifications/NotificationFeedService.java",
+            "notifications/NotificationPrefsService.java",
+            "notifications/NotificationService.java",
+            "referral/ReferralService.java",
+            "requests/service/PackageRequestModerationService.java",
+            "requests/service/PackageRequestPhotoService.java",
+            "search/SearchParseController.java",
+            "settings/MinPricePerKgGuard.java",
+            "settings/UserBusinessPrefsService.java",
+            "signalements/ReportController.java",
+            "signalements/ReportService.java",
+            "smsotp/SmsOtpController.java",
+            "support/SupportAdminToolsService.java",
+            "support/SupportAttachmentService.java",
+            "support/SupportController.java",
+            "support/SupportTicketService.java",
+            "travelerstatus/IndividualFrequencyAdminService.java",
+            "travelerstatus/PublishingEligibilityController.java",
+            "travelerstatus/PublishingLimitGate.java",
+            "travelerstatus/TravelerStatusController.java",
+            "travelerstatus/TravelerStatusService.java",
+            "triptemplate/TripTemplateController.java",
+            "triptemplate/TripTemplateService.java",
+            "videomodal/VideoModalService.java");
+
+    /**
+     * Sources partiellement migrées (paquet 5) qui gardent des refus déjà en anglais neutre (statuts Google,
+     * contrôle de fichier, secret interne, ressources techniques) ou un détail déjà résolu dans la langue de la
+     * requête (SMS) : le garde-fou n'impose pas {@code localized}, il interdit seulement un message français en dur.
+     */
+    private static final List<String> FRENCH_FREE_ONLY = List.of(
+            "address/GoogleAddressService.java",
+            "alerts/AlertService.java",
+            "alerts/TripSpaceAlertService.java",
+            "common/StorageService.java",
+            "flights/FlightUsers.java",
+            "messaging/ConversationController.java",
+            "messaging/ConversationMediaService.java",
+            "messaging/ConversationService.java",
+            "messaging/MessagingNotifyController.java",
+            "requests/controller/NegotiationController.java",
+            "requests/controller/PackageRequestController.java",
+            "requests/controller/PackageRequestInsightController.java",
+            "requests/service/NegotiationService.java",
+            "requests/service/PackageRequestService.java",
+            "smsotp/SmsOtpService.java");
 
     private static final Pattern HARDCODED_BUSINESS = Pattern.compile(
             "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\("
@@ -182,7 +271,10 @@ class ServerMessagesGuardTest {
             "payments/cash/WalletCommissionCollector.java",
             "payments/pawapay/PawapayOperationService.java",
             "payments/split/PaymentSplitService.java",
-            "payments/wallet/topupcode/WalletTopupCodeAdminService.java");
+            "payments/wallet/topupcode/WalletTopupCodeAdminService.java",
+            // Paquet 5 : IllegalState/IllegalArgument internes restées françaises (calcul, génération de code).
+            "common/commission/CommissionCalculator.java",
+            "promo/PromoService.java");
     private static final Pattern FRENCH_IN_BUSINESS_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");
@@ -209,12 +301,24 @@ class ServerMessagesGuardTest {
     }
 
     @Test
+    @DisplayName("sources partiellement migrées : aucun message français en dur dans une exception métier")
+    void partiallyMigratedSourcesHaveNoHardcodedFrench() throws IOException {
+        for (String file : FRENCH_FREE_ONLY) {
+            assertThat(FRENCH_IN_BUSINESS_EXCEPTION.matcher(source(file)).find())
+                    .as("%s : message français en dur dans une exception", file)
+                    .isFalse();
+        }
+    }
+
+    @Test
     @DisplayName("chaque clé utilisée par les sources migrées existe en FR et en EN (titre et détail)")
     void everyKeyUsedByMigratedSourcesExistsInBothLanguages() throws IOException {
         Messages fr = TestMessages.fr();
         Messages en = TestMessages.en();
         int checked = 0;
-        for (String file : MIGRATED) {
+        List<String> all = new java.util.ArrayList<>(MIGRATED);
+        all.addAll(FRENCH_FREE_ONLY);
+        for (String file : all) {
             Matcher m = KEY.matcher(source(file));
             while (m.find()) {
                 String key = m.group(1);

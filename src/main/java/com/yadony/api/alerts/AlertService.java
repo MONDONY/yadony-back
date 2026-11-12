@@ -87,11 +87,7 @@ public class AlertService {
         List<CorridorAlertEntity> existing = alertRepository.findAllByOwnerId(oid);
 
         if (existing.size() >= MAX_ACTIVE_ALERTS) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNPROCESSABLE_ENTITY,
-                    "alert-limit-reached",
-                    "Alert Limit Reached",
-                    "Vous avez atteint la limite de " + MAX_ACTIVE_ALERTS + " alertes.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-limit-reached", "problem.alert-limit-reached", MAX_ACTIVE_ALERTS);
         }
 
         // Normalisé à l'écriture (C2) : le check de doublon ci-dessous compare CETTE
@@ -105,11 +101,7 @@ public class AlertService {
         boolean duplicate = existing.stream()
                 .anyMatch(e -> isSameFilters(e, req, categories));
         if (duplicate) {
-            throw new YadonyBusinessException(
-                    HttpStatus.CONFLICT,
-                    "alert-duplicate",
-                    "Duplicate Alert",
-                    "Une alerte identique existe déjà pour ce corridor.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "alert-duplicate", "problem.alert-duplicate");
         }
 
         CorridorAlertEntity entity = new CorridorAlertEntity();
@@ -157,16 +149,12 @@ public class AlertService {
         boolean roleOk = (direction == AlertDirection.SENDER_WANTS_TRIPS && owner.getRoles().contains(Role.SENDER))
                 || (direction == AlertDirection.TRAVELER_WANTS_PACKAGES && owner.getRoles().contains(Role.TRAVELER));
         if (!roleOk) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                    "alert-direction-not-allowed", "Alert Direction Not Allowed",
-                    "Votre rôle ne permet pas de créer ce type d'alerte.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "alert-direction-not-allowed", "problem.alert-direction-not-allowed");
         }
         if (direction == AlertDirection.SENDER_WANTS_TRIPS
                 && (req.minWeightKg() != null
                     || (req.contentCategories() != null && !req.contentCategories().isEmpty()))) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "alert-trip-filters-unsupported", "Trip Alert Filters Unsupported",
-                    "Les filtres poids/catégories ne s'appliquent pas aux alertes trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-trip-filters-unsupported", "problem.alert-trip-filters-unsupported");
         }
         validateZone(req.direction(), req.centerLat(), req.centerLng(), req.radiusKm());
     }
@@ -183,19 +171,13 @@ public class AlertService {
             return;
         }
         if (direction != AlertDirection.SENDER_WANTS_TRIPS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "alert-zone-not-allowed", "Pickup Zone Not Allowed",
-                    "La zone de remise ne s'applique qu'aux alertes trajet.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-zone-not-allowed", "problem.alert-zone-not-allowed");
         }
         if (centerLat == null || centerLng == null || radiusKm == null) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "alert-zone-incomplete", "Pickup Zone Incomplete",
-                    "La zone de remise exige un centre (lat/lng) et un rayon.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-zone-incomplete", "problem.alert-zone-incomplete");
         }
         if (radiusKm < MIN_ZONE_RADIUS_KM || radiusKm > MAX_ZONE_RADIUS_KM) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "alert-zone-radius-invalid", "Pickup Zone Radius Invalid",
-                    "Le rayon doit être entre " + MIN_ZONE_RADIUS_KM + " et " + MAX_ZONE_RADIUS_KM + " km.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-zone-radius-invalid", "problem.alert-zone-radius-invalid", MIN_ZONE_RADIUS_KM, MAX_ZONE_RADIUS_KM);
         }
     }
 

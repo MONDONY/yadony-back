@@ -40,8 +40,7 @@ public class TravelerStatusService {
     @Transactional
     public TravelerStatusResponse declare(String firebaseUid, TravelerStatusRequest r) {
         UserEntity loaded = userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         // Les contrôles passent avant tout verrou et toute écriture : une déclaration refusée ne laisse rien.
         validate(r);
         // Verrou par utilisateur, puis relecture : l'entité chargée avant le verrou peut être périmée.
@@ -50,8 +49,7 @@ public class TravelerStatusService {
             // Redevenir particulier se fait par la sortie GP Pro (POST /gp-pro/resign), qui retire le badge
             // et le statut dans la même transaction : jamais un GP Pro avec un statut particulier, que son
             // badge soit récent ou antérieur au statut (statut non déclaré).
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "gp-pro-active", "GP Pro Active",
-                    "Pour redevenir particulier, quittez le statut GP Pro.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "gp-pro-active", "problem.gp-pro-active");
         }
 
         user.setTravelerStatus(TravelerStatus.INDIVIDUAL);
@@ -75,18 +73,18 @@ public class TravelerStatusService {
 
     private static void validate(TravelerStatusRequest r) {
         if (r == null || r.status() == null) {
-            throw invalid("Le statut est obligatoire");
+            throw invalid("problem.traveler-status-invalid.required");
         }
         if (r.status() == TravelerStatus.PROFESSIONAL) {
-            throw invalid("Utilisez la demande GP Pro");
+            throw invalid("problem.traveler-status-invalid.use-gp-pro");
         }
         if (!Boolean.TRUE.equals(r.personalUseConfirmed())) {
-            throw invalid("Confirmez que vous voyagez à titre personnel");
+            throw invalid("problem.traveler-status-invalid.confirm-personal");
         }
     }
 
-    private static YadonyBusinessException invalid(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                "traveler-status-invalid", "Invalid Traveler Status", detail);
+    private static YadonyBusinessException invalid(String messageKey) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                "traveler-status-invalid", messageKey);
     }
 }

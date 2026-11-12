@@ -162,10 +162,7 @@ public class CommissionGridService {
         List<CommissionGridWarning> warnings = warnings(draft, effectiveFrom, loadAll(), now);
         Set<CommissionGridWarning> accepted = acknowledged == null ? Set.of() : acknowledged;
         if (!accepted.containsAll(warnings)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "commission-grid-warning-not-acknowledged", "Commission Grid Warning Not Acknowledged",
-                    "La grille augmente la commission : acquittez l'avertissement pour la programmer.",
-                    Map.of("warnings", warnings.stream().map(Enum::name).toList()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "commission-grid-warning-not-acknowledged", "problem.commission-grid-warning-not-acknowledged", Map.of("warnings", warnings.stream().map(Enum::name).toList()));
         }
 
         String note = normalizedNote(draft.note());
@@ -301,9 +298,9 @@ public class CommissionGridService {
             violations.put("note", "La note ne peut pas dépasser " + MAX_NOTE_LENGTH + " caractères.");
         }
         if (!violations.isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    inPast ? "commission-grid-effective-in-past" : VALIDATION, "Validation Error",
-                    "Grille de commission invalide", Map.of("violations", violations));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                    inPast ? "commission-grid-effective-in-past" : VALIDATION, "problem.commission-grid-invalid",
+                    Map.of("violations", violations));
         }
         LocalDateTime effective = requested == null || !requested.isAfter(now) ? now : requested;
         return effective.truncatedTo(ChronoUnit.MICROS);
@@ -424,13 +421,10 @@ public class CommissionGridService {
     }
 
     private static YadonyBusinessException alreadyEffective() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "commission-grid-already-effective",
-                "Commission Grid Already Effective",
-                "Une grille déjà en vigueur ne peut pas être annulée : programmez-en une nouvelle.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "commission-grid-already-effective", "problem.commission-grid-already-effective");
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "commission-grid-not-found",
-                "Commission Grid Not Found", "Grille de commission introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "commission-grid-not-found", "problem.commission-grid-not-found");
     }
 }

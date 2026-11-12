@@ -366,10 +366,7 @@ public class NegotiationController {
     private UUID requireUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getPrincipal())) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthorized",
-                    "Unauthorized", "Un token Firebase valide est requis"
-            );
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.auth.token-required");
         }
         String firebaseUid = (String) auth.getPrincipal();
         return userRepository.findByFirebaseUid(firebaseUid)

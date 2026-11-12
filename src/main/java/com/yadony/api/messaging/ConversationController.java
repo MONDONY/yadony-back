@@ -101,8 +101,7 @@ public class ConversationController {
                     // Ancien destinataire d'une conversation fermée (lot 3C) : elle n'existe
                     // plus pour lui, comme elle a disparu de sa liste.
                     if (conversationRepository.existsRevokedForRecipient(id, currentUser.getId())) {
-                        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "conversation-not-found",
-                                "Not Found", "Conversation introuvable");
+                        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "conversation-not-found", "problem.conversation-not-found");
                     }
                     return new ResponseStatusException(HttpStatus.FORBIDDEN,
                             "Conversation not found or access denied");

@@ -397,9 +397,7 @@ public class NotificationPrefsService {
     private UUID resolveUserId(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(u -> u.getId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user_not_found",
-                        "User not found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user_not_found", "problem.user-not-found.lowercase-title"));
     }
 
     private NotificationPrefsDto toDto(NotificationPrefsEntity e) {

@@ -139,24 +139,19 @@ public class ReportService {
         String targetMessageId = normalizeMessageId(targetType, messageId);
 
         if (targetType == null) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "target-type-required",
-                    "Invalid Request", "Le type de cible est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "target-type-required", "problem.target-type-required");
         }
         if (targetType != ReportTargetType.APP && targetId == null) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "target-id-required",
-                    "Invalid Request", "L'identifiant de la cible est obligatoire pour ce type de signalement");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "target-id-required", "problem.target-id-required");
         }
         if (reason == null) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "reason-required",
-                    "Invalid Request", "Le motif est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "reason-required", "problem.reason-required");
         }
         if (!reason.appliesTo(targetType)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "reason-not-applicable",
-                    "Unprocessable", "Ce motif ne s'applique pas à ce type de signalement");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "reason-not-applicable", "problem.reason-not-applicable");
         }
         if (targetType == ReportTargetType.USER && targetId != null && targetId.equals(reporter.getId())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "cannot-report-self",
-                    "Unprocessable", "Vous ne pouvez pas vous signaler vous-même");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "cannot-report-self", "problem.cannot-report-self");
         }
         requireTargetExists(targetType, targetId);
         if (targetMessageId != null) {
@@ -165,14 +160,12 @@ public class ReportService {
 
         List<String> keys = photoKeys != null ? photoKeys : List.of();
         if (keys.size() > MAX_PHOTOS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-photos",
-                    "Too Many Photos", "Maximum " + MAX_PHOTOS + " captures d'écran par signalement");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "too-many-photos", "problem.too-many-photos.report", MAX_PHOTOS);
         }
         String ownPrefix = PHOTO_PREFIX + reporter.getId() + "/";
         for (String key : keys) {
             if (!StorageKeys.isOwnedKey(key, ownPrefix)) {
-                throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "photo-not-owned",
-                        "Forbidden", "Une des captures ne vous appartient pas");
+                throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "photo-not-owned", "problem.photo-not-owned");
             }
         }
 
@@ -334,8 +327,7 @@ public class ReportService {
         }
         String trimmed = messageId.trim();
         if (trimmed.length() > MESSAGE_ID_MAX_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "message-id-too-long",
-                    "Invalid Request", "Identifiant de message trop long");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "message-id-too-long", "problem.message-id-too-long");
         }
         return trimmed;
     }
@@ -343,11 +335,9 @@ public class ReportService {
     /** On ne signale que les messages d'une conversation où l'on est expéditeur ou voyageur. */
     private void requireConversationParticipant(UUID conversationId, UUID reporterId) {
         ConversationEntity conversation = conversationRepository.findById(conversationId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "target-not-found",
-                        "Not Found", "La cible du signalement est introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "target-not-found", "problem.target-not-found"));
         if (!reporterId.equals(conversation.participantAId()) && !reporterId.equals(conversation.getTravelerId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "not-conversation-participant",
-                    "Forbidden", "Vous ne participez pas à cette conversation");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "not-conversation-participant", "problem.not-conversation-participant");
         }
     }
 
@@ -384,8 +374,7 @@ public class ReportService {
             case MESSAGE, APP -> true;
         };
         if (!exists) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "target-not-found",
-                    "Not Found", "La cible du signalement est introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "target-not-found", "problem.target-not-found");
         }
     }
 
@@ -409,7 +398,6 @@ public class ReportService {
 
     private UserEntity requireUser(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.UNAUTHORIZED, "user-not-found", "Unauthorized", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.auth.user-not-found"));
     }
 }

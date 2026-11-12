@@ -78,10 +78,7 @@ public class ResendEmailService {
 
         if (!emailSendingConfigured) {
             if (prodProfile) {
-                throw new YadonyBusinessException(
-                        HttpStatus.SERVICE_UNAVAILABLE, "email-service-not-configured",
-                        "Email Service Not Configured",
-                        "L'envoi des emails n'est pas configuré");
+                throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "email-service-not-configured", "problem.email-service-not-configured");
             }
             return;
         }
@@ -108,9 +105,7 @@ public class ResendEmailService {
                 // En dev, l'envoi réel peut échouer (domaine Resend non vérifié).
                 return;
             }
-            throw new YadonyBusinessException(
-                    HttpStatus.SERVICE_UNAVAILABLE, "email-service-error",
-                    "Email Service Error", "L'envoi de l'email a échoué, veuillez réessayer");
+            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE, "email-service-error", "problem.email-service-error");
         }
     }
 

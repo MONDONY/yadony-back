@@ -87,17 +87,12 @@ public class UserBusinessPrefsService {
         // isLocked() rend false par construction : la garde ne coûte rien.
         String requestedCountry = dto.country();
         if (requestedCountry != null && !CountryCatalog.isSupported(requestedCountry)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "country-unsupported", "Country Unsupported",
-                    "Ce pays n'est pas encore desservi par yadony.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "country-unsupported", "problem.country-unsupported");
         }
         boolean countryChanges = requestedCountry != null
                 && !requestedCountry.equalsIgnoreCase(user.getCountry());
         if (countryChanges && countryLockService.isLocked(userId)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "country-locked", "Country Locked",
-                    "Impossible de changer de pays : votre compte de paiement "
-                            + "est déjà activé dans ce pays et ne peut plus en changer.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "country-locked", "problem.country-locked");
         }
         if (countryChanges) {
             String previousCountry = user.getCountry();
@@ -134,9 +129,7 @@ public class UserBusinessPrefsService {
         if (requestedCurrency != null) {
             SupportedCurrency validated = SupportedCurrency.fromCode(requestedCurrency);
             if (validated == null) {
-                throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "currency-unsupported", "Currency Unsupported",
-                        "Cette devise n'est pas prise en charge par yadony.");
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
             }
             String normalizedCurrency = validated.code().toUpperCase(Locale.ROOT);
             // Sans ligne encore enregistree, la devise active effective etait celle
@@ -164,9 +157,7 @@ public class UserBusinessPrefsService {
             } else {
                 SupportedCurrency validatedDisplay = SupportedCurrency.fromCode(requestedDisplay);
                 if (validatedDisplay == null) {
-                    throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "currency-unsupported", "Currency Unsupported",
-                            "Cette devise n'est pas prise en charge par yadony.");
+                    throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "currency-unsupported", "problem.currency-unsupported");
                 }
                 e.setDisplayCurrencyCode(validatedDisplay.code().toUpperCase(Locale.ROOT));
             }
@@ -224,15 +215,12 @@ public class UserBusinessPrefsService {
     private UUID resolveUserId(String firebaseUid) {
         return userRepository.findByFirebaseUid(firebaseUid)
                 .map(u -> u.getId())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user_not_found",
-                        "User not found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user_not_found", "problem.user-not-found.lowercase-title"));
     }
 
     private UserEntity findUserOrThrow(UUID userId) {
         return userRepository.findById(userId).orElseThrow(
-                () -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "user_not_found",
-                        "User not found", "Utilisateur introuvable"));
+                () -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user_not_found", "problem.user-not-found.lowercase-title"));
     }
 
     private UserBusinessPrefsDto toDto(UserBusinessPrefsEntity e) {

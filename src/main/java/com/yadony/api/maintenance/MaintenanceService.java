@@ -55,13 +55,13 @@ public class MaintenanceService {
         String message = command.message() == null || command.message().isBlank() ? null : command.message().trim();
         if (message != null && message.length() > MESSAGE_MAX_LENGTH) {
             throw badRequest("maintenance-message-too-long",
-                    "Le message ne doit pas dépasser " + MESSAGE_MAX_LENGTH + " caractères");
+                    "problem.maintenance-message-too-long", MESSAGE_MAX_LENGTH);
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         LocalDateTime estimatedEnd = command.estimatedEndAt() == null ? null
                 : LocalDateTime.ofInstant(command.estimatedEndAt(), ZoneOffset.UTC);
         if (command.enabled() && estimatedEnd != null && !estimatedEnd.isAfter(now)) {
-            throw badRequest("maintenance-end-in-past", "L'heure de fin estimée doit être dans le futur");
+            throw badRequest("maintenance-end-in-past", "problem.maintenance-end-in-past");
         }
 
         MaintenanceStateEntity state = state();
@@ -100,7 +100,7 @@ public class MaintenanceService {
         String cleanNote = note == null || note.isBlank() ? null : note.trim();
         if (cleanNote != null && cleanNote.length() > NOTE_MAX_LENGTH) {
             throw badRequest("maintenance-note-too-long",
-                    "La note ne doit pas dépasser " + NOTE_MAX_LENGTH + " caractères");
+                    "problem.maintenance-note-too-long", NOTE_MAX_LENGTH);
         }
         return exemptions.findByUserId(userId).orElseGet(() -> {
             MaintenanceExemptionEntity exemption = new MaintenanceExemptionEntity();
@@ -117,8 +117,7 @@ public class MaintenanceService {
 
     public void removeExemption(UUID userId, UUID adminId) {
         MaintenanceExemptionEntity exemption = exemptions.findByUserId(userId).orElseThrow(() ->
-                new YadonyBusinessException(HttpStatus.NOT_FOUND, "maintenance-exemption-not-found",
-                        "Not Found", "Ce compte n'est pas exempté"));
+                YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "maintenance-exemption-not-found", "problem.maintenance-exemption-not-found"));
         exemption.softDelete();
         exemptions.save(exemption);
         auditService.log("maintenance_exemption", exemption.getId(), "MAINTENANCE_EXEMPTION_REMOVED", adminId,
@@ -132,7 +131,7 @@ public class MaintenanceService {
         return state;
     }
 
-    private static YadonyBusinessException badRequest(String code, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, code, "Unprocessable Entity", detail);
+    private static YadonyBusinessException badRequest(String code, String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, code, messageKey, args);
     }
 }
