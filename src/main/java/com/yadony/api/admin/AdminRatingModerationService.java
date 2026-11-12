@@ -62,10 +62,7 @@ public class AdminRatingModerationService {
     public void delete(UUID ratingId, String reason, UUID adminId) {
         String normalizedReason = reason != null ? reason.trim() : "";
         if (normalizedReason.length() > MAX_DELETE_REASON_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST,
-                    "rating-delete-reason-too-long", "Rating Delete Reason Too Long",
-                    "Le motif de suppression ne doit pas dépasser "
-                            + MAX_DELETE_REASON_LENGTH + " caractères");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "rating-delete-reason-too-long", "problem.admin.rating-delete-reason-too-long", String.valueOf(MAX_DELETE_REASON_LENGTH));
         }
         RatingEntity rating = findOrThrow(ratingId);
         rating.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
@@ -85,7 +82,6 @@ public class AdminRatingModerationService {
 
     private RatingEntity findOrThrow(UUID id) {
         return ratingRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "rating-not-found", "Not Found", "Avis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "rating-not-found", "problem.admin.rating-not-found"));
     }
 }

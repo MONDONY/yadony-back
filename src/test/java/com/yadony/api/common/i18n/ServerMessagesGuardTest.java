@@ -220,7 +220,64 @@ class ServerMessagesGuardTest {
             "travelerstatus/TravelerStatusService.java",
             "triptemplate/TripTemplateController.java",
             "triptemplate/TripTemplateService.java",
-            "videomodal/VideoModalService.java");
+            "videomodal/VideoModalService.java",
+            // Paquet 6 : administration, assistant, DAC7 (voyageur et administration), automatisations, outils.
+            // Restent hors liste : règles de ciblage de diffusion (AudienceField/Rule/SqlCompiler, BroadcastTarget),
+            // comptes administrateurs (AdminAccountService, déjà en anglais), grilles et simulations avec map de champs.
+            "admin/AdminAlertController.java",
+            "admin/AdminAnnouncementModerationController.java",
+            "admin/AdminBidsController.java",
+            "admin/AdminBroadcastController.java",
+            "admin/AdminBroadcastSegmentController.java",
+            "admin/AdminConversationToolsController.java",
+            "admin/AdminConversationToolsService.java",
+            "admin/AdminDisputesController.java",
+            "admin/AdminGdprController.java",
+            "admin/AdminIncidentContextController.java",
+            "admin/AdminMaintenanceController.java",
+            "admin/AdminPackageRequestQueryService.java",
+            "admin/AdminPaymentController.java",
+            "admin/AdminPhotoStorageController.java",
+            "admin/AdminPromoController.java",
+            "admin/AdminRatingContextController.java",
+            "admin/AdminRatingModerationService.java",
+            "admin/AdminRatingsController.java",
+            "admin/AdminRecetteController.java",
+            "admin/AdminRecetteTesterController.java",
+            "admin/AdminRecetteTesterService.java",
+            "admin/AdminReleaseIntentController.java",
+            "admin/AdminReportContextController.java",
+            "admin/AdminReportReplyController.java",
+            "admin/AdminReportReplyService.java",
+            "admin/AdminReportsController.java",
+            "admin/AdminSettingsController.java",
+            "admin/AdminSupportController.java",
+            "admin/AdminUserController.java",
+            "admin/AdminUserDeletionService.java",
+            "admin/AdminUserKycController.java",
+            "admin/AdminUserWalletController.java",
+            "admin/AdminWalletAdjustmentRequestController.java",
+            "admin/AdminWalletRefundController.java",
+            "admin/ReportActionPolicy.java",
+            "admin/dto/BroadcastTargetRequest.java",
+            "admin/export/AdminExportController.java",
+            "admin/notifications/AdminNotificationService.java",
+            "admin/userview/AdminUserViewController.java",
+            "assistant/AssistantController.java",
+            "assistant/AssistantQuotaGuard.java",
+            "assistant/formdraft/FormDraftController.java",
+            "assistant/formdraft/FormDraftEngine.java",
+            "assistant/formdraft/FormDraftQuotaGuard.java",
+            "automation/AutomationHistoryController.java",
+            "automation/AutomationRuleController.java",
+            "automation/AutomationRuleService.java",
+            "dac7/Dac7DeclarationService.java",
+            "dac7/Dac7DueDiligenceService.java",
+            "dac7/Dac7ExportService.java",
+            "dac7/Dac7SellerStatementService.java",
+            "dac7/TravelerTaxInfoController.java",
+            "dac7/TravelerTaxInfoService.java",
+            "toolkit/ToolsCompletionController.java");
 
     /**
      * Sources partiellement migrées (paquet 5) qui gardent des refus déjà en anglais neutre (statuts Google,
@@ -242,7 +299,10 @@ class ServerMessagesGuardTest {
             "requests/controller/PackageRequestInsightController.java",
             "requests/service/NegotiationService.java",
             "requests/service/PackageRequestService.java",
-            "smsotp/SmsOtpService.java");
+            "smsotp/SmsOtpService.java",
+            // Paquet 6 : refus d'administration déjà en anglais (conversation) ou à détail calculé (note DAC7 sensible).
+            "admin/AdminConversationController.java",
+            "dac7/Dac7AdminService.java");
 
     private static final Pattern HARDCODED_BUSINESS = Pattern.compile(
             "new\\s+(?:YadonyBusinessException\\s*\\(|ResponseStatusException\\s*\\("
@@ -274,7 +334,10 @@ class ServerMessagesGuardTest {
             "payments/wallet/topupcode/WalletTopupCodeAdminService.java",
             // Paquet 5 : IllegalState/IllegalArgument internes restées françaises (calcul, génération de code).
             "common/commission/CommissionCalculator.java",
-            "promo/PromoService.java");
+            "promo/PromoService.java",
+            // Paquet 6 : IllegalState/IllegalArgument internes restées françaises (règle de ciblage illisible).
+            "admin/broadcast/BroadcastAudienceService.java",
+            "admin/broadcast/segment/BroadcastSegmentService.java");
     private static final Pattern FRENCH_IN_BUSINESS_EXCEPTION = Pattern.compile(
             "new\\s+(?:Yadony\\w*|ResponseStatus)Exception\\s*\\(\\s*\"[^\"]*"
                     + "(?:[àâçéèêëîïôûùü]|\\b(?:Vous|Votre|introuvable|impossible)\\b)");

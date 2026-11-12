@@ -129,9 +129,7 @@ public class AdminPackageRequestQueryService {
     @Transactional(readOnly = true)
     public AdminPackageRequestDetailResponse detail(UUID id) {
         PackageRequestEntity r = requestRepository.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        PackageRequestModerationService.NOT_FOUND, "Package Request Not Found",
-                        "Demande d'envoi introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, PackageRequestModerationService.NOT_FOUND, "problem.package-request-not-found"));
 
         List<NegotiationThreadEntity> threads = new ArrayList<>(threadRepository.findByPackageRequestId(id));
         threads.sort(Comparator.comparing(NegotiationThreadEntity::getUpdatedAt,
@@ -272,8 +270,7 @@ public class AdminPackageRequestQueryService {
             }
             return upper ? at.plusNanos(1) : at;
         } catch (DateTimeParseException e) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-date", "Invalid Date",
-                    "Date invalide : " + v + " (attendu : AAAA-MM-JJ ou date-heure ISO)");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-date", "problem.admin.invalid-date", String.valueOf(v));
         }
     }
 

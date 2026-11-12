@@ -89,17 +89,13 @@ public class AdminReportReplyService {
     @Transactional
     public Result reply(UUID reportId, UUID adminId, String message, List<String> attachmentKeys) {
         ReportEntity report = reportRepository.findById(reportId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "report-not-found", "problem.admin.report-not-found"));
         if (report.getTargetType() != ReportTargetType.APP) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "report-not-app-bug",
-                    "Unprocessable", "Seul un signalement de l'application (scarabée) peut recevoir une réponse");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "report-not-app-bug", "problem.admin.report-not-app-bug");
         }
         UserEntity reporter = Optional.ofNullable(report.getReporterId())
                 .flatMap(userRepository::findById)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "reporter-unavailable", "Unprocessable",
-                        "Le signalant est inconnu ou son compte a été supprimé"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "reporter-unavailable", "problem.admin.reporter-unavailable"));
         List<String> keys = attachmentKeys != null ? attachmentKeys : List.of();
 
         Optional<SupportTicketEntity> open = Optional.ofNullable(report.getSupportTicketId())

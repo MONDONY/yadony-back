@@ -35,8 +35,7 @@ public class AdminReportContextController {
     @GetMapping("/admin/reports/{id}/context")
     public ResponseEntity<AdminReportContextResponse> context(@PathVariable UUID id, Authentication authentication) {
         ReportEntity report = reportRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "report-not-found", "problem.admin.report-not-found"));
         boolean canReadConversations = ReportActionPolicy.authorities(authentication).contains("MODERATION_VIEW");
         return ResponseEntity.ok(contextService.build(report, canReadConversations));
     }

@@ -60,16 +60,12 @@ public class AdminRecetteTesterService {
     @Transactional
     public BulkResult setBulk(Collection<UUID> userIds, boolean enabled, UUID adminId) {
         if (!recetteMode.isEnabled()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "recette-disabled",
-                    "Recette Disabled",
-                    "Le mode recette n'est pas activé dans cet environnement");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "recette-disabled", "problem.admin.recette-disabled");
         }
         Set<UUID> ids = new LinkedHashSet<>(userIds == null ? List.of() : userIds);
         ids.remove(null);
         if (ids.isEmpty() || ids.size() > MAX_BULK) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "recette-bulk-size",
-                    "Invalid Selection",
-                    "Sélectionnez entre 1 et " + MAX_BULK + " utilisateurs");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "recette-bulk-size", "problem.admin.recette-bulk-size", String.valueOf(MAX_BULK));
         }
 
         Map<UUID, UserEntity> found = userRepository.findAllById(ids).stream()

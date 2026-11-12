@@ -172,8 +172,7 @@ public class AdminBidsController {
     @GetMapping("/admin/bids/{id}")
     public ResponseEntity<AdminBidDetailResponse> getBid(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.parcel"));
 
         AnnouncementEntity ann = bid.getAnnouncementId() != null
                 ? announcementRepo.findById(bid.getAnnouncementId()).orElse(null) : null;
@@ -194,8 +193,7 @@ public class AdminBidsController {
     @GetMapping("/admin/bids/{id}/timeline")
     public ResponseEntity<AdminBidTimelineResponse> getTimeline(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.parcel"));
 
         // Scans, journal d'audit du colis et de ses entités liées, vie du paiement : un colis
         // accepté mais pas encore remis n'a aucun scan : avec les seuls scans, sa chronologie restait vide.
@@ -209,8 +207,7 @@ public class AdminBidsController {
     @GetMapping("/admin/bids/{id}/photos")
     public ResponseEntity<AdminBidPhotosResponse> getPhotos(@PathVariable UUID id, Authentication authentication) {
         BidEntity bid = bidRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "bid-not-found", "Not Found", "Colis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.parcel"));
         return ResponseEntity.ok(new AdminBidPhotosResponse(id,
                 photoAssembler.photos(bid, AdminBidDetailAssembler.Access.of(authentication))));
     }

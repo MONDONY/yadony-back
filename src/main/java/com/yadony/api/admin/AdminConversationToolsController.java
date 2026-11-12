@@ -60,7 +60,6 @@ public class AdminConversationToolsController {
 
     private ConversationEntity require(String firestoreId) {
         return conversations.findByFirestoreConversationId(firestoreId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "conversation-not-found",
-                        "Not Found", "Conversation introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "conversation-not-found", "problem.conversation-not-found"));
     }
 }

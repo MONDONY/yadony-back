@@ -35,8 +35,7 @@ public class AdminRatingContextController {
     @GetMapping("/admin/ratings/{id}/context")
     public ResponseEntity<AdminRatingContextResponse> context(@PathVariable UUID id, Authentication authentication) {
         RatingEntity rating = ratingRepo.findByIdIncludingDeleted(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "rating-not-found", "Not Found", "Avis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "rating-not-found", "problem.admin.rating-not-found"));
         boolean canViewReports = ReportActionPolicy.authorities(authentication).contains("REPORT_VIEW");
         return ResponseEntity.ok(contextService.build(rating, canViewReports));
     }

@@ -68,8 +68,7 @@ public class Dac7SellerStatementService {
         // Jamais avant le 1er janvier suivant : un récapitulatif partiel bloquerait l'envoi légal (un par année).
         int year = declarations.requireClosedYear(yearValue);
         if (!declarations.collectionEnabled()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-collection-disabled", "DAC7 Disabled",
-                    "La collecte DAC7 est éteinte : aucun récapitulatif n'est envoyé aux voyageurs.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-collection-disabled", "problem.dac7.dac7-collection-disabled-2");
         }
         Declaration declaration = declarations.declaration(year, true);
         int sent = 0;

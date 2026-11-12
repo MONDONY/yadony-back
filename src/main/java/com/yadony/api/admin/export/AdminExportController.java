@@ -53,9 +53,7 @@ public class AdminExportController {
             case "users" -> exportService.exportUsers(from, to);
             case "disputes" -> exportService.exportDisputes(from, to);
             case "payouts" -> exportService.exportPayouts(from, to);
-            default -> throw new YadonyBusinessException(
-                    HttpStatus.BAD_REQUEST, "invalid-export-type", "Invalid Type",
-                    "Type d'export invalide. Valeurs acceptées : transactions, users, disputes, payouts.");
+            default -> throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-export-type", "problem.admin.invalid-export-type");
         };
 
         auditService.log("EXPORT", null, "EXPORT_RUN", adminId, Map.of(

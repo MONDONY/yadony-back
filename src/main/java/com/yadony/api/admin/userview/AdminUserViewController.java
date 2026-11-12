@@ -99,8 +99,7 @@ public class AdminUserViewController {
         requireUser(userId);
         boolean received = "RECEIVED".equals(direction);
         if (!received && !"SENT".equals(direction)) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-direction", "Bad Request",
-                    "direction doit valoir RECEIVED ou SENT");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-direction", "problem.admin.invalid-direction");
         }
         return listingService.reports(userId, received, page, size);
     }
@@ -147,8 +146,7 @@ public class AdminUserViewController {
     /** Utilisateur inconnu ou supprimé (@Where deleted_at IS NULL) : 404 standard. */
     private UserEntity requireUser(UUID userId) {
         return userRepository.findById(userId)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
     }
 
     private static Set<String> authoritiesOf(Authentication authentication) {

@@ -190,17 +190,14 @@ public class AdminReportsController {
 
         ReportAction action = request.action();
         if (action == null) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "action-required",
-                    "Invalid Request", "L'action est obligatoire");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "action-required", "problem.admin.action-required");
         }
         if (!action.appliesTo(report.getTargetType())) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "action-not-applicable",
-                    "Unprocessable", "Cette action ne s'applique pas à ce type de cible");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "action-not-applicable", "problem.admin.action-not-applicable");
         }
         if (report.getStatus() != ReportStatus.OPEN) {
             // Sans ce garde, une seconde résolution rejouait la sanction et remerciait deux fois.
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "report-already-closed",
-                    "Conflict", "Ce signalement est déjà traité");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "report-already-closed", "problem.admin.report-already-closed");
         }
         // La permission propre au geste AVANT toute lecture de la cible : un 403 ne doit
         // rien apprendre de la cible à l'appelant.
@@ -209,8 +206,7 @@ public class AdminReportsController {
         UUID adminId = adminId(authentication);
         ResolvedReportTarget target = targetResolver.resolve(report);
         if (!ReportActionPolicy.isExecutable(action, target)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "report-target-unresolvable",
-                    "Unprocessable", "La cible de ce signalement (ou son auteur) est introuvable");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "report-target-unresolvable", "problem.admin.report-target-unresolvable");
         }
         actionExecutor.apply(id, action, report, target, request.note(), request.targetMessage(), adminId);
 
@@ -241,8 +237,7 @@ public class AdminReportsController {
 
     private ReportEntity findOrThrow(UUID id) {
         return reportRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "report-not-found", "problem.admin.report-not-found"));
     }
 
     /** Réponse d'un signalement seul (détail, résolution) : signalant relu, photos présignées. */
@@ -259,9 +254,7 @@ public class AdminReportsController {
         if (authentication != null && authentication.getPrincipal() instanceof AdminPrincipal principal) {
             return principal.adminId();
         }
-        throw new YadonyBusinessException(HttpStatus.FORBIDDEN,
-                "admin-principal-required", "Admin Principal Required",
-                "Authentification administrateur requise");
+        throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "admin-principal-required", "problem.admin.admin-principal-required");
     }
 
     /**
@@ -273,8 +266,7 @@ public class AdminReportsController {
     @Transactional
     public ResponseEntity<Void> deleteReport(@PathVariable UUID id, Authentication authentication) {
         ReportEntity report = reportRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "report-not-found", "problem.admin.report-not-found"));
         softDelete(List.of(report), adminId(authentication), "single");
         return ResponseEntity.noContent().build();
     }
@@ -333,11 +325,9 @@ public class AdminReportsController {
         UUID adminId = adminId(authentication);
         ReportEntity report = reportRepo.findAllByIdIncludingDeleted(List.of(id)).stream()
                 .findFirst()
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "report-not-found", "Not Found", "Signalement introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "report-not-found", "problem.admin.report-not-found"));
         if (report.getDeletedAt() == null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "report-not-deleted",
-                    "Conflict", "Ce signalement n'est pas supprimé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "report-not-deleted", "problem.admin.report-not-deleted");
         }
         restore(report, adminId, "single", request != null ? request.normalizedReason() : "");
 
@@ -364,9 +354,7 @@ public class AdminReportsController {
         List<UUID> ids = request.ids() == null ? List.of()
                 : request.ids().stream().filter(Objects::nonNull).distinct().toList();
         if (ids.size() > MAX_BULK_RESTORE) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "bulk-restore-too-many",
-                    "Unprocessable Entity",
-                    "Au plus " + MAX_BULK_RESTORE + " signalements par restauration groupée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bulk-restore-too-many", "problem.admin.bulk-restore-too-many", String.valueOf(MAX_BULK_RESTORE));
         }
         if (ids.isEmpty()) {
             return ResponseEntity.ok(Map.of("restored", 0, "skipped", 0));

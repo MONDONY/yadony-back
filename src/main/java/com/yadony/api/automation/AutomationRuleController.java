@@ -104,24 +104,19 @@ public class AutomationRuleController {
         try {
             return UUID.fromString(id);
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "invalid-id",
-                    "Invalid ID", "L'identifiant fourni n'est pas un UUID valide.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "invalid-id", "problem.automation.invalid-id");
         }
     }
 
     private UserEntity requireProTraveler() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getName() == null) {
-            throw new YadonyBusinessException(
-                    HttpStatus.UNAUTHORIZED, "unauthenticated", "Unauthenticated", "Authentification requise");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthenticated", "problem.unauthenticated");
         }
         UserEntity user = userRepository.findByFirebaseUid(auth.getName())
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
         if (!user.getRoles().contains(Role.TRAVELER) || !user.isProAccount()) {
-            throw new YadonyBusinessException(
-                    HttpStatus.FORBIDDEN, "pro-required",
-                    "PRO account required", "Automatisations réservées aux voyageurs PRO.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "pro-required", "problem.automation.pro-required-2");
         }
         return user;
     }

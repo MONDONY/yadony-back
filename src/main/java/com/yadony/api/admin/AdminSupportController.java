@@ -174,20 +174,15 @@ public class AdminSupportController {
 
     private void requireActiveAdmin(UUID targetAdminId) {
         AdminUserEntity target = adminUserRepository.findById(targetAdminId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "admin-not-found", "Administrateur introuvable",
-                        "Aucun compte administrateur ne correspond a cet identifiant"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "admin-not-found", "problem.admin.admin-not-found"));
         if (target.getStatus() == AdminStatus.DISABLED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "admin-disabled", "Administrateur desactive",
-                    "Impossible d'assigner un ticket a un compte desactive");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "admin-disabled", "problem.admin.admin-disabled");
         }
     }
 
     private static UUID adminId(Authentication auth) {
         if (auth == null || !(auth.getPrincipal() instanceof AdminPrincipal principal)) {
-            throw new YadonyBusinessException(HttpStatus.UNAUTHORIZED,
-                    "unauthorized", "Unauthorized", "Un compte administrateur est requis");
+            throw YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "unauthorized", "problem.admin.unauthorized");
         }
         return principal.adminId();
     }
@@ -199,9 +194,7 @@ public class AdminSupportController {
         try {
             return SupportTicketScope.valueOf(scope.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-invalid-scope", "Filtre invalide",
-                    "Scope inconnu: " + scope);
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-invalid-scope", "problem.admin.support-invalid-scope", String.valueOf(scope));
         }
     }
 
@@ -212,9 +205,7 @@ public class AdminSupportController {
         try {
             return SupportTicketStatus.valueOf(status.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "support-invalid-status", "Filtre invalide",
-                    "Statut inconnu: " + status);
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "support-invalid-status", "problem.admin.support-invalid-status", String.valueOf(status));
         }
     }
 

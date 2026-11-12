@@ -170,8 +170,7 @@ public class Dac7DeclarationService {
     public int requireYear(Integer year) {
         int current = clock.instant().atZone(ZoneOffset.UTC).getYear();
         if (year == null || year < 2023 || year > current) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-invalid",
-                    "Invalid Year", "L'année doit être comprise entre 2023 et " + current + ".");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-invalid", "problem.dac7.dac7-year-invalid", String.valueOf(current));
         }
         return year;
     }
@@ -183,9 +182,7 @@ public class Dac7DeclarationService {
     public int requireClosedYear(Integer year) {
         int checked = requireYear(year);
         if (checked >= clock.instant().atZone(ZoneOffset.UTC).getYear()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-not-closed",
-                    "Year Not Closed", "L'année " + checked + " n'est pas terminée : les récapitulatifs ne peuvent "
-                    + "être envoyés qu'à partir du 1er janvier " + (checked + 1) + ".");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-year-not-closed", "problem.dac7.dac7-year-not-closed", String.valueOf(checked), String.valueOf((checked + 1)));
         }
         return checked;
     }

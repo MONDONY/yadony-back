@@ -33,6 +33,12 @@ class MessagesBundleTest {
      * cadratin — le français ne change pas, seul l'anglais suit la règle D10.
      */
     private static final Set<String> EM_DASH_FR_HISTORIQUE = Set.of(
+            // Paquet 6 : refus d'administration repris mot pour mot (le français existant ne change pas).
+            "problem.admin.traveler-no-connect.detail",
+            "problem.admin.bid-cancelled.detail",
+            "problem.admin.bid-not-releasable.detail",
+            "problem.admin.payment-partially-refunded.detail",
+            "problem.admin.deletion-blocked.detail",
             "tracking.step.payment-escrowed",
             "tracking.step.accepted",
             "tracking.step.payment-secured",

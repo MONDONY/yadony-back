@@ -37,8 +37,7 @@ public class Dac7DueDiligenceService {
         }
         String cleaned = note == null || note.isBlank() ? null : note.strip();
         if (cleaned != null && cleaned.length() > MAX_NOTE_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-invalid",
-                    "Invalid Note", "La note ne doit pas dépasser " + MAX_NOTE_LENGTH + " caractères.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-note-invalid", "problem.dac7.dac7-note-invalid-2", String.valueOf(MAX_NOTE_LENGTH));
         }
         return repository.save(new Dac7DueDiligenceLogEntity(userId, action, channel, actorId, cleaned));
     }

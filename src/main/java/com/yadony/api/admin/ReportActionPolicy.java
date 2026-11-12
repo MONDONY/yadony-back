@@ -63,8 +63,7 @@ public final class ReportActionPolicy {
     public static void requireAuthorities(ReportAction action, Authentication authentication) {
         AdminPermission extra = extraPermission(action);
         if (extra != null && !authorities(authentication).contains(extra.name())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "authority-required",
-                    "Forbidden", "Permission " + extra.name() + " requise pour cette action");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "authority-required", "problem.admin.authority-required", extra.name());
         }
     }
 

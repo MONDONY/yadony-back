@@ -41,9 +41,7 @@ public record BroadcastTargetRequest(
         }
         boolean hasRule = rule != null && !rule.isNull() && !rule.isMissingNode();
         if (hasRule == (segmentId != null)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "broadcast-target-invalid", "Unprocessable Entity",
-                    "Un ciblage par règle exige soit une règle, soit un segment enregistré, pas les deux");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "broadcast-target-invalid", "problem.admin.broadcast-target-invalid");
         }
         if (hasRule) {
             AudienceRule.Group parsed = AudienceRule.parse(rule);

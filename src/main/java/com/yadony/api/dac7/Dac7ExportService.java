@@ -137,8 +137,7 @@ public class Dac7ExportService {
         int year = declarations.requireYear(yearValue);
         Mode mode = mode(modeValue);
         if (sequenceValue != null && (sequenceValue < 0 || sequenceValue > 999)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid-request",
-                    "Invalid Export Request", "Le numéro d'ordre doit être compris entre 0 et 999.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid-request", "problem.dac7.dac7-export-invalid-request");
         }
         // Configuration d'abord : rien ne sert de calculer (taux BCE, lectures Didit) pour un fichier impossible.
         if (!properties.operatorConfigured()) {
@@ -146,9 +145,7 @@ public class Dac7ExportService {
         }
         boolean encrypted = properties.encryptionConfigured();
         if (!encrypted && !properties.unencryptedAllowed()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-unencrypted-not-allowed",
-                    "Unencrypted Export Not Allowed", "Aucune clé publique de la DGFiP n'est configurée et l'export en "
-                    + "clair n'est pas autorisé.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-unencrypted-not-allowed", "problem.dac7.dac7-unencrypted-not-allowed");
         }
         PGPPublicKey key = encrypted ? key() : null;
         // 1. Calcul HORS transaction (réseau, lecture répétable du rapport).
@@ -222,14 +219,12 @@ public class Dac7ExportService {
         if (sequenceValue == null) {
             sequence = reads.nextSequence(year);
         } else if (reads.sequenceUsed(year, sequenceValue)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Already Used",
-                    "Le numéro d'ordre " + sequenceValue + " a déjà servi pour " + year + ".");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-sequence-used", "problem.dac7.dac7-sequence-used", String.valueOf(sequenceValue), String.valueOf(year));
         } else {
             sequence = sequenceValue;
         }
         if (sequence > 999) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-sequence-used", "Sequence Exhausted",
-                    "Les 1 000 numéros d'ordre de " + year + " sont épuisés.");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-sequence-used", "problem.dac7.dac7-sequence-used-2", String.valueOf(year));
         }
         return sequence;
     }
@@ -297,8 +292,7 @@ public class Dac7ExportService {
         } catch (Dac7XsdValidator.InvalidFileException e) {
             // Chaque vendeur a passé seul : l'erreur ne peut venir que de l'assemblage. Position seulement.
             log.warn("Export DAC7 {} non conforme au schéma DGFiP (ligne {}, colonne {})", year, e.line(), e.column());
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid",
-                    "Invalid Export", "Le fichier généré n'est pas conforme au schéma de la DGFiP.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid", "problem.dac7.dac7-export-invalid");
         }
         String fileName = Dac7FileNaming.fileName(year, siren, sequence, createdAt, encrypted);
         byte[] content = encrypted
@@ -332,15 +326,10 @@ public class Dac7ExportService {
      * appel ne change rien et n'audite pas ; 404 si inconnu.
      */
     public void markDeposited(UUID runId, UUID adminId) {
-        Dac7AdminReadModel.ExportRun run = reads.run(runId).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "dac7-export-run-not-found", "Export Run Not Found",
-                "Fichier DAC7 introuvable."));
+        Dac7AdminReadModel.ExportRun run = reads.run(runId).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "dac7-export-run-not-found", "problem.dac7.dac7-export-run-not-found"));
         Instant yearEnd = LocalDate.of(run.year() + 1, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant();
         if (run.generatedAt() == null || run.generatedAt().isBefore(yearEnd)) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-year-not-closed", "Year Not Closed",
-                    "Ce fichier a été généré avant la fin de l'année " + run.year() + " : ses montants sont partiels, "
-                    + "il ne peut pas être confirmé déposé. Générez le fichier à partir du 1er janvier "
-                    + (run.year() + 1) + ".");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-year-not-closed", "problem.dac7.dac7-year-not-closed-2", String.valueOf(run.year()), String.valueOf((run.year() + 1)));
         }
         transactions.executeWithoutResult(status -> {
             if (!reads.tryLockYear(run.year())) {
@@ -358,18 +347,14 @@ public class Dac7ExportService {
 
     /** 409 immédiat : un autre export (ou dépôt) de la même année tient le verrou ; jamais d'attente. */
     private static YadonyBusinessException inProgress(int year) {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-export-in-progress", "Export In Progress",
-                "Un export DAC7 " + year + " est déjà en cours : réessayez dans quelques instants.");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-export-in-progress", "problem.dac7.dac7-export-in-progress", String.valueOf(year));
     }
 
     /** 409 : reprendre un voyageur déjà déposé serait le redéclarer (rectificative hors lot). Identifiants seuls. */
     private static YadonyBusinessException alreadyDeposited(int year, List<UUID> travelerIds) {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("travelerIds", travelerIds.stream().map(UUID::toString).toList());
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-already-deposited-conflict",
-                "Already Deposited", travelerIds.size() + " voyageur(s) figurent déjà dans un fichier " + year
-                + " déposé : les reprendre demanderait une déclaration rectificative, que ce fichier ne sait pas "
-                + "produire.", properties);
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-already-deposited-conflict", "problem.dac7.dac7-already-deposited-conflict", properties, String.valueOf(travelerIds.size()), String.valueOf(year));
     }
 
     /** Raisons dédoublonnées, tenant dans la colonne (255) : seules des raisons entières sont gardées. */
@@ -390,10 +375,7 @@ public class Dac7ExportService {
             return Dac7FileEncryptor.readEncryptionKey(Path.of(properties.publicKeyPath().strip()), clock.instant());
         } catch (Dac7FileEncryptor.KeyUnavailableException e) {
             log.warn("Export DAC7 : {}", e.getMessage());
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-key-unavailable",
-                    "Encryption Key Unavailable",
-                    "La clé publique de chiffrement de la DGFiP configurée est introuvable, illisible ou sans "
-                    + "sous-clé de chiffrement valide.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-key-unavailable", "problem.dac7.dac7-export-key-unavailable");
         }
     }
 
@@ -513,8 +495,7 @@ public class Dac7ExportService {
         try {
             return Mode.valueOf(value == null ? "" : value.strip().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid-request",
-                    "Invalid Export Request", "Le mode doit être FULL ou PARTIAL.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dac7-export-invalid-request", "problem.dac7.dac7-export-invalid-request-2");
         }
     }
 
@@ -528,8 +509,7 @@ public class Dac7ExportService {
         Map<String, Object> properties = new LinkedHashMap<>(extra);
         properties.put("blockers", List.copyOf(blockers));
         properties.put("travelerIds", travelerIds.stream().map(UUID::toString).toList());
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "dac7-export-blocked", "Export Blocked",
-                "L'export DAC7 est bloqué : " + String.join(", ", blockers) + ".", properties);
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "dac7-export-blocked", "problem.dac7.dac7-export-blocked", properties, String.join(", ", blockers));
     }
 
     /** Partie unique d'une référence DGFiP (caractères autorisés par le motif du DocRefId). */

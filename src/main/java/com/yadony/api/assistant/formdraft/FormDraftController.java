@@ -46,13 +46,11 @@ public class FormDraftController {
 
     private FormDraftResponse run(FormDraftSchema schema, String firebaseUid, FormDraftRequest request) {
         if (!assistant.enabled() || !properties.enabled()) {
-            throw new YadonyBusinessException(HttpStatus.NOT_FOUND, "assistant-disabled", "Not Found",
-                    "L'assistant n'est pas disponible.");
+            throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "assistant-disabled", "problem.assistant.assistant-disabled");
         }
         // Un principal admin n'est pas un String : sans uid Firebase, le quota ne pourrait pas être tenu.
         if (firebaseUid == null || firebaseUid.isBlank()) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "assistant-user-required", "Forbidden",
-                    "L'assistant est réservé aux comptes utilisateur.");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "assistant-user-required", "problem.assistant.assistant-user-required");
         }
         return engine.run(schema, firebaseUid, request);
     }

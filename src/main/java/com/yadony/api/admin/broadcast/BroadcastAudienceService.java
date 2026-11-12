@@ -67,8 +67,7 @@ public class BroadcastAudienceService {
             return Optional.empty();
         }
         UserEntity user = userRepository.findByIdIncludingDeleted(target.userId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
         boolean reachable = user.getDeletedAt() == null
                 && user.getStatus() != UserStatus.BANNED
                 && user.getStatus() != UserStatus.PENDING_DELETION;

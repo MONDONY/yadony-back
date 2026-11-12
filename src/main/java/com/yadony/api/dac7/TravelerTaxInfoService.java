@@ -111,7 +111,7 @@ public class TravelerTaxInfoService {
         // Par HTTP, un PUT sans corps n'arrive jamais ici : Spring répond 400 malformed-request avant. Garde pour les
         // appels internes.
         if (request == null) {
-            throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
+            throw invalid("taxIdentificationNumber", "problem.dac7.tax-info-invalid.tax-id-required");
         }
         UserEntity current = load(firebaseUid);
         // Pays en cours de déclaration : la pièce est utile dès cette réponse (lecture en cache, délai borné).
@@ -128,7 +128,7 @@ public class TravelerTaxInfoService {
                 && request.residenceCountry() == null;
         if (!tinGiven && (nothingElse || !blank(request.taxCountry()))) {
             // Ancien contrat : sans NIF ni autre champ, le NIF est obligatoire ; un pays d'émission seul aussi.
-            throw invalid("taxIdentificationNumber", "Le numéro d'identification fiscale est obligatoire.");
+            throw invalid("taxIdentificationNumber", "problem.dac7.tax-info-invalid.tax-id-required");
         }
         String nif = user.getTaxIdentificationNumber();
         String country = user.getTaxCountry();
@@ -197,8 +197,7 @@ public class TravelerTaxInfoService {
 
     private UserEntity load(String firebaseUid) {
         return users.findByFirebaseUid(firebaseUid)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "user-not-found", "User Not Found", "Utilisateur introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
     }
 
     private TaxInfoResponse toResponse(UserEntity user, Dac7Collection c) {
@@ -218,10 +217,10 @@ public class TravelerTaxInfoService {
     private static String residenceCountry(UserEntity user, String raw) {
         String code = Dac7ResidenceCountries.normalize(raw);
         if (code == null) {
-            throw invalid("residenceCountry", "Ce pays n'est pas proposé.");
+            throw invalid("residenceCountry", "problem.dac7.tax-info-invalid.country-unavailable");
         }
         if (user.getCountry() != null) {
-            throw invalid("residenceCountry", "Votre pays de résidence se change dans votre profil.");
+            throw invalid("residenceCountry", "problem.dac7.tax-info-invalid.residence-country-in-profile");
         }
         return code;
     }
@@ -276,9 +275,7 @@ public class TravelerTaxInfoService {
      */
     private Identity identity(TaxInfoRequest request, Dac7Collection before, String nifAfter) {
         if (!before.identityKnown()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tax-info-not-applicable",
-                    "Tax Info Not Applicable",
-                    "Ces informations ne sont demandées qu'aux particuliers qui habitent dans l'Union européenne.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "tax-info-not-applicable", "problem.dac7.tax-info-not-applicable");
         }
         String first = null;
         String last = null;
@@ -287,7 +284,7 @@ public class TravelerTaxInfoService {
             last = text(request.lastName(), "lastName", MAX_NAME, true);
             if (before.nameSource() == Dac7FieldSource.DIDIT) {
                 if (!first.equalsIgnoreCase(before.firstName()) || !last.equalsIgnoreCase(before.lastName())) {
-                    throw readOnly("firstName", "Votre nom vient de votre pièce d'identité vérifiée.");
+                    throw readOnly("firstName", "problem.dac7.tax-info-read-only.name-from-id");
                 }
                 first = null;
                 last = null;
@@ -298,7 +295,7 @@ public class TravelerTaxInfoService {
             birth = birthDate(request.birthDate());
             if (before.birthDateSource() == Dac7FieldSource.DIDIT) {
                 if (!birth.equals(before.birthDate())) {
-                    throw readOnly("birthDate", "Votre date de naissance vient de votre pièce d'identité vérifiée.");
+                    throw readOnly("birthDate", "problem.dac7.tax-info-read-only.birthdate-from-id");
                 }
                 birth = null;
             }
@@ -310,7 +307,7 @@ public class TravelerTaxInfoService {
             if (request.birthPlace().isBlank()) {
                 clearBirthPlace = true;
             } else if (nifAfter != null) {
-                throw invalid("birthPlace", "Le lieu de naissance n'est demandé qu'en l'absence de numéro fiscal.");
+                throw invalid("birthPlace", "problem.dac7.tax-info-invalid.birthplace-only-without-tax-id");
             } else {
                 birthPlace = text(request.birthPlace(), "birthPlace", MAX_BIRTH_PLACE, true);
             }
@@ -323,10 +320,10 @@ public class TravelerTaxInfoService {
         try {
             date = LocalDate.parse(raw.strip());
         } catch (DateTimeParseException e) {
-            throw invalid("birthDate", "La date de naissance doit être au format AAAA-MM-JJ.");
+            throw invalid("birthDate", "problem.dac7.tax-info-invalid.birthdate-format");
         }
         if (date.isBefore(OLDEST_BIRTH) || date.isAfter(LocalDate.now(clock))) {
-            throw invalid("birthDate", "La date de naissance n'est pas valide.");
+            throw invalid("birthDate", "problem.dac7.tax-info-invalid.birthdate-invalid");
         }
         return date;
     }
@@ -343,12 +340,12 @@ public class TravelerTaxInfoService {
         String value = raw == null ? "" : raw.strip();
         if (value.isEmpty()) {
             if (required) {
-                throw invalid(field, "Ce champ est obligatoire.");
+                throw invalid(field, "problem.dac7.tax-info-invalid.field-required");
             }
             return null;
         }
         if (value.length() > max || value.chars().anyMatch(Character::isISOControl)) {
-            throw invalid(field, "Ce champ doit compter au plus " + max + " caractères, sans caractère de contrôle.");
+            throw invalid(field, "problem.dac7.tax-info-invalid.field-too-long", String.valueOf(max));
         }
         return value;
     }
@@ -372,7 +369,7 @@ public class TravelerTaxInfoService {
     private static String taxIdentifier(String raw, String issuingCountry) {
         String value = identifier(raw, "taxIdentificationNumber", true);
         if (!Dac7CollectionPolicy.validTaxIdentifier(value, issuingCountry)) {
-            throw invalid("taxIdentificationNumber", "Le numéro fiscal français compte exactement 13 chiffres.");
+            throw invalid("taxIdentificationNumber", "problem.dac7.tax-info-invalid.fr-tax-id-length");
         }
         return "FR".equals(issuingCountry) ? value.replace(" ", "") : value;
     }
@@ -382,16 +379,15 @@ public class TravelerTaxInfoService {
         String value = raw == null ? "" : raw.strip().toUpperCase(Locale.ROOT);
         if (value.isEmpty()) {
             if (required) {
-                throw invalid(field, "Le numéro d'identification fiscale est obligatoire.");
+                throw invalid(field, "problem.dac7.tax-info-invalid.tax-id-required");
             }
             return null;
         }
         if (value.length() < MIN_LENGTH || value.length() > MAX_LENGTH) {
-            throw invalid(field, "Le numéro doit compter de " + MIN_LENGTH + " à " + MAX_LENGTH + " caractères.");
+            throw invalid(field, "problem.dac7.tax-info-invalid.tax-id-length", String.valueOf(MIN_LENGTH), String.valueOf(MAX_LENGTH));
         }
         if (!IDENTIFIER.matcher(value).matches()) {
-            throw invalid(field, "Le numéro ne peut contenir que des lettres, des chiffres, des espaces, "
-                    + "des points, des tirets et des barres obliques.");
+            throw invalid(field, "problem.dac7.tax-info-invalid.tax-id-charset");
         }
         return value;
     }
@@ -399,7 +395,7 @@ public class TravelerTaxInfoService {
     private static String country(String raw) {
         String value = raw == null ? "" : raw.strip().toUpperCase(Locale.ROOT);
         if (value.length() != 2 || !ISO_COUNTRIES.contains(value)) {
-            throw invalid("taxCountry", "Le pays doit être un code ISO à deux lettres (ex. FR).");
+            throw invalid("taxCountry", "problem.dac7.tax-info-invalid.tax-country-iso");
         }
         return value;
     }
@@ -408,13 +404,13 @@ public class TravelerTaxInfoService {
         return value == null || value.isBlank();
     }
 
-    private static YadonyBusinessException invalid(String field, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tax-info-invalid",
-                "Invalid Tax Info", detail, Map.of("field", field));
+    private static YadonyBusinessException invalid(String field, String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "tax-info-invalid",
+                messageKey, Map.of("field", field), args);
     }
 
-    private static YadonyBusinessException readOnly(String field, String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "tax-info-read-only",
-                "Read-only Tax Info", detail, Map.of("field", field));
+    private static YadonyBusinessException readOnly(String field, String messageKey, Object... args) {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "tax-info-read-only",
+                messageKey, Map.of("field", field), args);
     }
 }

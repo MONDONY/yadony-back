@@ -100,8 +100,7 @@ public class AdminWalletAdjustmentRequestController {
         try {
             return WalletAdjustmentRequestStatus.valueOf(status.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "wallet-adjustment-request-status-invalid",
-                    "Bad Request", "Statut inconnu : " + status.trim());
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "wallet-adjustment-request-status-invalid", "problem.admin.wallet-adjustment-request-status-invalid", String.valueOf(status.trim()));
         }
     }
 

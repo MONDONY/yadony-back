@@ -205,8 +205,7 @@ public class AdminConversationController {
             Authentication authentication) {
         String note = reason == null ? null : reason.strip();
         if (note != null && note.length() > REASON_MAX) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "message-reason-invalid",
-                    "Unprocessable Entity", "Le motif ne peut pas dépasser " + REASON_MAX + " caractères");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "message-reason-invalid", "problem.admin.message-reason-invalid", String.valueOf(REASON_MAX));
         }
         // L'admin authentifié est un AdminPrincipal : l'ancien @AuthenticationPrincipal
         // UserEntity valait toujours null et gravait une trace sans acteur dans audit_log.
@@ -236,14 +235,11 @@ public class AdminConversationController {
 
         ConversationEntity conv = conversationRepository
                 .findByFirestoreConversationId(conversationId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "conversation-not-found", "Not Found", "Conversation introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "conversation-not-found", "problem.conversation-not-found"));
 
         switch (firestoreService.restoreMessage(conversationId, messageId)) {
-            case NOT_FOUND -> throw new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                    "message-not-found", "Not Found", "Message introuvable");
-            case NOT_DELETED -> throw new YadonyBusinessException(HttpStatus.CONFLICT,
-                    "message-not-deleted", "Conflict", "Ce message n'est pas supprimé");
+            case NOT_FOUND -> throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "message-not-found", "problem.admin.message-not-found");
+            case NOT_DELETED -> throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "message-not-deleted", "problem.admin.message-not-deleted");
             case RESTORED -> { }
         }
 

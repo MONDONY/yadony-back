@@ -140,19 +140,16 @@ public class AdminRatingsController {
                                                              Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
         RatingEntity rating = ratingRepo.findByIdIncludingDeleted(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "rating-not-found", "Not Found", "Avis introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "rating-not-found", "problem.admin.rating-not-found"));
         if (rating.getDeletedAt() == null) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "rating-not-deleted",
-                    "Conflict", "Cet avis n'est pas supprimé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "rating-not-deleted", "problem.admin.rating-not-deleted");
         }
         boolean superseded = (rating.getRaterId() != null
                         && ratingRepo.existsByBidIdAndRaterId(rating.getBidId(), rating.getRaterId()))
                 || (rating.getTrackingToken() != null
                         && ratingRepo.existsByBidIdAndTrackingToken(rating.getBidId(), rating.getTrackingToken()));
         if (superseded) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "rating-superseded",
-                    "Conflict", "L'auteur a déjà laissé un nouvel avis sur cette livraison");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "rating-superseded", "problem.admin.rating-superseded");
         }
 
         rating.setDeletedAt(null);

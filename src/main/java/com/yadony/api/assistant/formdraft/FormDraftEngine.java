@@ -65,12 +65,10 @@ public class FormDraftEngine {
         List<FormDraftTurn> turns = request.messages();
         long userTurns = turns.stream().filter(t -> "user".equals(t.role())).count();
         if (userTurns > properties.maxTurns()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "form-draft-too-many-turns",
-                    "Unprocessable Entity", "La conversation est trop longue : remplissez le formulaire.");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "form-draft-too-many-turns", "problem.assistant.form-draft-too-many-turns");
         }
         if (!"user".equals(turns.get(turns.size() - 1).role())) {
-            throw new YadonyBusinessException(HttpStatus.BAD_REQUEST, "form-draft-last-turn-not-user",
-                    "Bad Request", "Le dernier message doit venir de l'utilisateur.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "form-draft-last-turn-not-user", "problem.assistant.form-draft-last-turn-not-user");
         }
         int remaining = quota.consume(uid);
         DraftContext ctx = context(request);

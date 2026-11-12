@@ -80,8 +80,7 @@ public class AdminAlertController {
         return alertRepo.findById(id)
                 .map(AdminAlertResponse::from)
                 .map(ResponseEntity::ok)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "alert-not-found", "Not Found", "Alerte introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "alert-not-found", "problem.admin.alert-not-found"));
     }
 
     /**
@@ -95,19 +94,16 @@ public class AdminAlertController {
             @PathVariable UUID id,
             @RequestParam(defaultValue = "50") int limit) {
         AdminAlertEntity alert = alertRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "alert-not-found", "Not Found", "Alerte introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "alert-not-found", "problem.admin.alert-not-found"));
         String type = Objects.toString(alert.getType(), "");
         if (!type.startsWith(MONEY_INVARIANT_PREFIX)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "alert-without-violations",
-                    "Unprocessable Entity", "Cette alerte n'est pas liée à une règle de cohérence de l'argent");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-without-violations", "problem.admin.alert-without-violations");
         }
         String code = type.substring(MONEY_INVARIANT_PREFIX.length());
         return moneyIntegrityMonitor.inspect(code, limit)
                 .map(AdminAlertViolationsResponse::from)
                 .map(ResponseEntity::ok)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "invariant-not-found",
-                        "Not Found", "Règle de cohérence " + code + " inconnue"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "invariant-not-found", "problem.admin.invariant-not-found", String.valueOf(code)));
     }
 
     @PreAuthorize("hasAuthority('ALERT_RESOLVE')")
@@ -119,8 +115,7 @@ public class AdminAlertController {
             Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
         AdminAlertEntity alert = alertRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "alert-not-found", "Not Found", "Alerte introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "alert-not-found", "problem.admin.alert-not-found"));
         alert.setResolved(true);
         alert.setResolvedAt(OffsetDateTime.now(ZoneOffset.UTC));
         alertRepo.save(alert);
@@ -156,8 +151,7 @@ public class AdminAlertController {
         List<UUID> ids = request != null && request.ids() != null
                 ? new ArrayList<>(new LinkedHashSet<>(request.ids())) : List.of();
         if (ids.isEmpty() || ids.size() > BATCH_MAX) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "alert-batch-invalid",
-                    "Unprocessable Entity", "Indiquez entre 1 et " + BATCH_MAX + " alertes");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-batch-invalid", "problem.admin.alert-batch-invalid", String.valueOf(BATCH_MAX));
         }
         List<UUID> resolved = new ArrayList<>();
         List<UUID> already = new ArrayList<>();
@@ -194,12 +188,10 @@ public class AdminAlertController {
         String note = requireNote(request != null ? request.note() : null);
         AdminAlertEntity alert = find(id);
         if (!alert.isResolved()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "alert-not-resolved",
-                    "Conflict", "Cette alerte n'est pas résolue");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "alert-not-resolved", "problem.admin.alert-not-resolved");
         }
         if (!alertRepo.findByTypeAndResolved(alert.getType(), false).isEmpty()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "alert-already-open-for-type",
-                    "Conflict", "Une alerte du même type est déjà ouverte");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "alert-already-open-for-type", "problem.admin.alert-already-open-for-type");
         }
         alert.setResolved(false);
         alert.setResolvedAt(null);
@@ -221,13 +213,11 @@ public class AdminAlertController {
         String note = requireNote(request != null ? request.note() : null);
         Integer hours = request != null ? request.hours() : null;
         if (hours == null || hours < 1 || hours > SNOOZE_MAX_HOURS) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "alert-snooze-invalid",
-                    "Unprocessable Entity", "Le report va de 1 à " + SNOOZE_MAX_HOURS + " heures");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-snooze-invalid", "problem.admin.alert-snooze-invalid", String.valueOf(SNOOZE_MAX_HOURS));
         }
         AdminAlertEntity alert = find(id);
         if (alert.isResolved()) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "alert-already-resolved",
-                    "Conflict", "Cette alerte est déjà résolue");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "alert-already-resolved", "problem.admin.alert-already-resolved");
         }
         alert.setSnoozedUntil(OffsetDateTime.now(ZoneOffset.UTC).plusHours(hours));
         alertRepo.save(alert);
@@ -250,16 +240,14 @@ public class AdminAlertController {
 
     private AdminAlertEntity find(UUID id) {
         return alertRepo.findById(id)
-                .orElseThrow(() -> new YadonyBusinessException(
-                        HttpStatus.NOT_FOUND, "alert-not-found", "Not Found", "Alerte introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "alert-not-found", "problem.admin.alert-not-found"));
     }
 
     /** Note des gestes ajoutés par le poste de traitement : 3 à 500 caractères, trace d'audit. */
     private static String requireNote(String raw) {
         String note = raw == null ? "" : raw.trim();
         if (note.length() < NOTE_MIN || note.length() > NOTE_MAX) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "alert-note-invalid",
-                    "Unprocessable Entity", "La note doit faire entre " + NOTE_MIN + " et " + NOTE_MAX + " caractères");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "alert-note-invalid", "problem.admin.alert-note-invalid", String.valueOf(NOTE_MIN), String.valueOf(NOTE_MAX));
         }
         return note;
     }
