@@ -118,6 +118,35 @@ class TripRecurrenceServiceTest {
         assertThat(cap.getValue().arrivalDate()).isEqualTo(cap.getValue().departureDate().plusDays(1));
     }
 
+    // Taille et poids max de la récurrence (chaîne, Double) recopiés sur chaque occurrence (BigDecimal).
+    @Test
+    void generate_copiesMaxItemSizeAndMaxParcelWeightToEachOccurrence() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setMaxItemSize("L");
+        rec.setMaxParcelWeightKg(20.5);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().maxItemSize()).isEqualTo("L");
+        assertThat(cap.getValue().maxParcelWeightKg()).isEqualByComparingTo("20.5");
+    }
+
+    @Test
+    void generate_withoutLimits_leavesMaxItemSizeAndMaxParcelWeightEmpty() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().maxItemSize()).isNull();
+        assertThat(cap.getValue().maxParcelWeightKg()).isNull();
+    }
+
     @Test
     void generate_sameDayRecurrence_leavesArrivalDateEmpty() {
         mockUser();
@@ -957,6 +986,183 @@ class TripRecurrenceServiceTest {
         ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
         verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
         assertThat(cap.getValue().transportMode()).isEqualTo(TransportMode.BOAT);
+    }
+
+    // ── Lot 2 route : durée, poids, taille et poids max par mode ────────────────────────────
+
+    /** Série complète : seuls le mode, la capacité, le décalage d'arrivée et les limites varient. */
+    private TripRecurrenceRequest seriesWith(String mode, double availableKg, Integer arrivalDayOffset,
+                                             String maxItemSize, Double maxParcelWeightKg) {
+        var base = request("1111111", 0, false);
+        return new TripRecurrenceRequest(base.sourceTemplateId(), base.departureCity(), base.arrivalCity(),
+                mode, "KG_EXACT", availableKg, base.pricePerKg(),
+                base.acceptedCategories(), base.refusedCategories(), base.description(), base.pickupAddress(),
+                base.deliveryAddress(), base.departureTime(), base.arrivalTime(), base.cashAccepted(),
+                base.weekdays(), base.horizonDays(), base.startDate(), base.endDate(), base.weekInterval(),
+                base.publicationLeadDays(), base.handoverLeadDays(), base.pricingMode(), base.negotiable(),
+                base.currency(), false, arrivalDayOffset, null, null, maxItemSize, maxParcelWeightKg);
+    }
+
+    private static void assertBusiness(Throwable thrown, String code, String messagePart) {
+        assertThat(thrown).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+            assertThat(e.getErrorCode()).isEqualTo(code);
+            assertThat(e.getMessage()).contains(messagePart);
+        });
+    }
+
+    @Test
+    void recurrence_road_offset10_generatesArrivalAtDeparturePlus10() {
+        mockUser();
+        var dto = service.create(userId, seriesWith("CAR", 500, 10, null, null));
+        assertThat(dto.arrivalDayOffset()).isEqualTo(10);
+
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setTransportMode("CAR");
+        rec.setArrivalDayOffset(10);
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().arrivalDate()).isEqualTo(cap.getValue().departureDate().plusDays(10));
+    }
+
+    @Test
+    void recurrence_road_offset14_accepted_15_refused() {
+        assertThat(service.create(userId, seriesWith("CAR", 500, 14, null, null)).arrivalDayOffset())
+                .isEqualTo(14);
+
+        // Review Focus 3 : la série route de 15 jours est refusée, avec le nombre de jours en argument.
+        assertThatThrownBy(() -> service.create(userId, seriesWith("CAR", 500, 15, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "14"));
+    }
+
+    @Test
+    void recurrence_plane_offset3_accepted_4_refused() {
+        assertThat(service.create(userId, seriesWith("PLANE", 23, 3, null, null)).arrivalDayOffset())
+                .isEqualTo(3);
+
+        assertThatThrownBy(() -> service.create(userId, seriesWith("PLANE", 23, 4, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "3"));
+    }
+
+    @Test
+    void recurrence_boat_offset120_accepted_121_refused() {
+        assertThat(service.create(userId, seriesWith("BOAT", 5000, 120, null, null)).arrivalDayOffset())
+                .isEqualTo(120);
+        assertThatThrownBy(() -> service.create(userId, seriesWith("BOAT", 5000, 121, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "120"));
+    }
+
+    // Review Focus 5 : la limite se contrôle à l'enregistrement, pas à la génération (où elle
+    // ferait disparaître chaque occurrence en silence).
+    @Test
+    void recurrence_offsetCheckedAtSave_notAtGeneration() {
+        assertThatThrownBy(() -> service.create(userId, seriesWith("PLANE", 23, 4, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "3"));
+
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void recurrence_updateWithTooFarOffset_isRefused_andKeepsTheOldValue() {
+        UUID id = UUID.randomUUID();
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        existing.setArrivalDayOffset(1);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.update(userId, id, seriesWith("PLANE", 23, 4, null, null)))
+                .satisfies(e -> assertBusiness(e, "arrival-too-far", "3"));
+
+        assertThat(existing.getArrivalDayOffset()).isEqualTo(1);
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+    }
+
+    @Test
+    void recurrence_road_1200kg_accepted_plane_40_5kg_refused() {
+        assertThat(service.create(userId, seriesWith("CAR", 1200, null, null, null)).availableKg())
+                .isEqualTo(1200.0);
+        assertThat(service.create(userId, seriesWith("PLANE", 40, null, null, null)).availableKg())
+                .isEqualTo(40.0);
+
+        assertThatThrownBy(() -> service.create(userId, seriesWith("PLANE", 40.5, null, null, null)))
+                .satisfies(e -> assertBusiness(e, "trip-capacity-too-high", "40"));
+        assertThatThrownBy(() -> service.create(userId, seriesWith("TRAIN", 41, null, null, null)))
+                .satisfies(e -> assertBusiness(e, "trip-capacity-too-high", "40"));
+    }
+
+    @Test
+    void recurrence_storesAndReturnsSizeAndMaxWeight_perMode() {
+        var road = service.create(userId, seriesWith("BUS", 800, null, "m", 25.0));
+        assertThat(road.maxItemSize()).isEqualTo("M");
+        assertThat(road.maxParcelWeightKg()).isEqualTo(25.0);
+
+        var boat = service.create(userId, seriesWith("BOAT", 5000, null, "M", 900.0));
+        assertThat(boat.maxItemSize()).isNull();
+        assertThat(boat.maxParcelWeightKg()).isEqualTo(900.0);
+
+        var plane = service.create(userId, seriesWith("PLANE", 23, null, "M", 12.0));
+        assertThat(plane.maxItemSize()).isNull();
+        assertThat(plane.maxParcelWeightKg()).isNull();
+    }
+
+    @Test
+    void recurrence_update_absentLimits_areKept_noneAndZeroClear() {
+        UUID id = UUID.randomUUID();
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        existing.setTransportMode("CAR");
+        existing.setMaxItemSize("L");
+        existing.setMaxParcelWeightKg(30.0);
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        var kept = service.update(userId, id, seriesWith("CAR", 500, null, null, null));
+        assertThat(kept.maxItemSize()).isEqualTo("L");
+        assertThat(kept.maxParcelWeightKg()).isEqualTo(30.0);
+
+        var cleared = service.update(userId, id, seriesWith("CAR", 500, null, "NONE", 0.0));
+        assertThat(cleared.maxItemSize()).isNull();
+        assertThat(cleared.maxParcelWeightKg()).isNull();
+    }
+
+    // Le chemin complet : une série route enregistrée avec taille et poids max les recopie sur
+    // chaque trajet généré.
+    @Test
+    void recurrence_copiesSizeAndMaxWeightToGeneratedTrip() {
+        mockUser();
+        ArgumentCaptor<TripRecurrenceEntity> saved = ArgumentCaptor.forClass(TripRecurrenceEntity.class);
+        service.create(userId, seriesWith("CAR", 500, 2, "L", 20.5));
+        verify(repository).save(saved.capture());
+
+        TripRecurrenceEntity rec = saved.getValue();
+        rec.setWeekdays("1111111");
+        rec.setHorizonDays(0);
+        rec.setActive(true);
+        service.generateForRecurrence(rec);
+
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().maxItemSize()).isEqualTo("L");
+        assertThat(cap.getValue().maxParcelWeightKg()).isEqualByComparingTo("20.5");
+        assertThat(cap.getValue().transportMode()).isEqualTo(TransportMode.CAR);
+    }
+
+    // Review Focus 2 : une série d'avant (40 kg, +3 jours, sans limites) continue de générer.
+    @Test
+    void existingRecurrence40kgOffset3_stillGenerates() {
+        mockUser();
+        TripRecurrenceEntity rec = entity("1111111", 0, null);
+        rec.setAvailableKg(40.0);
+        rec.setArrivalDayOffset(3);
+
+        int created = service.generateForRecurrence(rec);
+
+        assertThat(created).isEqualTo(1);
+        ArgumentCaptor<AnnouncementRequest> cap = ArgumentCaptor.forClass(AnnouncementRequest.class);
+        verify(announcementService).createRecurringAnnouncement(eq("firebase-uid"), cap.capture(), eq(rec.getId()));
+        assertThat(cap.getValue().availableKg()).isEqualByComparingTo("40");
+        assertThat(cap.getValue().arrivalDate()).isEqualTo(cap.getValue().departureDate().plusDays(3));
+        assertThat(cap.getValue().maxItemSize()).isNull();
     }
 
     private TripRecurrenceRequest request(String weekdays, int horizon, boolean active) {

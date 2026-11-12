@@ -2,6 +2,7 @@ package com.yadony.api.matching;
 
 import com.yadony.api.payments.cash.PaymentMethod;
 
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -17,9 +18,13 @@ import java.util.stream.Collectors;
  * @param publicView     recherche publique anonyme ({@link PublicAnnouncementSearchService}) :
  *                       ni bloc 2 ({@code similarAnnouncements}), ni conversions de devise, que
  *                       la carte publique jetterait. Toujours {@code false} pour l'app.
+ * @param minItemSize    taille minimale de colis que le trajet doit accepter : filtre strict, un trajet
+ *                       sans taille max n'y apparaît pas. {@code null} = pas de filtre.
+ * @param viaCity        ville de passage : trajets des voyages dont une étape part de cette ville ou y
+ *                       arrive. Normalisée (sans espaces superflus, en minuscules) ; vide = {@code null}.
  */
 public record AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paymentMethods, boolean includeFull,
-                                       boolean publicView) {
+                                       boolean publicView, ItemSize minItemSize, String viaCity) {
 
     public static final AnnouncementSearchExtras NONE = new AnnouncementSearchExtras(null, Set.of(), false);
 
@@ -28,6 +33,14 @@ public record AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paym
 
     public AnnouncementSearchExtras {
         paymentMethods = paymentMethods == null ? Set.of() : Set.copyOf(paymentMethods);
+        String city = viaCity == null ? "" : viaCity.strip().replaceAll("\\s+", " ");
+        viaCity = city.isEmpty() ? null : city.toLowerCase(Locale.ROOT);
+    }
+
+    /** Sans taille minimale ni ville de passage (appels existants, vue publique sans ces filtres). */
+    public AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paymentMethods, boolean includeFull,
+                                    boolean publicView) {
+        this(maxStops, paymentMethods, includeFull, publicView, null, null);
     }
 
     /** Appels de l'app : jamais la vue publique. */
@@ -43,6 +56,6 @@ public record AnnouncementSearchExtras(Integer maxStops, Set<PaymentMethod> paym
     public String cacheKey() {
         String methods = paymentMethods.stream().map(Enum::name).sorted().collect(Collectors.joining(","));
         return "stops=" + TripStops.searchBound(maxStops) + "_pm=" + methods + "_full=" + includeFull
-                + "_public=" + publicView;
+                + "_public=" + publicView + "_size=" + minItemSize + "_via=" + viaCity;
     }
 }

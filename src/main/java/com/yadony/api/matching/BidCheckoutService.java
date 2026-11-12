@@ -190,6 +190,10 @@ public class BidCheckoutService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
         }
 
+        // Taille et poids max par colis du trajet : refus 422 AVANT le bid et l'escrow (aucun paiement).
+        ItemSize itemSize = ItemSize.parseOrNull(req.itemSize());
+        ParcelFitRules.assertFits(announcement, req.weightKg(), itemSize);
+
         List<BidGridItemRequest> gridItems = req.gridItems() != null ? req.gridItems() : List.of();
         boolean hasGrid = !gridItems.isEmpty();
         boolean hasKg   = req.weightKg() != null && req.weightKg().compareTo(BigDecimal.ZERO) > 0;
@@ -211,6 +215,7 @@ public class BidCheckoutService {
         // La devise est celle de l'annonce, jamais le défaut de l'entité.
         bid.setCurrency(announcement.getCurrency());
         bid.setWeightKg(hasKg ? req.weightKg() : null);
+        bid.setItemSize(itemSize);
         bid.setPricingMode(bidMode);
         bid.setDescription(req.description());
         bid.setContentCategory(normalizedContentCategory);

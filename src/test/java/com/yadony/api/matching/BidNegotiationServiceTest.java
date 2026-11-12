@@ -250,6 +250,91 @@ class BidNegotiationServiceTest {
             verifyNoInteractions(auditService);
         }
 
+        private BidNegotiationStartRequest startRequestSized(String weightKg, String itemSize) {
+            return new BidNegotiationStartRequest(
+                    new BigDecimal(weightKg), "Vêtements", "CLOTHING",
+                    "Fatou Sarr", "+221701234567", true,
+                    "CASH", null, null, null,
+                    new BigDecimal("45.00"), null, null, itemSize);
+        }
+
+        private AnnouncementEntity stubSizedTrip(BigDecimal maxKg, ItemSize maxSize) {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setMaxParcelWeightKg(maxKg);
+            announcement.setMaxItemSize(maxSize);
+            // Assez de kilos restants : seul le contrôle par colis doit refuser (le poids max, pas la capacité).
+            announcement.setAvailableKg(BigDecimal.valueOf(100));
+            announcement.setTotalKg(BigDecimal.valueOf(100));
+            lenient().when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            lenient().when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID))
+                    .thenReturn(Optional.of(announcement));
+            lenient().when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            lenient().when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            lenient().when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            lenient().when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                if (b.getId() == null) {
+                    setId(b, BID_ID);
+                }
+                return b;
+            });
+            return announcement;
+        }
+
+        @Test
+        @DisplayName("négociation : 25 kg sur un trajet à 20 kg max → 422 parcel-too-heavy, aucun fil ouvert")
+        void negotiationStart_appliesSameRule_parcelTooHeavy() {
+            stubSizedTrip(new BigDecimal("20.00"), null);
+
+            assertThatThrownBy(() -> service.propose(ANNOUNCEMENT_ID, SENDER_UID,
+                    startRequestSized("25", null), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("parcel-too-heavy");
+                    });
+            verify(bidRepository, never()).save(any(BidEntity.class));
+            verifyNoInteractions(auditService);
+        }
+
+        @Test
+        @DisplayName("négociation : taille L sur un trajet de taille max M → 422 parcel-too-big")
+        void negotiationStart_appliesSameRule_parcelTooBig() {
+            stubSizedTrip(null, ItemSize.M);
+
+            assertThatThrownBy(() -> service.propose(ANNOUNCEMENT_ID, SENDER_UID,
+                    startRequestSized("5", "L"), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-big"));
+            verify(bidRepository, never()).save(any(BidEntity.class));
+        }
+
+        @Test
+        @DisplayName("négociation sans taille sur un trajet avec taille max → fil ouvert, taille du bid nulle")
+        void negotiationStart_withoutItemSize_onSizedTrip_accepted() {
+            stubSizedTrip(new BigDecimal("20.00"), ItemSize.M);
+
+            service.propose(ANNOUNCEMENT_ID, SENDER_UID, buildStartRequest(new BigDecimal("45.00")), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getItemSize()).isNull();
+        }
+
+        @Test
+        @DisplayName("négociation : la taille indiquée est enregistrée sur le bid")
+        void negotiationStart_recordsItemSize() {
+            stubSizedTrip(null, ItemSize.L);
+
+            service.propose(ANNOUNCEMENT_ID, SENDER_UID, startRequestSized("5", "m"), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getItemSize()).isEqualTo(ItemSize.M);
+        }
+
         @Test
         @DisplayName("proposition valide → bid NEGOTIATING, round 1, message PROPOSAL, taux snapshoté, audit")
         void propose_valid_createsNegotiatingBid() {

@@ -1,6 +1,7 @@
 package com.yadony.api.matching.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -12,6 +13,8 @@ import java.util.List;
 
 public record BidRequest(
         @DecimalMin(value = "0.1", message = "{validation.bid.weight.min}")
+        // Maximum technique (NUMERIC(8,2), V380) : en kilo libre rien d'autre ne borne le poids.
+        @DecimalMax(value = "999999.99", message = "{validation.bid.weight.max}")
         BigDecimal weightKg,  // nullable désormais (GRID mode = pas de poids)
 
         @NotBlank(message = "{validation.bid.description.required}")
@@ -46,5 +49,22 @@ public record BidRequest(
 
         @Size(max = 4, message = "{validation.bid.photos.max}") List<String> photoKeys,
 
-        @Valid List<BidGridItemRequest> gridItems  // peut être null ou vide — doit rester en DERNIER
-) {}
+        @Valid List<BidGridItemRequest> gridItems,  // peut être null ou vide
+
+        /**
+         * Taille du colis (S, M, L, XL), facultative : une ancienne app n'en envoie pas, la réservation
+         * est alors acceptée comme avant. Contrôlée contre la taille maximale du trajet
+         * ({@code ParcelFitRules.assertFits}). Doit rester en DERNIER.
+         */
+        @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}")
+        String itemSize
+) {
+    /** Constructeur de compatibilité (sans taille) : la forme d'avant le contrôle de taille. */
+    public BidRequest(BigDecimal weightKg, String description, String contentCategory,
+                      String recipientName, String recipientPhone, Boolean disclaimerSigned,
+                      String paymentMethod, String phoneNumber, String countryCode, String promoCode,
+                      List<String> photoKeys, List<BidGridItemRequest> gridItems) {
+        this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
+                paymentMethod, phoneNumber, countryCode, promoCode, photoKeys, gridItems, null);
+    }
+}

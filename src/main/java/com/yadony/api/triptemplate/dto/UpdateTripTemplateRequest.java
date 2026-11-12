@@ -2,6 +2,7 @@ package com.yadony.api.triptemplate.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.yadony.api.matching.dto.AddressDto;
+import com.yadony.api.matching.dto.ClearableMaxParcelWeight;
 import com.yadony.api.payments.cash.PaymentMethod;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -45,8 +46,18 @@ public record UpdateTripTemplateRequest(
     @Min(0) @Max(7) Integer handoverLeadDays,
     @Pattern(regexp = "[A-Za-z]{2}") String departureCountryCode,
     @Pattern(regexp = "[A-Za-z]{2}") String arrivalCountryCode,
-    // Jour d'arrivée relatif au départ (FLUTTER-4E). Absent = même jour.
-    @Min(0) @Max(3) Integer arrivalDayOffset
+    // Jour d'arrivée relatif au départ (FLUTTER-4E). Absent = même jour. Plafond du mode (3 en
+    // avion, 14 en route, 120 en bateau) contrôlé par le service (422 arrival-too-far).
+    @Min(0) @Max(120) Integer arrivalDayOffset,
+    // Taille maximale d'un colis (route : voiture, bus) et poids maximal par colis (route et bateau),
+    // facultatifs : mêmes règles que sur un trajet (AnnouncementRequest). Création : absent ou
+    // « NONE »/0 = aucune limite. Modification : ABSENT = valeur conservée (client antérieur) ;
+    // « NONE »/0 = effacée. Normalisés selon le mode par le service (ParcelFitRules).
+    @Pattern(regexp = "NONE|S|M|L|XL", message = "{validation.trip.max-item-size.pattern}")
+    String maxItemSize,
+    @ClearableMaxParcelWeight
+    @DecimalMax(value = "999999.99", message = "{validation.trip.max-parcel-weight.max}")
+    Double maxParcelWeightKg
 ) implements TripTemplatePayload {
 
     /** Arité historique (sans jour d'arrivée), conservée pour les appels existants. */
@@ -64,6 +75,24 @@ public record UpdateTripTemplateRequest(
                 transportMode, capacityUnit, availableKg, pricePerKg, acceptedCategories, cashAccepted,
                 arrivalTime, currency, pricingMode, acceptedPaymentMethods, negotiable, refusedTypes,
                 description, pickupAddress, deliveryAddress, departureTime, handoverLeadDays,
-                departureCountryCode, arrivalCountryCode, null);
+                departureCountryCode, arrivalCountryCode, null, null, null);
+    }
+
+    /** Arité d'avant la taille et le poids maximaux, conservée pour les appels existants. */
+    public UpdateTripTemplateRequest(String label, String emoji, String departureCity, Double departureLat,
+                                     Double departureLng, String arrivalCity, Double arrivalLat, Double arrivalLng,
+                                     String transportMode, String capacityUnit, Integer availableKg,
+                                     Double pricePerKg, List<String> acceptedCategories, boolean cashAccepted,
+                                     LocalTime arrivalTime, String currency, String pricingMode,
+                                     Set<PaymentMethod> acceptedPaymentMethods, Boolean negotiable,
+                                     List<String> refusedTypes, String description, AddressDto pickupAddress,
+                                     AddressDto deliveryAddress, LocalTime departureTime,
+                                     Integer handoverLeadDays, String departureCountryCode,
+                                     String arrivalCountryCode, Integer arrivalDayOffset) {
+        this(label, emoji, departureCity, departureLat, departureLng, arrivalCity, arrivalLat, arrivalLng,
+                transportMode, capacityUnit, availableKg, pricePerKg, acceptedCategories, cashAccepted,
+                arrivalTime, currency, pricingMode, acceptedPaymentMethods, negotiable, refusedTypes,
+                description, pickupAddress, deliveryAddress, departureTime, handoverLeadDays,
+                departureCountryCode, arrivalCountryCode, arrivalDayOffset, null, null);
     }
 }

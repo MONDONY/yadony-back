@@ -41,7 +41,7 @@ public class CorridorAlertEntity extends BaseEntity {
     @Column(name = "date_to")
     private LocalDate dateTo;
 
-    @Column(name = "min_weight_kg", precision = 5, scale = 2)
+    @Column(name = "min_weight_kg", precision = 8, scale = 2)
     private BigDecimal minWeightKg;
 
     @Column(name = "active", nullable = false)

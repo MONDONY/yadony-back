@@ -431,6 +431,57 @@ class PackageRequestServiceGridTest {
                     .hasMessageContaining("request/budget-out-of-bounds");
         }
 
+        private void assertOutOfBounds(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+            assertThatThrownBy(call)
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                    .hasMessageContaining("request/budget-out-of-bounds");
+        }
+
+        @Test @DisplayName("route : devis d'un budget de 900 € (au-dessus de 560 €), sans plafond métier")
+        void quote_road_budget900Eur_returnsQuote() {
+            gridInForce();
+            reductionsWithoutCode(CommissionReductions.NONE);
+
+            for (String mode : List.of("CAR", "BUS", "BOAT", "car")) {
+                NegotiationQuoteResponse q = service.quote(SENDER_ID, new BigDecimal("900.00"), null, null, mode);
+
+                assertThat(q.totalEur()).isEqualByComparingTo("900.00");
+                assertThat(q.netEur()).isPositive();
+            }
+        }
+
+        @Test @DisplayName("sans mode (anciennes apps) : plafond de 560 € conservé, 900 € refusé")
+        void quote_withoutMode_keeps560Cap() {
+            gridInForce();
+            reductionsWithoutCode(CommissionReductions.NONE);
+
+            assertThat(service.quote(SENDER_ID, new BigDecimal("560.00"), null, null).totalEur())
+                    .isEqualByComparingTo("560.00");
+            assertOutOfBounds(() -> service.quote(SENDER_ID, new BigDecimal("900.00"), null, null));
+            assertOutOfBounds(() -> service.quote(SENDER_ID, new BigDecimal("900.00"), null, null, null));
+        }
+
+        @Test @DisplayName("avion, « peu importe », mode inconnu : plafond de 560 € conservé")
+        void quote_planeAnyUnknown_keep560Cap() {
+            gridInForce();
+            reductionsWithoutCode(CommissionReductions.NONE);
+
+            for (String mode : List.of("PLANE", "ANY", "TRAIN", "SHIP", "")) {
+                assertOutOfBounds(() -> service.quote(SENDER_ID, new BigDecimal("900.00"), null, null, mode));
+            }
+        }
+
+        @Test @DisplayName("route : budget démesuré → 422 (garde-fou technique de 1 000 000), pas de 500")
+        void quote_road_budgetAboveTechnicalGuard_422() {
+            gridInForce();
+            reductionsWithoutCode(CommissionReductions.NONE);
+
+            assertThat(service.quote(SENDER_ID, new BigDecimal("1000000"), null, null, "CAR").totalEur())
+                    .isEqualByComparingTo("1000000");
+            assertOutOfBounds(() -> service.quote(SENDER_ID, new BigDecimal("1000000.01"), null, null, "CAR"));
+            assertOutOfBounds(() -> service.quote(SENDER_ID, new BigDecimal("1e20"), null, null, "CAR"));
+        }
+
         @Test @DisplayName("code invalide → l'erreur du code remonte (validation stricte)")
         void quote_grid_invalidCode_propagates() {
             gridInForce();

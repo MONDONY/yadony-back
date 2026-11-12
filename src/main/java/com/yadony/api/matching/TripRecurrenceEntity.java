@@ -72,6 +72,14 @@ public class TripRecurrenceEntity extends BaseEntity {
     @Column(name = "arrival_day_offset", nullable = false)
     private int arrivalDayOffset = 0;
 
+    /** Taille maximale acceptée par colis (V381, route) : S, M, L ou XL. Null = non renseignée. */
+    @Column(name = "max_item_size", length = 2)
+    private String maxItemSize;
+
+    /** Poids maximal par colis en kg (V381, route). Null = non renseigné. */
+    @Column(name = "max_parcel_weight_kg")
+    private Double maxParcelWeightKg;
+
     /** Escales (FLUTTER-GE) recopiées sur chaque occurrence ; null = non renseigné. */
     @Column(name = "stops_count")
     private Short stopsCount;
@@ -196,6 +204,10 @@ public class TripRecurrenceEntity extends BaseEntity {
     public void setHandoverLeadDays(Integer handoverLeadDays) { this.handoverLeadDays = handoverLeadDays; }
     public int getArrivalDayOffset() { return arrivalDayOffset; }
     public void setArrivalDayOffset(int arrivalDayOffset) { this.arrivalDayOffset = arrivalDayOffset; }
+    public String getMaxItemSize() { return maxItemSize; }
+    public void setMaxItemSize(String maxItemSize) { this.maxItemSize = maxItemSize; }
+    public Double getMaxParcelWeightKg() { return maxParcelWeightKg; }
+    public void setMaxParcelWeightKg(Double maxParcelWeightKg) { this.maxParcelWeightKg = maxParcelWeightKg; }
 
     public Integer getStopsCount() { return stopsCount == null ? null : stopsCount.intValue(); }
     public void setStopsCount(Integer stopsCount) {

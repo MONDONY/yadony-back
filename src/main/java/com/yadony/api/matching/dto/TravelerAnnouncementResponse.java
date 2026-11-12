@@ -1,5 +1,6 @@
 package com.yadony.api.matching.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -18,5 +19,9 @@ public record TravelerAnnouncementResponse(
     /** {@code KG} ou {@code MIXED} (grille) : un trajet à la grille seule a un prix au kilo à 0. */
     String pricingMode,
     /** Prix affiché expéditeur le plus bas de la grille (« dès X »), {@code null} hors grille. */
-    BigDecimal minGridUnitPriceDisplay
+    BigDecimal minGridUnitPriceDisplay,
+    /** Taille maximale d'un colis, route ; null = non renseignée. Toujours sérialisée. */
+    @JsonInclude(JsonInclude.Include.ALWAYS) String maxItemSize,
+    /** Poids maximal par colis en kg ; null = non renseigné. Toujours sérialisé. */
+    @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg
 ) {}

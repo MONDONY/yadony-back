@@ -324,6 +324,11 @@ public class BidService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
         }
 
+        // Taille et poids max par colis du trajet (route, bateau) : refus 422 AVANT toute écriture.
+        // Taille ou poids absent (ancienne app, grille seule) ou limite absente ne bloque rien.
+        ItemSize itemSize = ItemSize.parseOrNull(request.itemSize());
+        ParcelFitRules.assertFits(announcement, request.weightKg(), itemSize);
+
         if (Boolean.FALSE.equals(request.disclaimerSigned())) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "disclaimer-not-signed", "problem.disclaimer-not-signed");
         }
@@ -348,6 +353,7 @@ public class BidService {
         bid.setAnnouncementId(announcementId);
         bid.setSenderId(sender.getId());
         bid.setWeightKg(request.weightKg());  // peut être null pour GRID mode
+        bid.setItemSize(itemSize);
         bid.setPricingMode(bidMode);
         bid.setDescription(request.description());
         bid.setContentCategory(normalizedContentCategory);
@@ -1837,7 +1843,8 @@ public class BidService {
                 amendmentView.amendmentAllowed(),
                 totalWeightKg,
                 moneyBreakdown,
-                travelerTracking
+                travelerTracking,
+                bid.getItemSize() != null ? bid.getItemSize().name() : null
         );
     }
 

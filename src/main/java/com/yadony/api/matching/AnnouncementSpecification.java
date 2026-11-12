@@ -300,6 +300,42 @@ public class AnnouncementSpecification {
     }
 
     /**
+     * Trajets qui acceptent des colis d'au moins la taille {@code min} (S &lt; M &lt; L &lt; XL).
+     * Strict : un trajet sans taille maximale renseignée (avion, trajet publié avant les tailles)
+     * n'y apparaît pas, on ne sait pas s'il prend le colis.
+     */
+    public static Specification<AnnouncementEntity> minItemSize(ItemSize min) {
+        List<ItemSize> accepted = Arrays.stream(ItemSize.values())
+                .filter(size -> size.ordinal() >= min.ordinal())
+                .toList();
+        return (root, query, cb) -> root.get("maxItemSize").in(accepted);
+    }
+
+    /**
+     * « Passe par » : les trajets des voyages qui s'arrêtent dans {@code city}, soit une étape
+     * publiée qui en part ou y arrive (statuts de {@link AnnouncementStatus#SEARCHABLE} ; brouillon,
+     * annulée ou retirée ne comptent pas ; comparaison insensible à la casse). Un trajet hors voyage
+     * ({@code tripGroupId} nul) n'est retenu que s'il part de la ville ou y arrive lui-même.
+     * Départ et arrivée de la recherche restent appliqués séparément, à l'étape.
+     */
+    public static Specification<AnnouncementEntity> voyageStopsAt(String city) {
+        String wanted = city.strip().toLowerCase(Locale.ROOT);
+        return (root, query, cb) -> {
+            Subquery<UUID> legs = query.subquery(UUID.class);
+            Root<AnnouncementEntity> leg = legs.from(AnnouncementEntity.class);
+            legs.select(leg.<UUID>get("tripGroupId")).where(
+                    cb.isNotNull(leg.get("tripGroupId")),
+                    leg.get("status").in(AnnouncementStatus.SEARCHABLE),
+                    cb.or(cb.equal(cb.lower(leg.get("departureCity")), wanted),
+                            cb.equal(cb.lower(leg.get("arrivalCity")), wanted)));
+            return cb.or(
+                    cb.equal(cb.lower(root.get("departureCity")), wanted),
+                    cb.equal(cb.lower(root.get("arrivalCity")), wanted),
+                    root.get("tripGroupId").in(legs));
+        };
+    }
+
+    /**
      * Filters to travelers who have completed KYC verification.
      * Uses a subquery on users table.
      */

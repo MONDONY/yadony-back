@@ -155,10 +155,21 @@ public class PackageRequestService {
      */
     @Transactional(readOnly = true)
     public NegotiationQuoteResponse quote(UUID senderId, BigDecimal budgetEur, String promoCode, String currency) {
+        return quote(senderId, budgetEur, promoCode, currency, null);
+    }
+
+    /**
+     * Devis d'un budget pour le mode de transport voulu : en route (voiture, bus) et en bateau, le budget
+     * n'a plus de plafond métier ({@link #assertBudgetWithinBounds}). {@code transportMode} est facultatif :
+     * absent, vide, « ANY » ou inconnu, le plafond historique de 560 € s'applique (anciennes apps).
+     */
+    @Transactional(readOnly = true)
+    public NegotiationQuoteResponse quote(UUID senderId, BigDecimal budgetEur, String promoCode, String currency,
+                                          String transportMode) {
         String code = promoCode != null ? promoCode.strip() : null;
         Optional<CommissionGrid> grid = commissionGridService.current();
         if (grid.isPresent()) {
-            return quoteWithGrid(grid.get(), senderId, budgetEur, code, currency);
+            return quoteWithGrid(grid.get(), senderId, budgetEur, code, currency, parseQuoteMode(transportMode));
         }
 
         // Résolu EN PREMIER : promo invalide → propage avant tout autre appel
@@ -204,7 +215,8 @@ public class PackageRequestService {
      *         422 {@code request/budget-out-of-bounds} au-delà du plafond de la devise.
      */
     private NegotiationQuoteResponse quoteWithGrid(CommissionGrid grid, UUID senderId, BigDecimal budget,
-                                                   String code, String currencyCode) {
+                                                   String code, String currencyCode,
+                                                   com.yadony.api.matching.TransportMode mode) {
         boolean withCode = code != null && !code.isBlank();
         CommissionReductions reductions = commissionRateResolver.reductions(null, senderId,
                 withCode ? code : null, withCode ? senderId : null, null);
@@ -212,7 +224,7 @@ public class PackageRequestService {
                 resolvePackageRequestCurrency(currencyCode, senderId));
         // Même plafond qu'à la création : un budget que la demande refuserait n'a pas de devis
         // (et un budget démesuré ferait déborder le calcul inverse en unités mineures).
-        assertBudgetWithinBounds(budget, currency.code());
+        assertBudgetWithinBounds(budget, currency.code(), mode);
         BigDecimal net = CommissionCalculator.netForGross(budget, currency, grid, CommissionReductions.NONE);
         CommissionResult result = CommissionCalculator.compute(net, currency, grid, reductions);
         CommissionResult base = reductions.promo() == null
@@ -357,6 +369,9 @@ public class PackageRequestService {
         rejectMobileMoneyMethods(req.acceptedPaymentMethods());
         com.yadony.api.matching.TransportMode requestedMode = resolveRequestedMode(req.transportMode());
         transportModeGuard.assertRequestModeAllowed(requestedMode);
+        // Plafond par mode (V380) : 32 kg en avion et « peu importe », tonnes en route et bateau.
+        // Brouillon compris : un brouillon trop lourd pour son mode ne serait jamais publiable.
+        com.yadony.api.matching.WeightLimits.assertRequestWeight(req.weightKg(), requestedMode);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -381,7 +396,7 @@ public class PackageRequestService {
         entity.setSenderId(senderId);
         String currency = resolvePackageRequestCurrency(req.currency(), senderId);
         // C'est la devise qui fixe le plafond du budget, d'où la borne posée ici.
-        assertBudgetWithinBounds(req.totalBudgetEur(), currency);
+        assertBudgetWithinBounds(req.totalBudgetEur(), currency, requestedMode);
         // Grille figée à la création, brouillon compris : les fils ouverts sur cette demande en
         // héritent, et le net stocké est calculé sur elle (le brut saisi n'est pas conservé).
         CommissionGrid grid = commissionGridService.current().orElse(null);
@@ -394,6 +409,9 @@ public class PackageRequestService {
         entity.setWeightKg(req.weightKg());
         entity.setParcelSize(ParcelSize.fromWeightKg(req.weightKg()));
         entity.setTransportMode(requestedMode);
+        // Taille facultative : gardée en route et « peu importe », sinon ramenée à null.
+        entity.setItemSize(com.yadony.api.matching.ParcelFitRules.normalizeRequestItemSize(
+            com.yadony.api.matching.ItemSize.parseOrNull(req.itemSize()), requestedMode));
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
@@ -490,6 +508,9 @@ public class PackageRequestService {
         if (modeProvided && newMode != entity.getTransportMode()) {
             transportModeGuard.assertRequestModeAllowed(newMode);
         }
+        // Le plafond se lit sur le mode APRÈS modification : une demande route de 60 kg passée en
+        // avion est refusée, une demande route modifiée sans mode garde ses tonnes.
+        com.yadony.api.matching.WeightLimits.assertRequestWeight(req.weightKg(), newMode);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -502,7 +523,7 @@ public class PackageRequestService {
             requireTargetPrice(req.totalBudgetEur());
         }
         // Une demande garde sa devise d'origine : le plafond du nouveau budget se lit dessus.
-        assertBudgetWithinBounds(req.totalBudgetEur(), entity.getCurrency());
+        assertBudgetWithinBounds(req.totalBudgetEur(), entity.getCurrency(), newMode);
 
         // Grille figée à la création de la demande (jamais la grille courante) : le prix vu par
         // les voyageurs et hérité par les fils reste calculé sur elle.
@@ -524,6 +545,9 @@ public class PackageRequestService {
         entity.setWeightKg(req.weightKg());
         entity.setParcelSize(ParcelSize.fromWeightKg(req.weightKg()));
         entity.setTransportMode(newMode);
+        // Taille absente = conservée, « NONE » = effacée ; ramenée à null si le nouveau mode l'interdit.
+        entity.setItemSize(com.yadony.api.matching.ParcelFitRules.resolveRequestItemSizeOnUpdate(
+            req.itemSize(), entity.getItemSize(), newMode));
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
@@ -608,6 +632,8 @@ public class PackageRequestService {
         }
         // Un brouillon bateau ou route créé interrupteur allumé ne sort pas une fois l'interrupteur éteint.
         transportModeGuard.assertRequestModeAllowed(entity.getTransportMode());
+        // Règle de poids rejouée : le brouillon a pu être enregistré avant une règle plus stricte.
+        com.yadony.api.matching.WeightLimits.assertRequestWeight(entity.getWeightKg(), entity.getTransportMode());
         requireTargetPrice(entity.getTargetPriceEur());
         long openCount = repository.countBySenderIdAndStatusIn(callerUid,
             List.of(PackageRequestStatus.OPEN, PackageRequestStatus.NEGOTIATING));
@@ -1267,7 +1293,8 @@ public class PackageRequestService {
             // Converti joint par getById (withConvertedPrice), qui connaît le lecteur.
             null, null,
             e.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN,
-            e.getCommissionGridId()
+            e.getCommissionGridId(),
+            e.getItemSize() == null ? null : e.getItemSize().name()
         );
     }
 
@@ -1298,8 +1325,20 @@ public class PackageRequestService {
     }
 
     /**
+     * Garde-fou technique d'un budget route ou bateau, dans la devise de la demande : même valeur que le
+     * {@code @DecimalMax} du DTO et que les CHECK de V256 ({@code chk_pkg_req_target_price}, prix de
+     * négociation). Pas un plafond métier : il évite seulement une 500 SQL (et, au devis, un calcul
+     * inverse démesuré) quand le budget n'est plus borné par la devise.
+     */
+    static final BigDecimal TECHNICAL_MAX_BUDGET = new BigDecimal("1000000");
+
+    /**
      * Le budget tient dans le plafond de sa devise (560 € de référence, mis à l'échelle
      * par {@link com.yadony.api.payments.currency.CurrencyBounds#maxPackageBudget}).
+     *
+     * <p>Route (voiture, bus) et bateau ({@link com.yadony.api.matching.WeightLimits#isHeavyMode}) : aucun
+     * plafond métier, seul le garde-fou technique {@link #TECHNICAL_MAX_BUDGET} s'applique. Avion, train,
+     * autre, « peu importe » ({@code mode == null}) et mode inconnu au devis gardent le plafond de la devise.
      *
      * <p>Le DTO ne porte qu'un garde-fou large : une annotation Bean Validation est une
      * constante de compilation et ne peut pas connaître la devise de la demande. Avant,
@@ -1308,16 +1347,37 @@ public class PackageRequestService {
      * affichait « Erreur réseau » (recette iPhone du 2026-09-10, budget de 30 000 F CFA).
      * Même approche que {@code NegotiationService.assertPriceWithinBounds}.
      */
-    private static void assertBudgetWithinBounds(BigDecimal budget, String currencyCode) {
+    private static void assertBudgetWithinBounds(BigDecimal budget, String currencyCode,
+                                                 com.yadony.api.matching.TransportMode mode) {
         if (budget == null) {
             return;
         }
-        com.yadony.api.payments.currency.SupportedCurrency currency =
-                com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
-        BigDecimal max = com.yadony.api.payments.currency.CurrencyBounds.maxPackageBudget(currency);
+        BigDecimal max;
+        if (com.yadony.api.matching.WeightLimits.isHeavyMode(mode)) {
+            max = TECHNICAL_MAX_BUDGET;
+        } else {
+            com.yadony.api.payments.currency.SupportedCurrency currency =
+                    com.yadony.api.payments.currency.SupportedCurrency.fromCodeOrDefault(currencyCode);
+            max = com.yadony.api.payments.currency.CurrencyBounds.maxPackageBudget(currency);
+        }
         if (budget.compareTo(max) > 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "request/budget-out-of-bounds");
+        }
+    }
+
+    /**
+     * Mode lu au devis : absent, vide, « ANY » ou inconnu donnent {@code null}, donc le plafond de la devise
+     * (anciennes apps). Jamais d'erreur : le devis ne valide pas le mode, la création le fait.
+     */
+    private static com.yadony.api.matching.TransportMode parseQuoteMode(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return com.yadony.api.matching.TransportMode.valueOf(raw.strip().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException unknown) {
+            return null;
         }
     }
 

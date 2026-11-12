@@ -166,5 +166,9 @@ public record BidResponse(
         BidMoneyBreakdown moneyBreakdown,
         /** Suivi approximatif du voyageur (ville proche, avancement, historique de la fenêtre de CE colis).
          * Servi à l'expéditeur seul, sur le détail d'un colis pris en charge ; absent sinon. Aucune coordonnée. */
-        com.yadony.api.tracking.dto.TravelerTrackingView travelerTracking
+        com.yadony.api.tracking.dto.TravelerTrackingView travelerTracking,
+        /** Taille du colis (S, M, L, XL) ; null = non indiquée (réservation d'avant ou sans taille).
+         * Toujours sérialisée (null explicite), champ ajouté : les anciennes apps l'ignorent. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        String itemSize
 ) {}

@@ -41,4 +41,8 @@ public interface TripTemplatePayload {
     String arrivalCountryCode();
     /** Nul pour un client ancien : traité comme 0 (même jour). */
     Integer arrivalDayOffset();
+    /** « S », « M », « L », « XL », « NONE » (effacer) ou nul (création : aucune ; modification : conservée). */
+    String maxItemSize();
+    /** Nul (création : aucun ; modification : conservé), 0 (effacer) ou 0,5 à 999 999,99 kg. */
+    Double maxParcelWeightKg();
 }

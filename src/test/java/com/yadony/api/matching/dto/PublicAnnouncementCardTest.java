@@ -75,7 +75,9 @@ class PublicAnnouncementCardTest {
                 "XOF",
                 new BigDecimal("6500.00"),
                 42L,
-                "Europe/Paris");
+                "Europe/Paris",
+                null,
+                null);
     }
 
     private static Set<String> fieldNames(JsonNode node) {
@@ -184,7 +186,8 @@ class PublicAnnouncementCardTest {
                 pricing, r.priceGridItems(), r.handoverDeadline(), r.isFavorite(),
                 r.urgent(), r.currency(), r.negotiable(), r.availablePaymentMethods(),
                 r.convertedPricePerKg(), r.convertedCurrency(), r.pricePerKgDisplayConverted(),
-                r.uniqueViewerCount(), r.departureTimezone());
+                r.uniqueViewerCount(), r.departureTimezone(),
+                r.maxItemSize(), r.maxParcelWeightKg());
     }
 
     @Test
@@ -259,7 +262,8 @@ class PublicAnnouncementCardTest {
                 r.pricingMode(), r.priceGridItems(), r.handoverDeadline(), r.isFavorite(),
                 r.urgent(), r.currency(), r.negotiable(), r.availablePaymentMethods(),
                 r.convertedPricePerKg(), r.convertedCurrency(), r.pricePerKgDisplayConverted(),
-                r.uniqueViewerCount(), r.departureTimezone());
+                r.uniqueViewerCount(), r.departureTimezone(),
+                r.maxItemSize(), r.maxParcelWeightKg());
 
         assertThat(PublicAnnouncementCard.from(sansVoyageur).traveler()).isNull();
     }

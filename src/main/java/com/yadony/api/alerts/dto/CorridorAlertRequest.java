@@ -2,6 +2,7 @@ package com.yadony.api.alerts.dto;
 
 import com.yadony.api.alerts.AlertDirection;
 import com.yadony.api.alerts.AlertNotifyMode;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -16,7 +17,8 @@ public record CorridorAlertRequest(
         String arrivalCountryCode,
         LocalDate dateFrom,
         LocalDate dateTo,
-        BigDecimal minWeightKg,
+        // Maximum technique (NUMERIC(8,2), V380) : au-delà, 422 plutôt qu'une 500 SQL.
+        @DecimalMax(value = "999999.99", message = "{validation.alert.min-weight.max}") BigDecimal minWeightKg,
         List<String> contentCategories,
         @NotNull AlertDirection direction,
         Boolean active,

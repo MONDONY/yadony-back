@@ -25,6 +25,8 @@ public record PublicAnnouncementQuery(
         Boolean urgent,
         String transportMode,
         String contentType,
+        ItemSize minItemSize,
+        String viaCity,
         int page) {
 
     public static final int MAX_CITY_LENGTH = 80;
@@ -39,11 +41,23 @@ public record PublicAnnouncementQuery(
     /** Décimales admises sur les paramètres numériques ({@code 1E-999999} est donc refusé). */
     public static final int MAX_DECIMALS = 4;
 
+    /** Sans taille minimale ni ville de passage. */
     public static PublicAnnouncementQuery of(String departureCity, String arrivalCity,
                                              LocalDate dateFrom, LocalDate dateTo,
                                              BigDecimal minAvailableKg, BigDecimal maxPricePerKg,
                                              BigDecimal minRating, Boolean urgent,
                                              String transportMode, String contentType,
+                                             Integer page, LocalDate today) {
+        return of(departureCity, arrivalCity, dateFrom, dateTo, minAvailableKg, maxPricePerKg, minRating,
+                urgent, transportMode, contentType, null, null, page, today);
+    }
+
+    public static PublicAnnouncementQuery of(String departureCity, String arrivalCity,
+                                             LocalDate dateFrom, LocalDate dateTo,
+                                             BigDecimal minAvailableKg, BigDecimal maxPricePerKg,
+                                             BigDecimal minRating, Boolean urgent,
+                                             String transportMode, String contentType,
+                                             String minItemSize, String viaCity,
                                              Integer page, LocalDate today) {
         // Annonces ouvertes et à venir : un dateFrom passé est ramené à aujourd'hui, et la plage
         // de 90 jours se mesure depuis cette date ramenée.
@@ -68,6 +82,8 @@ public record PublicAnnouncementQuery(
                 from, to, kg, price, rating, urgent,
                 normaliseTransportMode(transportMode),
                 normaliseContentType(contentType),
+                normaliseMinItemSize(minItemSize),
+                normaliseCity(viaCity, "viaCity"),
                 p);
     }
 
@@ -84,6 +100,19 @@ public record PublicAnnouncementQuery(
             }
         }
         throw invalid("transportMode must be one of " + java.util.Arrays.toString(TransportMode.values()));
+    }
+
+    /** {@code strip}, insensible à la casse, puis S, M, L ou XL ; inconnu = 400 (comme le mode de transport). */
+    private static ItemSize normaliseMinItemSize(String value) {
+        String trimmed = blankToNull(value);
+        if (trimmed == null) {
+            return null;
+        }
+        ItemSize size = ItemSize.parseOrNull(trimmed);
+        if (size == null) {
+            throw invalid("minItemSize must be one of " + java.util.Arrays.toString(ItemSize.values()));
+        }
+        return size;
     }
 
     private static String normaliseContentType(String value) {

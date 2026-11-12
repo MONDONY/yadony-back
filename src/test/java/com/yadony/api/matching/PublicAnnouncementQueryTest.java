@@ -212,6 +212,32 @@ class PublicAnnouncementQueryTest {
     }
 
     @Test
+    void normaliseTailleMinimaleEtVilleDePassage() {
+        PublicAnnouncementQuery q = PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, null, " xl ", "  Tanger  ", 0, TODAY);
+        assertThat(q.minItemSize()).isEqualTo(ItemSize.XL);
+        assertThat(q.viaCity()).isEqualTo("tanger");
+
+        PublicAnnouncementQuery vide = PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, null, "  ", "  ", 0, TODAY);
+        assertThat(vide.minItemSize()).isNull();
+        assertThat(vide.viaCity()).isNull();
+        // Sans les deux : même requête qu'avec l'ancienne signature (clé de cache identique).
+        assertThat(PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, null, 0, TODAY))
+                .isEqualTo(PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                        null, null, null, null, null, 0, TODAY));
+    }
+
+    @Test
+    void refuseUneTailleMinimaleInconnueOuUneVilleDePassageTropLongue() {
+        assertInvalid(() -> PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, null, "XXL", null, 0, TODAY));
+        assertInvalid(() -> PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
+                null, null, null, null, "x".repeat(PublicAnnouncementQuery.MAX_CITY_LENGTH + 1), 0, TODAY));
+    }
+
+    @Test
     void refuseUnModeDeTransportInconnu() {
         assertInvalid(() -> PublicAnnouncementQuery.of(null, null, null, null, null, null, null,
                 null, "teleporter", null, 0, TODAY));

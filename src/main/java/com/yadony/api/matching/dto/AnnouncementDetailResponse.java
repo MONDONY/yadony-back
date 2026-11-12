@@ -1,6 +1,7 @@
 package com.yadony.api.matching.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yadony.api.matching.TravelerPayoutNetworksPort.PayoutNetwork;
 import com.yadony.api.payments.cash.PaymentMethod;
 import java.math.BigDecimal;
@@ -115,7 +116,12 @@ public record AnnouncementDetailResponse(
          * jamais de position, juste le booléen. Champ ajouté, optionnel pour les anciens clients
          * (absent = false).
          */
-        Boolean trackingActive
+        Boolean trackingActive,
+        /** Taille maximale d'un colis (S, M, L, XL), route seulement ; null = non renseignée. Toujours
+         *  sérialisée (null explicite), champ ajouté. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) String maxItemSize,
+        /** Poids maximal par colis en kg, route et bateau ; null = non renseigné. Toujours sérialisé. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg
 ) {
     public AnnouncementDetailResponse {
         acceptedMobileMoneyNetworks = acceptedMobileMoneyNetworks == null ? List.of() : acceptedMobileMoneyNetworks;
@@ -147,7 +153,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, null, null);
+                acceptedMobileMoneyNetworks, departureTimezone, null, null, null, null);
     }
 
     /** Sans {@code acceptedMobileMoneyNetworks} (liste vide) : appelants qui ne le calculent pas. */
@@ -174,7 +180,7 @@ public record AnnouncementDetailResponse(
                 createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
-                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable, List.of(), null);
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable, List.of(), null, null, null, null, null);
     }
 
     /** Ancienne arité, sans {@code currencyEditable} (null) : appelants qui ne le calculent pas. */
@@ -201,7 +207,7 @@ public record AnnouncementDetailResponse(
                 createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
-                remainingReschedules, departureCountryCode, arrivalCountryCode, null, List.of(), null);
+                remainingReschedules, departureCountryCode, arrivalCountryCode, null, List.of(), null, null, null, null, null);
     }
 
     /** Copie portant {@code currencyEditable}, posé pour le seul voyageur propriétaire. */
@@ -215,7 +221,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg);
     }
 
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
@@ -232,7 +238,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg);
     }
 
     /** Copie portant les réseaux mobile money acceptés ; {@code null} devient la liste vide. */
@@ -246,7 +252,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                networks == null ? List.of() : networks, departureTimezone, parcelsSummary, trackingActive);
+                networks == null ? List.of() : networks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg);
     }
 
     /** Copie portant le fuseau IANA de la ville de départ (YADONY-FLUTTER-PROD-1R). */
@@ -260,7 +266,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg);
     }
 
     /** Copie portant le résumé des colis en possession, posé pour le seul voyageur propriétaire. */
@@ -274,7 +280,7 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg);
     }
 
     /** Copie portant {@code trackingActive}, posé pour le seul voyageur propriétaire. */
@@ -288,6 +294,21 @@ public record AnnouncementDetailResponse(
                 surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
-                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive);
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg);
+    }
+
+    /** Copie portant la taille et le poids maximaux par colis du trajet (route, bateau). */
+    public AnnouncementDetailResponse withMaxParcelLimits(String maxItemSize, BigDecimal maxParcelWeightKg) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive,
+                maxItemSize, maxParcelWeightKg);
     }
 }

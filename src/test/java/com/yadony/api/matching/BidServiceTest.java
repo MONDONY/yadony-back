@@ -418,6 +418,141 @@ class BidServiceTest {
                     httpRequest)).doesNotThrowAnyException();
         }
 
+        // ── Taille et poids max par colis (route) ───────────────────────────────
+
+        private BidRequest requestWithSize(BigDecimal weight, String itemSize) {
+            return new BidRequest(weight, "Vêtements", "CLOTHING",
+                    "Aminata Diallo", "+221701234567", true, null, null, null, null, null, null, itemSize);
+        }
+
+        private AnnouncementEntity stubSizedTrip(BigDecimal maxKg, ItemSize maxSize) {
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setMaxParcelWeightKg(maxKg);
+            announcement.setMaxItemSize(maxSize);
+            // Assez de kilos restants : seul le contrôle par colis doit refuser (le poids max, pas la capacité).
+            announcement.setAvailableKg(BigDecimal.valueOf(100));
+            announcement.setTotalKg(BigDecimal.valueOf(100));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            lenient().when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(any(), any(), any()))
+                    .thenReturn(false);
+            lenient().when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+            return announcement;
+        }
+
+        @Test
+        @DisplayName("25 kg sur un trajet à 20 kg max par colis → 422 parcel-too-heavy, aucun bid enregistré")
+        void bid_25kg_onTripMax20_refused_parcelTooHeavy() {
+            stubSizedTrip(new BigDecimal("20.00"), null);
+
+            assertThatThrownBy(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(BigDecimal.valueOf(25), null), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("parcel-too-heavy");
+                    });
+            verify(bidRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any(CashBidCreatedEvent.class));
+        }
+
+        @Test
+        @DisplayName("colis de taille L sur un trajet de taille max M → 422 parcel-too-big")
+        void bid_sizeL_onTripMaxM_refused_parcelTooBig() {
+            stubSizedTrip(null, ItemSize.M);
+
+            assertThatThrownBy(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(BigDecimal.valueOf(5), "L"), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("parcel-too-big");
+                    });
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("réservation sans taille (ancienne app) sur un trajet avec taille et poids max → acceptée, taille nulle")
+        void bid_withoutItemSize_onSizedTrip_accepted() {
+            stubSizedTrip(new BigDecimal("20.00"), ItemSize.M);
+
+            BidResponse result = bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(BigDecimal.valueOf(5), null), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getItemSize()).isNull();
+            assertThat(result.itemSize()).isNull();
+        }
+
+        @Test
+        @DisplayName("réservation 12 kg avec le constructeur historique (sans taille) → acceptée comme avant")
+        void bid_legacyConstructor_accepted() {
+            stubSizedTrip(null, null);
+
+            assertThatCode(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    buildRequest(BigDecimal.valueOf(12)), httpRequest)).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("1 200 kg sur un trajet route de 1 500 kg → acceptée (tonnes), taille enregistrée en minuscule tolérée")
+        void bid_1200kg_onRoadTrip1500_accepted() {
+            AnnouncementEntity road = stubSizedTrip(null, ItemSize.XL);
+            road.setTransportMode(TransportMode.CAR);
+            road.setAvailableKg(new BigDecimal("1500.00"));
+            road.setTotalKg(new BigDecimal("1500.00"));
+
+            BidResponse result = bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(new BigDecimal("1200"), "xl"), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getWeightKg()).isEqualByComparingTo("1200");
+            assertThat(captor.getValue().getItemSize()).isEqualTo(ItemSize.XL);
+            assertThat(result.itemSize()).isEqualTo("XL");
+        }
+
+        @Test
+        @DisplayName("taille égale à la taille max et poids égal au poids max → acceptée (bornes incluses)")
+        void bid_atExactLimits_accepted() {
+            stubSizedTrip(new BigDecimal("20.00"), ItemSize.M);
+
+            assertThatCode(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(new BigDecimal("20.00"), "M"), httpRequest)).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("kilo libre : 25 kg sans poids max → acceptée ; avec 20 kg max → parcel-too-heavy")
+        void bid_kgFree_onlyMaxParcelWeightApplies() {
+            AnnouncementEntity trip = stubSizedTrip(null, null);
+            trip.setCapacityUnit(CapacityUnit.KG_FREE);
+            trip.setAvailableKg(BigDecimal.ONE);
+
+            assertThatCode(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(BigDecimal.valueOf(25), null), httpRequest)).doesNotThrowAnyException();
+
+            trip.setMaxParcelWeightKg(new BigDecimal("20.00"));
+            assertThatThrownBy(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    requestWithSize(BigDecimal.valueOf(25), null), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-heavy"));
+        }
+
+        @Test
+        @DisplayName("grille seule (sans poids) sur un trajet avec taille max : seule la taille est contrôlée")
+        void bid_gridOnly_noWeight_onlySizeChecked() {
+            stubSizedTrip(new BigDecimal("20.00"), ItemSize.M);
+            BidRequest gridOnly = new BidRequest(null, "Vêtements", "CLOTHING",
+                    "Aminata Diallo", "+221701234567", true, null, null, null, null, null,
+                    List.of(new BidGridItemRequest(UUID.randomUUID(), 1)), "XL");
+
+            assertThatThrownBy(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID, gridOnly, httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo("parcel-too-big"));
+        }
+
         @Test
         @DisplayName("disclaimer non signé → 422 UNPROCESSABLE_ENTITY")
         void createBid_disclaimerNotSigned_throwsUnprocessable() {

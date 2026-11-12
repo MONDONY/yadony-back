@@ -41,6 +41,18 @@ public final class ArrivalRules {
         };
     }
 
+    /**
+     * Décalage d'arrivée d'un modèle ou d'une série (jours après le départ) contre la durée maximale
+     * du mode, à l'enregistrement : refusé tout de suite (422 {@code arrival-too-far}, avec le nombre de
+     * jours) plutôt que perdu en silence à chaque génération d'occurrence. Absent : même jour.
+     */
+    public static void assertOffsetWithinMode(Integer arrivalDayOffset, TransportMode mode) {
+        int maxDays = maxDaysAfterDeparture(mode);
+        if (arrivalDayOffset != null && arrivalDayOffset > maxDays) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-too-far", "problem.arrival-too-far", maxDays);
+        }
+    }
+
     public static void validate(LocalDate departureDate, LocalTime departureTime,
                                 LocalDate arrivalDate, LocalTime arrivalTime, TransportMode mode) {
         if (arrivalDate == null || departureDate == null) {

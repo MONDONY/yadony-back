@@ -92,6 +92,11 @@ public class AnnouncementController {
             // FLUTTER-JH : ajoute les trajets complets à venir, après les réservables.
             // Absent (ancienne app, compteur « N trajets ») : réservables seuls.
             @RequestParam(defaultValue = "false") boolean includeFull,
+            // Route : taille minimale que le trajet doit accepter (S, M, L, XL). Strict : un trajet
+            // sans taille max n'apparaît pas. Valeur inconnue : ignorée.
+            @RequestParam(required = false) String minItemSize,
+            // « Passe par » : trajets des voyages qui s'arrêtent dans cette ville. Vide : ignoré.
+            @RequestParam(required = false) String viaCity,
             @RequestParam(required = false) Double userLat,
             @RequestParam(required = false) Double userLng,
             @RequestParam(required = false) Double radiusKm,
@@ -110,7 +115,8 @@ public class AnnouncementController {
                 transportMode, kycVerifiedOnly, contentType,
                 userLat, userLng, radiusKm,
                 sortBy, sortDir, pageable, firebaseUid, urgent,
-                new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods), includeFull));
+                new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods), includeFull,
+                        false, ItemSize.parseOrNull(minItemSize), viaCity));
         var response = com.yadony.api.matching.dto.TripSearchPageResponse.from(page);
         publishSearch(firebaseUid, departureCity, arrivalCity, departureDateFrom, departureDateTo,
                 pageable, response.bookableElements() != null ? response.bookableElements() : response.totalElements());

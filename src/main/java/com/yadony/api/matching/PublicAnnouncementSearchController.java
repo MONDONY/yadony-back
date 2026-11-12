@@ -36,7 +36,7 @@ public class PublicAnnouncementSearchController {
     static final Set<String> ALLOWED_PARAMETERS = Set.of(
             "departureCity", "arrivalCity", "departureDateFrom", "departureDateTo",
             "minAvailableKg", "maxPricePerKg", "minRating", "urgent",
-            "transportMode", "contentType", "page");
+            "transportMode", "contentType", "minItemSize", "viaCity", "page");
 
     /** Écrit en clair : {@code CacheControl} sérialise « max-age=30, public », ordre que les tests figent autrement. */
     private static final String CACHE_CONTROL = "public, max-age=30";
@@ -59,13 +59,15 @@ public class PublicAnnouncementSearchController {
             @RequestParam(required = false) Boolean urgent,
             @RequestParam(required = false) String transportMode,
             @RequestParam(required = false) String contentType,
+            @RequestParam(required = false) String minItemSize,
+            @RequestParam(required = false) String viaCity,
             @RequestParam(required = false) Integer page,
             HttpServletRequest request) {
         rejectUnknownParameters(request);
         PublicAnnouncementQuery query = PublicAnnouncementQuery.of(
                 departureCity, arrivalCity, departureDateFrom, departureDateTo,
                 minAvailableKg, maxPricePerKg, minRating, urgent,
-                transportMode, contentType, page, LocalDate.now(ZoneOffset.UTC));
+                transportMode, contentType, minItemSize, viaCity, page, LocalDate.now(ZoneOffset.UTC));
         return ResponseEntity.ok()
                 .header(HttpHeaders.CACHE_CONTROL, CACHE_CONTROL)
                 .body(searchService.search(query));

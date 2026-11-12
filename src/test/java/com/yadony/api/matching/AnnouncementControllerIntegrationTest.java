@@ -41,6 +41,7 @@ class AnnouncementControllerIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired ObjectMapper objectMapper;
     @Autowired PlatformSettingsService platformSettings;
+    @Autowired org.springframework.cache.CacheManager cacheManager;
 
     /**
      * Reuse the same traveler UUID across all tests (no UserEntity needed;
@@ -60,6 +61,11 @@ class AnnouncementControllerIntegrationTest {
 
     @BeforeEach
     void cleanDb() {
+        // Recherche mise en cache 5 min : deux tests qui lancent la même requête se verraient l'un l'autre.
+        var searchCache = cacheManager.getCache("announcements-search");
+        if (searchCache != null) {
+            searchCache.clear();
+        }
         announcementRepository.deleteAll();
         userRepository.deleteAll();
         // Le bateau est fermé par défaut : ces tests créent des trajets BOAT, il faut l'ouvrir.
@@ -128,6 +134,80 @@ class AnnouncementControllerIntegrationTest {
             // THEN: only the Paris one (AND semantics — city filter AND radius filter)
             .andExpect(jsonPath("$.content.length()").value(1))
             .andExpect(jsonPath("$.content[0].departureCity").value("Paris"));
+    }
+
+    // ─── taille minimale et ville de passage (route) ─────────────────────────
+
+    @Test
+    void searchAnnouncements_minItemSize_keepsLargeEnoughTripsOnly_andIgnoresUnknownValue() throws Exception {
+        sizedTrip("Paris", "Dakar", ItemSize.M, null);
+        sizedTrip("Paris", "Dakar", ItemSize.L, null);
+        sizedTrip("Paris", "Dakar", null, null);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("minItemSize", "l"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(1));
+        // Valeur inconnue : filtre ignoré (ancienne app, saisie libre), les 3 trajets reviennent.
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("minItemSize", "XXL"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(3));
+    }
+
+    @Test
+    void searchAnnouncements_viaCity_keepsLegsOfVoyagesStoppingThere_andBlankIsIgnored() throws Exception {
+        UUID voyage = UUID.randomUUID();
+        sizedTrip("Paris", "Tanger", null, voyage);
+        sizedTrip("Tanger", "Dakar", null, voyage);
+        sizedTrip("Paris", "Dakar", null, null);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("viaCity", "TANGER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(2));
+        // Même requête sans le paramètre juste après : la clé de cache distingue les deux.
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(3));
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("viaCity", "  "))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(3));
+    }
+
+    @Test
+    void searchAnnouncements_viaCityWithDepartureAndArrival_appliesEachToTheLeg() throws Exception {
+        UUID voyage = UUID.randomUUID();
+        sizedTrip("Paris", "Tanger", null, voyage);
+        sizedTrip("Tanger", "Dakar", null, voyage);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("departureCity", "Paris")
+                .param("viaCity", "Tanger"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(1))
+            .andExpect(jsonPath("$.content[0].arrivalCity").value("Tanger"));
+    }
+
+    @Test
+    void searchAnnouncements_minAvailableKg1000_returnsTonneTrip() throws Exception {
+        AnnouncementEntity tonne = sizedTrip("Paris", "Dakar", ItemSize.XL, null);
+        tonne.setAvailableKg(new BigDecimal("1000"));
+        tonne.setTotalKg(new BigDecimal("1000"));
+        announcementRepository.save(tonne);
+
+        mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .param("minAvailableKg", "1000"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content.length()").value(1));
     }
 
     // ─── urgent filter ──────────────────────────────────────────────────────
@@ -517,6 +597,337 @@ class AnnouncementControllerIntegrationTest {
             .andExpect(jsonPath("$.status").value("ACTIVE"));
     }
 
+    // ─── Capacité en tonnes (V380, WeightLimits) ──────────────────────────────
+
+    @Test
+    void post_trip_availableKg1000000_rejected422() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithModeAndKg("CAR", "1000000")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.availableKg").exists());
+    }
+
+    @Test
+    void post_planeTrip_1000kg_returns422TripCapacityTooHigh() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithModeAndKg("PLANE", "1000")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("trip-capacity-too-high"));
+    }
+
+    @Test
+    void detail_serializes1200kgAsPlainNumber() throws Exception {
+        seedTraveler("uid-test-traveler");
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithModeAndKg("CAR", "1200")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.availableKg").value(1200.0))
+            .andReturn();
+        String id = objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+
+        var detail = mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.availableKg").value(1200.0))
+            .andReturn();
+        // Nombre décimal ordinaire (ni chaîne, ni notation scientifique) : les anciennes apps le lisent.
+        JsonNode kg = objectMapper.readTree(detail.getResponse().getContentAsString()).get("availableKg");
+        assertThatNumber(kg);
+    }
+
+    // ─── Taille max et poids max par colis (V381, ParcelFitRules) ─────────────
+
+    private String bodyWithLimits(String mode, String limitsJson) {
+        String date = LocalDate.now().plusDays(10).toString();
+        return """
+            {
+              "departureCity": "Paris",
+              "arrivalCity": "Dakar",
+              "departureDate": "%s",
+              "departureTime": "10:00",
+              "availableKg": 500,
+              "pricePerKg": 5,
+              "transportMode": "%s",
+              "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
+              "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
+              "handoverDeadline": "%sT07:30:00"%s
+            }
+            """.formatted(date, mode, date, limitsJson);
+    }
+
+    @Test
+    void detail_alwaysSerializesMaxItemSizeAndMaxParcelWeight() throws Exception {
+        seedTraveler("uid-test-traveler");
+        // Trajet avion, sans limite : les deux clés sont là, à null (pas absentes).
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("PLANE", "")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()))
+            .andReturn();
+        String id = objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+
+        var detail = mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()))
+            .andReturn();
+        JsonNode json = objectMapper.readTree(detail.getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(json.has("maxItemSize")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(json.has("maxParcelWeightKg")).isTrue();
+    }
+
+    @Test
+    void search_alwaysSerializesMaxItemSizeAndMaxParcelWeight() throws Exception {
+        seedAnnouncement(48.8566, 2.3522, "Paris", "Dakar");
+
+        var res = mockMvc.perform(get("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andReturn();
+        JsonNode first = objectMapper.readTree(res.getResponse().getContentAsString()).get("content").get(0);
+        org.assertj.core.api.Assertions.assertThat(first.has("maxItemSize")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(first.get("maxItemSize").isNull()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(first.has("maxParcelWeightKg")).isTrue();
+        org.assertj.core.api.Assertions.assertThat(first.get("maxParcelWeightKg").isNull()).isTrue();
+    }
+
+    @Test
+    void create_roadTripWithLimits_isStoredAndServedByCreateAndDetail() throws Exception {
+        seedTraveler("uid-test-traveler");
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"L\", \"maxParcelWeightKg\": 20.5")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.maxItemSize").value("L"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(20.5))
+            .andExpect(jsonPath("$.capacityUnit").value("KG_EXACT"))
+            .andReturn();
+        String id = objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value("L"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(20.5));
+    }
+
+    @Test
+    void create_planeTripWithLimits_ignoresThem() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("PLANE", ", \"maxItemSize\": \"L\", \"maxParcelWeightKg\": 20")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.capacityUnit").value("SUITCASE_23KG"));
+    }
+
+    @Test
+    void update_roadToPlane_clearsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"M\", \"maxParcelWeightKg\": 30")))
+            .andExpect(status().isCreated())
+            .andReturn();
+        String id = objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("PLANE", ", \"maxItemSize\": \"M\", \"maxParcelWeightKg\": 30")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    private String createRoadTripWithLimits(String uid) throws Exception {
+        var createRes = mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs(uid)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"M\", \"maxParcelWeightKg\": 30")))
+            .andExpect(status().isCreated())
+            .andReturn();
+        return objectMapper.readTree(createRes.getResponse().getContentAsString()).get("id").asText();
+    }
+
+    @Test
+    void update_roadWithoutLimitFields_keepsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        // Ancienne app : le PUT n'envoie ni taille ni poids max.
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", "")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value("M"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(30.0));
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value("M"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(30.0));
+    }
+
+    @Test
+    void update_roadWithNoneAndZero_clearsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"NONE\", \"maxParcelWeightKg\": 0")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void update_roadToPlaneWithoutLimitFields_clearsLimits() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("PLANE", "")))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void update_invalidLimits_rejected422AndLimitsUntouched() throws Exception {
+        seedTraveler("uid-test-traveler");
+        String id = createRoadTripWithLimits("uid-test-traveler");
+
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxParcelWeightKg\": 0.3")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+        mockMvc.perform(put("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"XXL\"")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.maxItemSize").exists());
+        mockMvc.perform(get("/announcements/" + id)
+                .with(authentication(authenticatedAs("uid-test-traveler"))))
+            .andExpect(jsonPath("$.maxItemSize").value("M"))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(30.0));
+    }
+
+    @Test
+    void create_noneAndZero_acceptedAsNoLimit() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"NONE\", \"maxParcelWeightKg\": 0")))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.maxItemSize").value(org.hamcrest.Matchers.nullValue()))
+            .andExpect(jsonPath("$.maxParcelWeightKg").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void create_maxParcelWeightAbove999999_99_rejected422() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxParcelWeightKg\": 1000000")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+    }
+
+    @Test
+    void create_maxParcelWeightBelowHalfKilo_rejected422() throws Exception {
+        seedTraveler("uid-test-traveler");
+        mockMvc.perform(post("/announcements")
+                .with(authentication(authenticatedAs("uid-test-traveler")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(bodyWithLimits("CAR", ", \"maxParcelWeightKg\": 0.4")))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+    }
+
+    @Test
+    void create_maxParcelWeightHalfKiloAndMax_accepted() throws Exception {
+        seedTraveler("uid-test-traveler");
+        for (String kg : List.of("0.5", "999999.99")) {
+            announcementRepository.deleteAll();
+            mockMvc.perform(post("/announcements")
+                    .with(authentication(authenticatedAs("uid-test-traveler")))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(bodyWithLimits("CAR", ", \"maxParcelWeightKg\": " + kg)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.maxParcelWeightKg").value(Double.parseDouble(kg)));
+        }
+    }
+
+    @Test
+    void create_unknownOrLowercaseItemSize_rejected422() throws Exception {
+        seedTraveler("uid-test-traveler");
+        for (String size : List.of("XXL", "l", "")) {
+            mockMvc.perform(post("/announcements")
+                    .with(authentication(authenticatedAs("uid-test-traveler")))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(bodyWithLimits("CAR", ", \"maxItemSize\": \"" + size + "\"")))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.maxItemSize").exists());
+        }
+    }
+
+    private static void assertThatNumber(JsonNode node) {
+        org.assertj.core.api.Assertions.assertThat(node.isNumber()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(node.asText()).doesNotContain("E").doesNotContain("e");
+    }
+
+    private String bodyWithModeAndKg(String mode, String kg) {
+        String date = LocalDate.now().plusDays(10).toString();
+        return """
+            {
+              "departureCity": "Paris",
+              "arrivalCity": "Dakar",
+              "departureDate": "%s",
+              "departureTime": "10:00",
+              "availableKg": %s,
+              "pricePerKg": 5,
+              "transportMode": "%s",
+              "capacityUnit": "KG_EXACT",
+              "pickupAddress": {"label": "Lyon", "lat": 45.748, "lng": 4.846},
+              "deliveryAddress": {"label": "Dakar", "lat": 14.693, "lng": -17.447},
+              "handoverDeadline": "%sT07:30:00"
+            }
+            """.formatted(date, kg, mode, date);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private String validBodyWithMode(String mode) {
@@ -606,6 +1017,16 @@ class AnnouncementControllerIntegrationTest {
         user.setKycStatus(com.yadony.api.auth.KycStatus.PENDING);
         user.setRoles(new java.util.HashSet<>(List.of(com.yadony.api.auth.Role.TRAVELER)));
         return userRepository.save(user);
+    }
+
+    private AnnouncementEntity sizedTrip(String dep, String arr, ItemSize maxSize, UUID tripGroupId) {
+        AnnouncementEntity e = seedAnnouncement(48.8566, 2.3522, dep, arr);
+        e.setMaxItemSize(maxSize);
+        e.setTripGroupId(tripGroupId);
+        if (tripGroupId != null) {
+            e.setTripLegIndex(1);
+        }
+        return announcementRepository.save(e);
     }
 
     private AnnouncementEntity seedAnnouncement(double lat, double lng, String dep, String arr) {

@@ -333,6 +333,137 @@ class PackageRequestControllerIT {
             .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("request/not-found")));
     }
 
+    private PackageRequestCreateRequest requestWithModeAndItemSize(String transportMode, String itemSize) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau", new BigDecimal("28.00"), null,
+            "10e", "Plateau",
+            true, java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE),
+            List.of(), null, null, null, transportMode, itemSize);
+    }
+
+    /** Clé toujours présente : null = pas de taille, clé absente serait lue comme une ancienne donnée. */
+    @Test
+    void response_alwaysSerializesItemSize() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.getById(eq(SENDER_UUID), eq(id))).thenReturn(fakeResponse(id));
+
+        mockMvc.perform(get("/package-requests/" + id)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$", org.hamcrest.Matchers.hasKey("itemSize")))
+            .andExpect(jsonPath("$.itemSize").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void response_serializesItemSizeName() throws Exception {
+        UUID id = UUID.randomUUID();
+        PackageRequestResponse base = fakeResponse(id);
+        when(service.getById(eq(SENDER_UUID), eq(id))).thenReturn(new PackageRequestResponse(
+            base.id(), base.senderId(), base.departureCity(), base.arrivalCity(), base.desiredDate(),
+            base.dateToleranceDays(), base.weightKg(), base.parcelSize(), base.transportMode(),
+            base.contentCategory(), base.description(), base.targetPriceEur(), base.photoUrl(),
+            base.pickupNeighborhood(), base.deliveryNeighborhood(), base.status(), base.createdAt(),
+            base.negotiable(), base.acceptedPaymentMethods(), base.grossPriceEur(), base.photos(),
+            base.viewerThreadId(), base.viewerThreadStatus(), base.promoCode(), base.currency(),
+            base.availablePaymentMethods(), base.convertedDisplayPrice(), base.convertedCurrency(),
+            base.moderationRemoved(), base.commissionGridId(), "XL"));
+
+        mockMvc.perform(get("/package-requests/" + id)
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.itemSize").value("XL"));
+    }
+
+    /** Taille inconnue : refus Bean Validation (422 du projet, avec « violations »), service non appelé. */
+    @Test
+    void create_itemSizeXXL_rejected422() throws Exception {
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithModeAndItemSize("CAR", "XXL"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.type").value("https://yadony.app/errors/validation"))
+            .andExpect(jsonPath("$.violations.itemSize").exists());
+        verify(service, org.mockito.Mockito.never()).create(any(), any());
+    }
+
+    @Test
+    void create_withItemSizeM_reachesService() throws Exception {
+        UUID newId = UUID.randomUUID();
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(fakeResponse(newId));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithModeAndItemSize("CAR", "M"))))
+            .andExpect(status().isCreated());
+        verify(service).create(eq(SENDER_UUID), argThat(r -> "M".equals(r.itemSize())));
+    }
+
+    /** Ancienne app : aucun champ taille dans le corps JSON, la demande passe comme avant. */
+    @Test
+    void create_withoutItemSizeKey_accepted() throws Exception {
+        UUID newId = UUID.randomUUID();
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(fakeResponse(newId));
+        String legacyBody = "{\"departureCity\":\"Paris\",\"arrivalCity\":\"Dakar\","
+            + "\"weightKg\":5,\"contentCategory\":\"vetements\",\"totalBudgetEur\":28.0,"
+            + "\"negotiable\":true,\"acceptedPaymentMethods\":[\"STRIPE\"]}";
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(legacyBody))
+            .andExpect(status().isCreated());
+        verify(service).create(eq(SENDER_UUID), argThat(r -> r.itemSize() == null && r.transportMode() == null));
+    }
+
+    /** Modification : « NONE » (effacement explicite) passe la validation et atteint le service. */
+    @Test
+    void put_update_itemSizeNone_reachesService() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.update(eq(SENDER_UUID), eq(id), any())).thenReturn(fakeResponse(id));
+
+        mockMvc.perform(put("/package-requests/" + id)
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithModeAndItemSize("CAR", "NONE"))))
+            .andExpect(status().isOk());
+        verify(service).update(eq(SENDER_UUID), eq(id), argThat(r -> "NONE".equals(r.itemSize())));
+    }
+
+    @Test
+    void quote_transportModeCar_budget900_returns200() throws Exception {
+        when(service.quote(eq(SENDER_UUID), eq(new BigDecimal("900")), any(), any(), eq("CAR")))
+            .thenReturn(new com.yadony.api.requests.dto.NegotiationQuoteResponse(
+                new BigDecimal("803.57"), new BigDecimal("0.12"), new BigDecimal("96.43"),
+                new BigDecimal("900.00"), false, null, false, null, null, null));
+
+        mockMvc.perform(get("/package-requests/quote")
+                .param("budgetEur", "900")
+                .param("transportMode", "CAR")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalEur").value(900.00));
+    }
+
+    /** Ancienne app : pas de transportMode dans l'URL, le service reçoit null (plafond 560 € conservé). */
+    @Test
+    void quote_withoutTransportMode_passesNullToService() throws Exception {
+        when(service.quote(eq(SENDER_UUID), eq(new BigDecimal("40")), any(), any(), isNull()))
+            .thenReturn(new com.yadony.api.requests.dto.NegotiationQuoteResponse(
+                new BigDecimal("35.71"), new BigDecimal("0.12"), new BigDecimal("4.29"),
+                new BigDecimal("40.00"), false, null, false, null, null, null));
+
+        mockMvc.perform(get("/package-requests/quote")
+                .param("budgetEur", "40")
+                .with(authentication(authAs("uid-sender", "SENDER"))))
+            .andExpect(status().isOk());
+        verify(service).quote(eq(SENDER_UUID), eq(new BigDecimal("40")), any(), any(), isNull());
+    }
+
     @Test
     void get_estimate_returnsEstimate() throws Exception {
         when(estimationService.estimate(eq("Paris"), eq("Dakar"), any(), eq("EUR")))
@@ -396,16 +527,52 @@ class PackageRequestControllerIT {
         verify(service).create(eq(SENDER_UUID), argThat(r -> r.weightKg().compareTo(new BigDecimal("32")) == 0));
     }
 
-    /** Au-delà de 32 kg : refus Bean Validation (422 du projet), le service n'est pas appelé. */
+    /**
+     * V380 : le DTO borne au maximum technique (999 999,99 kg, NUMERIC(8,2)) ; les 32 kg de l'avion
+     * et de « peu importe » sont appliqués au service (WeightLimits, 422 weight-too-heavy, testé dans
+     * PackageRequestServiceTest), le service étant mocké ici. Au-delà : refus Bean Validation (422 du
+     * projet), le service n'est pas appelé.
+     */
     @Test
-    void post_create_weightAbove32_rejectedByValidation() throws Exception {
+    void post_create_weight1000000_rejected422() throws Exception {
         mockMvc.perform(post("/package-requests")
                 .with(authentication(authAs("uid-sender", "SENDER")))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(requestWithWeight("32.01"))))
+                .content(objectMapper.writeValueAsString(requestWithWeight("1000000.00"))))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.violations.weightKg").exists());
         verify(service, org.mockito.Mockito.never()).create(any(), any());
+    }
+
+    /** V380 : 999 999,99 kg (maximum technique) passe la validation du DTO et atteint le service. */
+    @Test
+    void post_create_weight999999_99_passesValidation() throws Exception {
+        UUID newId = UUID.randomUUID();
+        when(service.create(eq(SENDER_UUID), any())).thenReturn(fakeResponse(newId));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("999999.99"))))
+            .andExpect(status().isCreated());
+        verify(service).create(eq(SENDER_UUID),
+            argThat(r -> r.weightKg().compareTo(new BigDecimal("999999.99")) == 0));
+    }
+
+    /** Le 422 weight-too-heavy du service sort en ProblemDetail avec son code (pas une 500). */
+    @Test
+    void post_create_serviceWeightTooHeavy_returnsProblemDetail422() throws Exception {
+        when(service.create(eq(SENDER_UUID), any())).thenThrow(
+            com.yadony.api.common.YadonyBusinessException.localized(
+                org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "weight-too-heavy",
+                "problem.weight-too-heavy", "32"));
+
+        mockMvc.perform(post("/package-requests")
+                .with(authentication(authAs("uid-sender", "SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(requestWithWeight("33"))))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.code").value("weight-too-heavy"));
     }
 
     /** Mode de transport inconnu : refus Bean Validation (422 validation), le service n'est pas appelé. */
@@ -465,12 +632,12 @@ class PackageRequestControllerIT {
     }
 
     @Test
-    void put_update_weightAbove32_rejectedByValidation() throws Exception {
+    void put_update_weight1000000_rejected422() throws Exception {
         UUID id = UUID.randomUUID();
         mockMvc.perform(put("/package-requests/" + id)
                 .with(authentication(authAs("uid-sender", "SENDER")))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(requestWithWeight("32.01"))))
+                .content(objectMapper.writeValueAsString(requestWithWeight("1000000.00"))))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.violations.weightKg").exists());
         verify(service, org.mockito.Mockito.never()).update(any(), any(), any());

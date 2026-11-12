@@ -48,8 +48,33 @@ public record PackageRequestAcceptedEvent(
      * {@code null} sans grille (brut hérité recalculé depuis {@link #commissionRate}) et en
      * espèces (la commission est prélevée au voyageur, l'expéditeur paie le net).
      */
-    BigDecimal senderGross
+    BigDecimal senderGross,
+    /**
+     * Taille du colis de la demande (S, M, L, XL), {@code null} sans taille : écrite sur le bid
+     * matérialisé par {@code ThreadAcceptedBidListener} (le bid d'une négociation n'est créé que là).
+     */
+    com.yadony.api.matching.ItemSize itemSize
 ) {
+    /** Sans taille : la forme d'avant la taille du colis (anciens appelants de test). */
+    public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
+                                       UUID travelerId, BigDecimal agreedPriceEur,
+                                       UUID travelerAnnouncementId, BigDecimal weightKg,
+                                       String description, String contentCategory,
+                                       String paymentIntentId, String recipientName,
+                                       String recipientPhone, LocalDateTime disclaimerSignedAt,
+                                       String disclaimerSignedIp,
+                                       com.yadony.api.payments.cash.PaymentMethod paymentMethod,
+                                       java.util.List<String> photoObjectKeys,
+                                       String commissionChargedVia, String promoCode,
+                                       BigDecimal commissionRate, String currency,
+                                       UUID commissionGridId, BigDecimal senderGross) {
+        this(threadId, packageRequestId, senderId, travelerId, agreedPriceEur,
+                travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
+                recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
+                paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
+                currency, commissionGridId, senderGross, null);
+    }
+
     /** Sans devise : euros (anciens appelants de test). */
     public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
                                        UUID travelerId, BigDecimal agreedPriceEur,
@@ -66,6 +91,6 @@ public record PackageRequestAcceptedEvent(
                 travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
                 recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
                 paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
-                null, null, null);
+                null, null, null, null);
     }
 }

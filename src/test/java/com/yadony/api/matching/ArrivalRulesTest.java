@@ -147,4 +147,25 @@ class ArrivalRulesTest {
 
         assertThat(ArrivalRules.renewedPickupCodeExpiry(a)).isEqualTo(ArrivalRules.pickupCodeExpiry(a));
     }
+
+    @Test
+    @DisplayName("décalage d'arrivée d'un modèle ou d'une série : borne du mode, 422 arrival-too-far avec le nombre de jours")
+    void assertOffsetWithinMode_perMode() {
+        assertThatCode(() -> ArrivalRules.assertOffsetWithinMode(null, TransportMode.PLANE)).doesNotThrowAnyException();
+        assertThatCode(() -> ArrivalRules.assertOffsetWithinMode(3, TransportMode.PLANE)).doesNotThrowAnyException();
+        assertThatCode(() -> ArrivalRules.assertOffsetWithinMode(14, TransportMode.CAR)).doesNotThrowAnyException();
+        assertThatCode(() -> ArrivalRules.assertOffsetWithinMode(120, TransportMode.BOAT)).doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> ArrivalRules.assertOffsetWithinMode(4, TransportMode.PLANE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("arrival-too-far");
+                    assertThat(ex.getMessage()).contains("3");
+                });
+        assertThatThrownBy(() -> ArrivalRules.assertOffsetWithinMode(15, TransportMode.BUS))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        ex -> assertThat(ex.getMessage()).contains("14"));
+        assertThatThrownBy(() -> ArrivalRules.assertOffsetWithinMode(121, TransportMode.BOAT))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
 }

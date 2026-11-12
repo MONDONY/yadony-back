@@ -1,6 +1,7 @@
 package com.yadony.api.matching.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yadony.api.payments.cash.PaymentMethod;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -86,7 +87,12 @@ public record AnnouncementSearchResponse(
          * le client s'en sert pour les afficher à l'heure de la ville de départ. Champ ajouté,
          * optionnel pour les anciens clients.
          */
-        String departureTimezone
+        String departureTimezone,
+        /** Taille maximale d'un colis (S, M, L, XL), route seulement ; null = non renseignée. Toujours
+         *  sérialisée (null explicite), champ ajouté. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) String maxItemSize,
+        /** Poids maximal par colis en kg, route et bateau ; null = non renseigné. Toujours sérialisé. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg
 ) {
     /**
      * Copie enrichie des prix convertis dans la devise du lecteur. Utilisé par
@@ -103,7 +109,7 @@ public record AnnouncementSearchResponse(
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
-                departureTimezone);
+                departureTimezone, maxItemSize, maxParcelWeightKg);
     }
 
     /**
@@ -118,6 +124,6 @@ public record AnnouncementSearchResponse(
                 acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
-                departureTimezone);
+                departureTimezone, maxItemSize, maxParcelWeightKg);
     }
 }

@@ -129,6 +129,15 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "transport_mode", nullable = false, length = 20)
     private TransportMode transportMode;
 
+    /** Taille maximale acceptée par colis (V381, route). Null = non renseignée : aucun contrôle. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "max_item_size", length = 2)
+    private ItemSize maxItemSize;
+
+    /** Poids maximal par colis en kg (V381, route). Null = non renseigné : aucun contrôle. */
+    @Column(name = "max_parcel_weight_kg", precision = 8, scale = 2)
+    private BigDecimal maxParcelWeightKg;
+
     /**
      * Nombre d'escales d'un trajet en avion (FLUTTER-GE) : 0 direct, 1 une escale, 2 deux ou
      * plus. Null = non renseigné, et toujours null hors avion ({@link TripStops#normalize}).
@@ -154,10 +163,10 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "delivery_lng", nullable = false, precision = 9, scale = 6)
     private java.math.BigDecimal deliveryLng;
 
-    @Column(name = "available_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "available_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal availableKg;
 
-    @Column(name = "total_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "total_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal totalKg;
 
     @Column(name = "price_per_kg", nullable = false, precision = 10, scale = 2)
@@ -240,7 +249,7 @@ public class AnnouncementEntity extends BaseEntity {
      * surplusEligible: la négociation est payée → le voyageur peut ouvrir le surplus.
      * surplusPublished: le surplus est ouvert et visible dans la recherche publique.
      */
-    @Column(name = "reserved_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "reserved_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal reservedKg = BigDecimal.ZERO;
 
     @Column(name = "surplus_eligible", nullable = false)
@@ -471,6 +480,10 @@ public class AnnouncementEntity extends BaseEntity {
 
     public TransportMode getTransportMode() { return transportMode; }
     public void setTransportMode(TransportMode transportMode) { this.transportMode = transportMode; }
+    public ItemSize getMaxItemSize() { return maxItemSize; }
+    public void setMaxItemSize(ItemSize maxItemSize) { this.maxItemSize = maxItemSize; }
+    public BigDecimal getMaxParcelWeightKg() { return maxParcelWeightKg; }
+    public void setMaxParcelWeightKg(BigDecimal maxParcelWeightKg) { this.maxParcelWeightKg = maxParcelWeightKg; }
 
     public Integer getStopsCount() { return stopsCount == null ? null : stopsCount.intValue(); }
     public void setStopsCount(Integer stopsCount) {

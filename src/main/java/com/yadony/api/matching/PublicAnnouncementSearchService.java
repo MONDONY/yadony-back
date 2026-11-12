@@ -7,6 +7,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Set;
+
 /**
  * Recherche d'annonces pour un visiteur anonyme (lecture seule).
  *
@@ -47,7 +49,12 @@ public class PublicAnnouncementSearchService {
                 q.transportMode(), null, q.contentType(),
                 null, null, null,
                 SORT_BY, SORT_DIR, PageRequest.of(q.page(), PAGE_SIZE),
-                null, q.urgent(), AnnouncementSearchExtras.PUBLIC_VIEW)
+                null, q.urgent(), publicExtras(q))
                 .map(PublicAnnouncementCard::from));
+    }
+
+    /** Vue publique plus les deux filtres de route ; sans eux, exactement {@link AnnouncementSearchExtras#PUBLIC_VIEW}. */
+    private static AnnouncementSearchExtras publicExtras(PublicAnnouncementQuery q) {
+        return new AnnouncementSearchExtras(null, Set.of(), false, true, q.minItemSize(), q.viaCity());
     }
 }

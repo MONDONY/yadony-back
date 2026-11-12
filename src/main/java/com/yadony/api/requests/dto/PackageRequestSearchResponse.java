@@ -80,8 +80,53 @@ public record PackageRequestSearchResponse(
      * Grille de commission figée sur la demande ({@code null} sans grille). Additif, en fin de
      * record : les cartes du fil servent le même brut que le détail, l'app s'en sert pour ses aperçus.
      */
-    UUID commissionGridId
+    UUID commissionGridId,
+    /**
+     * Taille du colis (« S », « M », « L », « XL »), facultative. Toujours sérialisée, null compris :
+     * null = taille non renseignée. Additif, en fin de record.
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS) String itemSize
 ) {
+    /** Arité d'avant {@code itemSize} : le champ y vaut {@code null}. */
+    public PackageRequestSearchResponse(
+            UUID id,
+            String departureCity, String arrivalCity,
+            BigDecimal departureLat, BigDecimal departureLng,
+            BigDecimal arrivalLat, BigDecimal arrivalLng,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            BigDecimal targetPriceEur, boolean negotiable, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            SenderPublicProfile sender,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            List<PackageRequestPhotoResponse> photos,
+            boolean isFavorite,
+            boolean urgent,
+            Integer matchScore,
+            UUID matchedTripId,
+            LocalDate matchedTripDepartureDate,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal grossPriceEur,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency,
+            Long uniqueViewerCount,
+            MyNegotiation myNegotiation,
+            UUID commissionGridId) {
+        this(id, departureCity, arrivalCity,
+                departureLat, departureLng, arrivalLat, arrivalLng,
+                desiredDate, dateToleranceDays,
+                weightKg, parcelSize, transportMode, contentCategory,
+                targetPriceEur, negotiable, photoUrl,
+                pickupNeighborhood, deliveryNeighborhood,
+                sender, acceptedPaymentMethods, photos, isFavorite, urgent,
+                matchScore, matchedTripId, matchedTripDepartureDate, currency,
+                availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
+                uniqueViewerCount, myNegotiation, commissionGridId, null);
+    }
+
     /**
      * Arité d'avant {@code commissionGridId} : le champ y vaut {@code null}.
      */
@@ -192,7 +237,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation, commissionGridId);
+                uniqueViewerCount, myNegotiation, commissionGridId, itemSize);
     }
 
     public record SenderPublicProfile(UUID id, String displayName, double averageRating, int totalRatings,
@@ -212,7 +257,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation, commissionGridId);
+                uniqueViewerCount, myNegotiation, commissionGridId, itemSize);
     }
 
     /** Copie enrichie des informations de match. Utilisé uniquement quand matchingMyTrips est actif. */
@@ -227,7 +272,7 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 info.matchScore(), info.tripId(), info.tripDepartureDate(), currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation, commissionGridId);
+                uniqueViewerCount, myNegotiation, commissionGridId, itemSize);
     }
 
     /** Copie portant l'audience, posée par {@code PackageRequestService} sur les seules demandes du lecteur. */
@@ -242,6 +287,6 @@ public record PackageRequestSearchResponse(
                 sender, acceptedPaymentMethods, photos, isFavorite, urgent,
                 matchScore, matchedTripId, matchedTripDepartureDate, currency,
                 availablePaymentMethods, grossPriceEur, convertedDisplayPrice, convertedCurrency,
-                uniqueViewerCount, myNegotiation, commissionGridId);
+                uniqueViewerCount, myNegotiation, commissionGridId, itemSize);
     }
 }

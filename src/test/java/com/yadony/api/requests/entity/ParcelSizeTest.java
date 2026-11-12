@@ -23,4 +23,11 @@ class ParcelSizeTest {
         assertThat(ParcelSize.fromWeightKg(new BigDecimal("15.01"))).isEqualTo(ParcelSize.LARGE);
         assertThat(ParcelSize.fromWeightKg(new BigDecimal("32"))).isEqualTo(ParcelSize.LARGE);
     }
+
+    /** Garde-fou (déjà vert avant V380) : une demande route en tonnes reste LARGE. */
+    @Test
+    void fromWeightKg_above32_isLarge() {
+        assertThat(ParcelSize.fromWeightKg(new BigDecimal("1200"))).isEqualTo(ParcelSize.LARGE);
+        assertThat(ParcelSize.fromWeightKg(new BigDecimal("999999.99"))).isEqualTo(ParcelSize.LARGE);
+    }
 }

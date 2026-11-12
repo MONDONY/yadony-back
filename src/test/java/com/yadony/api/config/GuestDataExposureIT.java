@@ -210,6 +210,10 @@ class GuestDataExposureIT {
             // rien reveler de plus que pricePerKgDisplay dont il n'est qu'une autre unite.
             "pricePerKgDisplay", "convertedCurrency", "pricePerKgDisplayConverted",
             "transportMode", "status", "bidsCount", "confirmedParcelCount", "traveler",
+            // Taille max (S a XL) et poids max par colis fixes par le voyageur (route, lot 2) :
+            // limites du trajet que l'expediteur doit connaitre avant de decider, invite compris,
+            // au meme titre que availableKg et acceptedContentTypes. Ni identite ni montant.
+            "maxItemSize", "maxParcelWeightKg",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
@@ -236,6 +240,10 @@ class GuestDataExposureIT {
             // ── PackageRequestSearchResponse + PackageRequestResponse ─────────
             "senderId", "departureLat", "departureLng", "arrivalLat", "arrivalLng",
             "desiredDate", "dateToleranceDays", "weightKg", "parcelSize", "contentCategory",
+            // Taille declaree du colis (S a XL, facultative) : meme nature que parcelSize et
+            // weightKg, que le transporteur doit voir pour decider de la prendre. Aucune donnee
+            // personnelle.
+            "itemSize",
             // targetPriceEur est bien un net, mais AUCUN des deux motifs qui ont fait masquer le
             // net d'un trajet ne s'y applique, verification faite : la recherche de colis ne sert
             // aucun brut a cote (il n'y a donc pas de couple a lire, et le masquer priverait le

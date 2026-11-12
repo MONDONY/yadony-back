@@ -223,6 +223,45 @@ class PublicAnnouncementSearchControllerIT {
     }
 
     @Test
+    void tailleMinimaleEtVilleDePassage_acceptees_etValeurInvalideRefusee() throws Exception {
+        mockMvc.perform(get(PUBLIC_PATH).param("minItemSize", "L").param("viaCity", "Tanger"))
+                .andExpect(status().isOk());
+        // Comme transportMode : valeur hors liste = refus sur le contrat d'erreur de la recherche publique.
+        mockMvc.perform(get(PUBLIC_PATH).param("minItemSize", "XXL"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("invalid-search"));
+        // Même borne que les villes de la recherche (80 caractères).
+        mockMvc.perform(get(PUBLIC_PATH).param("viaCity", "x".repeat(81)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid-search"));
+        mockMvc.perform(get(PUBLIC_PATH).param("transportMode", "teleporter"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("invalid-search"));
+    }
+
+    @Test
+    void villeDePassage_neRetientQueLesVoyagesQuiS_ArretentLa() throws Exception {
+        UUID voyage = UUID.randomUUID();
+        AnnouncementEntity leg1 = seed("Paris", "Tanger", AnnouncementStatus.ACTIVE);
+        leg1.setTripGroupId(voyage);
+        leg1.setTripLegIndex(1);
+        announcementRepository.save(leg1);
+        AnnouncementEntity leg2 = seed("Tanger", "Dakar", AnnouncementStatus.ACTIVE);
+        leg2.setTripGroupId(voyage);
+        leg2.setTripLegIndex(2);
+        announcementRepository.save(leg2);
+        seed("Paris", "Dakar", AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get(PUBLIC_PATH).param("viaCity", "tanger"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2));
+        mockMvc.perform(get(PUBLIC_PATH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(3));
+    }
+
+    @Test
     void refuseLaPage5() throws Exception {
         mockMvc.perform(get(PUBLIC_PATH).param("page", "5"))
                 .andExpect(status().isBadRequest())

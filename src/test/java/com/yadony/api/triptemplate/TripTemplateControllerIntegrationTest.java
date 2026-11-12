@@ -300,4 +300,103 @@ class TripTemplateControllerIntegrationTest {
                 .andExpect(jsonPath("$.capacityUnit").value("SUITCASE_32KG"))
                 .andExpect(jsonPath("$.availableKg").value(64));
     }
+
+    // ── Lot 2 route : durée, poids, taille et poids max par mode ────────────────────────────
+
+    private com.fasterxml.jackson.databind.node.ObjectNode roadTemplate(int availableKg, int arrivalDayOffset)
+            throws Exception {
+        var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(templateJson("Route"));
+        payload.put("transportMode", "CAR");
+        payload.put("capacityUnit", "KG_EXACT");
+        payload.put("availableKg", availableKg);
+        payload.put("arrivalDayOffset", arrivalDayOffset);
+        return payload;
+    }
+
+    private org.springframework.test.web.servlet.ResultActions postTemplate(
+            com.fasterxml.jackson.databind.node.ObjectNode payload) throws Exception {
+        return mockMvc.perform(post("/trip-templates")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(payload)));
+    }
+
+    @Test
+    void create_roadTemplate_tonnesSizeAndMaxWeight_roundTrip() throws Exception {
+        var payload = roadTemplate(2000, 14);
+        payload.put("maxItemSize", "L");
+        payload.put("maxParcelWeightKg", 20.5);
+
+        postTemplate(payload)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.availableKg").value(2000))
+                .andExpect(jsonPath("$.arrivalDayOffset").value(14))
+                .andExpect(jsonPath("$.maxItemSize").value("L"))
+                .andExpect(jsonPath("$.maxParcelWeightKg").value(20.5));
+
+        mockMvc.perform(get("/trip-templates").with(authentication(asTraveler(TRAVELER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].maxItemSize").value("L"))
+                .andExpect(jsonPath("$[0].maxParcelWeightKg").value(20.5));
+    }
+
+    @Test
+    void create_legacyPlaneTemplate_hasNoLimits() throws Exception {
+        mockMvc.perform(post("/trip-templates")
+                .with(authentication(asTraveler(TRAVELER_UID)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(templateJson("Avion")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.maxItemSize").doesNotExist())
+                .andExpect(jsonPath("$.maxParcelWeightKg").doesNotExist());
+    }
+
+    @Test
+    void create_roadTemplateOffset15_returns422ArrivalTooFar() throws Exception {
+        postTemplate(roadTemplate(100, 15))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("arrival-too-far"));
+    }
+
+    @Test
+    void create_planeTemplateOffset4_returns422ArrivalTooFar() throws Exception {
+        var payload = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(templateJson("Avion"));
+        payload.put("arrivalDayOffset", 3);
+        postTemplate(payload).andExpect(status().isCreated());
+        payload.put("arrivalDayOffset", 4);
+        postTemplate(payload)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("arrival-too-far"));
+    }
+
+    @Test
+    void create_planeTemplate1000kg_returns422_roadAccepts1000kg() throws Exception {
+        var plane = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(templateJson("Avion"));
+        plane.put("availableKg", 1000);
+        postTemplate(plane)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("trip-capacity-too-high"));
+
+        postTemplate(roadTemplate(1000, 0)).andExpect(status().isCreated());
+    }
+
+    @Test
+    void create_invalidSizeOrWeight_returns422WithViolations() throws Exception {
+        var badSize = roadTemplate(100, 1);
+        badSize.put("maxItemSize", "XXL");
+        postTemplate(badSize)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.maxItemSize").exists());
+
+        var badWeight = roadTemplate(100, 1);
+        badWeight.put("maxParcelWeightKg", 0.2);
+        postTemplate(badWeight)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.maxParcelWeightKg").exists());
+
+        var offset = roadTemplate(100, 121);
+        postTemplate(offset)
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.violations.arrivalDayOffset").exists());
+    }
 }

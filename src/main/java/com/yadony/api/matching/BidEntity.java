@@ -32,8 +32,13 @@ public class BidEntity extends BaseEntity {
     @Column(name = "sender_id", nullable = false)
     private UUID senderId;
 
-    @Column(name = "weight_kg", precision = 5, scale = 2)
+    @Column(name = "weight_kg", precision = 8, scale = 2)
     private BigDecimal weightKg;
+
+    /** Taille du colis S à XL (V381). Null = non renseignée (anciennes apps, trajets hors route). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "item_size", length = 2)
+    private ItemSize itemSize;
 
     /** Net négocié figé (= prix d'accord du thread) pour un bid issu d'une
      * demande. Prime sur le tarif de l'annonce dans le calcul d'affichage,
@@ -339,6 +344,8 @@ public class BidEntity extends BaseEntity {
 
     public BigDecimal getWeightKg() { return weightKg; }
     public void setWeightKg(BigDecimal weightKg) { this.weightKg = weightKg; }
+    public ItemSize getItemSize() { return itemSize; }
+    public void setItemSize(ItemSize itemSize) { this.itemSize = itemSize; }
 
     public BigDecimal getNegotiatedNetEur() { return negotiatedNetEur; }
     public void setNegotiatedNetEur(BigDecimal negotiatedNetEur) { this.negotiatedNetEur = negotiatedNetEur; }

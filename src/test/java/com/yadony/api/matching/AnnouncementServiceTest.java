@@ -1823,6 +1823,384 @@ class AnnouncementServiceTest {
         }
     }
 
+    // ─── Capacité par mode (V380, WeightLimits) ─────────────────────────────────
+
+    @Nested
+    @DisplayName("capacité d'un trajet par mode — WeightLimits")
+    class TripCapacityByMode {
+
+        private AnnouncementRequest tripRequest(TransportMode mode, String kg) {
+            LocalDate departure = LocalDate.now().plusDays(10);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar",
+                    departure,
+                    LocalTime.of(10, 0), LocalTime.of(22, 0),
+                    new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                    new AddressDto("Aéroport LSS", 14.739, -17.490),
+                    new BigDecimal(kg), BigDecimal.valueOf(5),
+                    mode,
+                    null, null, null, null, null, null,
+                    null, null,
+                    departure.atTime(9, 0),
+                    null,
+                    null,
+                    null);
+        }
+
+        private void stubCreate() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+            org.mockito.Mockito.lenient().when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            org.mockito.Mockito.lenient().when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            org.mockito.Mockito.lenient().when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+        }
+
+        private void assertCapacityTooHigh(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String max) {
+            assertThatThrownBy(call).isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                assertThat(ex.getErrorCode()).isEqualTo("trip-capacity-too-high");
+                assertThat(ex.getMessage()).contains(max + " kg");
+            });
+        }
+
+        @Test
+        @DisplayName("trajet route de 2 500 kg → créé, kilos et total à 2 500")
+        void create_roadTrip_2500kg_accepted() {
+            stubCreate();
+
+            AnnouncementResponse result = announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.CAR, "2500"));
+
+            assertThat(result.availableKg()).isEqualByComparingTo("2500");
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+            assertThat(saved.getValue().getTotalKg()).isEqualByComparingTo("2500");
+        }
+
+        @Test
+        @DisplayName("trajet route de 999 999,99 kg → créé ; 1 000 000 → 422 trip-capacity-too-high")
+        void create_roadTrip_999999_99_accepted_1000000_refused422() {
+            stubCreate();
+
+            assertThat(announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.BUS, "999999.99")).availableKg())
+                    .isEqualByComparingTo("999999.99");
+            assertCapacityTooHigh(() -> announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.CAR, "1000000")), "999999.99");
+        }
+
+        @Test
+        @DisplayName("trajet avion de 999,99 kg → créé (borne effective d'avant V380)")
+        void create_planeTrip_999_99_accepted() {
+            stubCreate();
+
+            assertThat(announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.PLANE, "999.99")).availableKg())
+                    .isEqualByComparingTo("999.99");
+        }
+
+        @Test
+        @DisplayName("trajet avion de 1 000 kg → 422 trip-capacity-too-high (avant : 500 SQL), rien n'est écrit")
+        void create_planeTrip_1000kg_refused422_tripCapacityTooHigh() {
+            stubCreate();
+
+            assertCapacityTooHigh(() -> announcementService.createAnnouncement(
+                    FIREBASE_UID, tripRequest(TransportMode.PLANE, "1000")), "999.99");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("occurrence de série avion de 1 000 kg → 422 (même chemin de création)")
+        void createSeriesCopy_plane1000kg_refused422() {
+            stubCreate();
+
+            assertCapacityTooHigh(() -> announcementService.createSeriesCopy(
+                    FIREBASE_UID, tripRequest(TransportMode.TRAIN, "1000"), UUID.randomUUID()), "999.99");
+        }
+
+        @Test
+        @DisplayName("modification route → avion avec 1 200 kg → 422, rien n'est écrit")
+        void update_roadToPlane_1200kg_refused422() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setTransportMode(TransportMode.CAR);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+
+            assertCapacityTooHigh(() -> announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, tripRequest(TransportMode.PLANE, "1200")), "999.99");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("modification d'un trajet route à 1 200 kg → acceptée")
+        void update_roadTrip_1200kg_accepted() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setTransportMode(TransportMode.CAR);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, tripRequest(TransportMode.CAR, "1200"));
+
+            assertThat(a.getAvailableKg()).isEqualByComparingTo("1200");
+            assertThat(a.getTotalKg()).isEqualByComparingTo("1200");
+        }
+    }
+
+    // ─── Taille max et poids max par colis, défaut de capacité (V381, ParcelFitRules) ───
+
+    @Nested
+    @DisplayName("limites par colis d'un trajet — ParcelFitRules")
+    class ParcelLimitsByMode {
+
+        private AnnouncementRequest request(TransportMode mode, CapacityUnit unit, String maxSize, String maxKg,
+                                            int arrivalDaysAfterDeparture) {
+            LocalDate departure = LocalDate.now().plusDays(10);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar",
+                    departure,
+                    LocalTime.of(10, 0), LocalTime.of(22, 0),
+                    new AddressDto("CDG Terminal 2E", 49.009, 2.547),
+                    new AddressDto("Aéroport LSS", 14.739, -17.490),
+                    new BigDecimal("500"), BigDecimal.valueOf(5),
+                    mode,
+                    null, null, null, null, unit, null,
+                    null, null,
+                    departure.atTime(9, 0),
+                    null, null, null,
+                    arrivalDaysAfterDeparture == 0 ? null : departure.plusDays(arrivalDaysAfterDeparture),
+                    null,
+                    maxSize,
+                    maxKg == null ? null : new BigDecimal(maxKg));
+        }
+
+        private AnnouncementRequest request(TransportMode mode, String maxSize, String maxKg) {
+            return request(mode, null, maxSize, maxKg, 0);
+        }
+
+        private void stubCreate() {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(buildTraveler()));
+            org.mockito.Mockito.lenient().when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            org.mockito.Mockito.lenient().when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            org.mockito.Mockito.lenient().when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+        }
+
+        private AnnouncementEntity savedAfterCreate() {
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+            return saved.getValue();
+        }
+
+        private AnnouncementEntity created(AnnouncementRequest request) {
+            stubCreate();
+            announcementService.createAnnouncement(FIREBASE_UID, request);
+            return savedAfterCreate();
+        }
+
+        @Test
+        @DisplayName("trajet voiture avec taille L et 20 kg max → les deux sont enregistrés et rendus")
+        void create_roadTrip_keepsSizeAndMaxWeight() {
+            stubCreate();
+
+            AnnouncementResponse response = announcementService.createAnnouncement(
+                    FIREBASE_UID, request(TransportMode.CAR, "L", "20"));
+
+            assertThat(response.maxItemSize()).isEqualTo("L");
+            assertThat(response.maxParcelWeightKg()).isEqualByComparingTo("20");
+            AnnouncementEntity saved = savedAfterCreate();
+            assertThat(saved.getMaxItemSize()).isEqualTo(ItemSize.L);
+            assertThat(saved.getMaxParcelWeightKg()).isEqualByComparingTo("20");
+        }
+
+        @Test
+        @DisplayName("création avec NONE et 0 (sentinelles d'effacement) → aucune limite enregistrée")
+        void create_roadTripWithNoneAndZero_storesNoLimit() {
+            AnnouncementEntity saved = created(request(TransportMode.CAR, "NONE", "0"));
+
+            assertThat(saved.getMaxItemSize()).isNull();
+            assertThat(saved.getMaxParcelWeightKg()).isNull();
+        }
+
+        @Test
+        @DisplayName("trajet bus : taille lue sans tenir compte de la casse, poids gardé")
+        void create_busTrip_lowercaseSizeIsParsed() {
+            AnnouncementEntity saved = created(request(TransportMode.BUS, "xl", "1500.5"));
+
+            assertThat(saved.getMaxItemSize()).isEqualTo(ItemSize.XL);
+            assertThat(saved.getMaxParcelWeightKg()).isEqualByComparingTo("1500.5");
+        }
+
+        @Test
+        @DisplayName("trajet avion avec taille et poids max → les deux sont ignorés (null), réponse comprise")
+        void create_planeTrip_dropsSizeAndMaxWeight() {
+            AnnouncementEntity saved = created(request(TransportMode.PLANE, "L", "20"));
+
+            assertThat(saved.getMaxItemSize()).isNull();
+            assertThat(saved.getMaxParcelWeightKg()).isNull();
+        }
+
+        @Test
+        @DisplayName("trajet route sans taille → accepté, taille absente (jamais exigée, C24)")
+        void create_roadTripWithoutSize_accepted() {
+            AnnouncementEntity saved = created(request(TransportMode.CAR, null, "20"));
+
+            assertThat(saved.getMaxItemSize()).isNull();
+            assertThat(saved.getMaxParcelWeightKg()).isEqualByComparingTo("20");
+        }
+
+        @Test
+        @DisplayName("trajet route sans aucune limite → accepté, comme avant")
+        void create_roadTripWithoutAnyLimit_accepted() {
+            AnnouncementEntity saved = created(request(TransportMode.CAR, null, null));
+
+            assertThat(saved.getMaxItemSize()).isNull();
+            assertThat(saved.getMaxParcelWeightKg()).isNull();
+        }
+
+        @Test
+        @DisplayName("unité de capacité absente sur un trajet voiture → kilo exact")
+        void create_roadWithoutCapacityUnit_defaultsToKgExact() {
+            assertThat(created(request(TransportMode.CAR, null, null)).getCapacityUnit())
+                    .isEqualTo(CapacityUnit.KG_EXACT);
+        }
+
+        @Test
+        @DisplayName("unité absente sur un trajet avion → valise 23 kg (non-régression)")
+        void create_planeWithoutCapacityUnit_staysSuitcase23() {
+            assertThat(created(request(TransportMode.PLANE, null, null)).getCapacityUnit())
+                    .isEqualTo(CapacityUnit.SUITCASE_23KG);
+        }
+
+        @Test
+        @DisplayName("valise 32 kg choisie sur un trajet voiture → acceptée telle quelle")
+        void create_roadTripWithSuitcaseUnit_accepted() {
+            assertThat(created(request(TransportMode.CAR, CapacityUnit.SUITCASE_32KG, null, null, 0)).getCapacityUnit())
+                    .isEqualTo(CapacityUnit.SUITCASE_32KG);
+        }
+
+        @Test
+        @DisplayName("route : arrivée à 14 jours acceptée, à 15 jours → 422 arrival-too-far (garde-fou, déjà vert)")
+        void create_roadTrip_14DaysArrival_accepted_15Refused() {
+            assertThat(created(request(TransportMode.CAR, null, null, null, 14)).getArrivalDate())
+                    .isEqualTo(LocalDate.now().plusDays(24));
+
+            assertThatThrownBy(() -> announcementService.createAnnouncement(
+                    FIREBASE_UID, request(TransportMode.CAR, null, null, null, 15)))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("arrival-too-far");
+                    });
+        }
+
+        private AnnouncementEntity stubUpdate(TransportMode currentMode) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = buildAnnouncement(traveler);
+            a.setTransportMode(currentMode);
+            a.setMaxItemSize(ItemSize.M);
+            a.setMaxParcelWeightKg(new BigDecimal("30"));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            return a;
+        }
+
+        @Test
+        @DisplayName("modification route → avion : taille et poids max sont effacés")
+        void update_roadToPlane_clearsSizeAndMaxWeight() {
+            AnnouncementEntity a = stubUpdate(TransportMode.CAR);
+
+            AnnouncementDetailResponse response = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, request(TransportMode.PLANE, "L", "20"));
+
+            assertThat(a.getMaxItemSize()).isNull();
+            assertThat(a.getMaxParcelWeightKg()).isNull();
+            assertThat(response.maxItemSize()).isNull();
+            assertThat(response.maxParcelWeightKg()).isNull();
+        }
+
+        @Test
+        @DisplayName("modification d'un trajet route SANS les champs → taille et poids max conservés")
+        void update_roadWithoutLimitFields_keepsExistingLimits() {
+            AnnouncementEntity a = stubUpdate(TransportMode.CAR);
+
+            AnnouncementDetailResponse response = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, request(TransportMode.CAR, null, null));
+
+            assertThat(a.getMaxItemSize()).isEqualTo(ItemSize.M);
+            assertThat(a.getMaxParcelWeightKg()).isEqualByComparingTo("30");
+            assertThat(response.maxItemSize()).isEqualTo("M");
+            assertThat(response.maxParcelWeightKg()).isEqualByComparingTo("30");
+        }
+
+        @Test
+        @DisplayName("modification avec « NONE » et 0 → taille et poids max effacés")
+        void update_roadWithNoneAndZero_clearsLimits() {
+            AnnouncementEntity a = stubUpdate(TransportMode.CAR);
+
+            AnnouncementDetailResponse response = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, request(TransportMode.CAR, "NONE", "0"));
+
+            assertThat(a.getMaxItemSize()).isNull();
+            assertThat(a.getMaxParcelWeightKg()).isNull();
+            assertThat(response.maxItemSize()).isNull();
+            assertThat(response.maxParcelWeightKg()).isNull();
+        }
+
+        @Test
+        @DisplayName("modification route → avion sans les champs → effacés quand même")
+        void update_roadToPlaneWithoutLimitFields_clearsLimits() {
+            AnnouncementEntity a = stubUpdate(TransportMode.CAR);
+
+            announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, request(TransportMode.PLANE, null, null));
+
+            assertThat(a.getMaxItemSize()).isNull();
+            assertThat(a.getMaxParcelWeightKg()).isNull();
+        }
+
+        @Test
+        @DisplayName("modification d'un trajet route : nouvelles limites enregistrées et rendues")
+        void update_roadTrip_changesSizeAndMaxWeight() {
+            AnnouncementEntity a = stubUpdate(TransportMode.CAR);
+
+            AnnouncementDetailResponse response = announcementService.updateAnnouncement(
+                    ANNOUNCEMENT_ID, FIREBASE_UID, request(TransportMode.BUS, "XL", "45.25"));
+
+            assertThat(a.getMaxItemSize()).isEqualTo(ItemSize.XL);
+            assertThat(a.getMaxParcelWeightKg()).isEqualByComparingTo("45.25");
+            assertThat(response.maxItemSize()).isEqualTo("XL");
+            assertThat(response.maxParcelWeightKg()).isEqualByComparingTo("45.25");
+        }
+
+        @Test
+        @DisplayName("copie d'une série : la taille et le poids max du trajet d'origine sont recopiés")
+        void startSeries_copiesSizeAndMaxWeight() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity source = buildAnnouncement(traveler);
+            source.setTransportMode(TransportMode.CAR);
+            source.setMaxItemSize(ItemSize.L);
+            source.setMaxParcelWeightKg(new BigDecimal("20"));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(source));
+
+            AnnouncementRequest base = announcementService.startSeries(FIREBASE_UID, ANNOUNCEMENT_ID).base();
+
+            assertThat(base.maxItemSize()).isEqualTo("L");
+            assertThat(base.maxParcelWeightKg()).isEqualByComparingTo("20");
+        }
+    }
+
     // ─── updateAnnouncement ────────────────────────────────────────────────────
 
     @Nested

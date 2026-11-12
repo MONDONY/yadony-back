@@ -2295,6 +2295,424 @@ class PackageRequestServiceTest {
 
     }
 
+    // ─── Poids par mode (V380, WeightLimits) ────────────────────────────────────
+
+    @Nested @DisplayName("poids par mode — WeightLimits")
+    class WeightByMode {
+
+        private void stubCreateSaves() {
+            lenient().when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            lenient().when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            lenient().when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+        }
+
+        private void assertWeightTooHeavy(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String max) {
+            assertThatThrownBy(call)
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("weight-too-heavy");
+                    assertThat(ex.getMessage()).contains(max + " kg");
+                });
+        }
+
+        @Test @DisplayName("route : 1 200 kg accepté, parcelSize LARGE")
+        void create_road_1200kg_accepted() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
+                requestWithModeAndWeight("CAR", "1200"));
+
+            assertThat(saved.getWeightKg()).isEqualByComparingTo("1200");
+            assertThat(saved.getParcelSize()).isEqualTo(ParcelSize.LARGE);
+        }
+
+        @Test @DisplayName("route : 999 999,99 accepté, 1 000 000 refusé en 422 (jamais une 500 SQL)")
+        void create_road_999999_99_accepted_1000000_refused422() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
+                requestWithModeAndWeight("BUS", "999999.99"));
+            assertThat(saved.getWeightKg()).isEqualByComparingTo("999999.99");
+
+            assertWeightTooHeavy(() -> service.createAndReturnEntity(SENDER_ID,
+                requestWithModeAndWeight("CAR", "1000000")), "999999.99");
+        }
+
+        @Test @DisplayName("bateau : 1 200 kg accepté")
+        void create_boat_1200kg_accepted() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
+                requestWithModeAndWeight("BOAT", "1200"));
+
+            assertThat(saved.getWeightKg()).isEqualByComparingTo("1200");
+        }
+
+        @Test @DisplayName("avion : 32 kg accepté, 32,5 refusé en 422 weight-too-heavy, rien d'enregistré")
+        void create_plane_32kg_accepted_32_5_refused() {
+            stubCreateSaves();
+
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWithModeAndWeight("PLANE", "32"))
+                .getWeightKg()).isEqualByComparingTo("32");
+            org.mockito.Mockito.clearInvocations(repository);
+
+            assertWeightTooHeavy(() -> service.createAndReturnEntity(SENDER_ID,
+                requestWithModeAndWeight("PLANE", "32.5")), "32");
+            verify(repository, never()).save(any());
+        }
+
+        @Test @DisplayName("sans mode (anciennes apps = avion) : 33 kg refusé en 422")
+        void createRequest_withoutMode_33kg_refused422() {
+            stubCreateSaves();
+
+            assertThatThrownBy(() -> service.createAndReturnEntity(SENDER_ID, requestWithModeAndWeight(null, "33")))
+                .isInstanceOf(com.yadony.api.common.YadonyBusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "weight-too-heavy");
+        }
+
+        @Test @DisplayName("« peu importe » : 32,5 kg refusé, message qui invite à choisir la route")
+        void create_any_32_5kg_refused422() {
+            stubCreateSaves();
+
+            assertThatThrownBy(() -> service.createAndReturnEntity(SENDER_ID, requestWithModeAndWeight("ANY", "32.5")))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("weight-too-heavy");
+                    assertThat(ex.getMessage()).contains("route");
+                });
+        }
+
+        @Test @DisplayName("brouillon avion de 40 kg : refusé dès l'enregistrement")
+        void createDraft_plane_40kg_refused422() {
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            PackageRequestCreateRequest draft = new PackageRequestCreateRequest(
+                "Paris", "Dakar", LocalDate.now().plusDays(7), 2,
+                new BigDecimal("40"), "vetements", "Cadeau", null, null,
+                "10e arr", "Plateau", true, EnumSet.of(PaymentMethod.STRIPE), List.of(), true,
+                null, null, "PLANE");
+
+            assertWeightTooHeavy(() -> service.createAndReturnEntity(SENDER_ID, draft), "32");
+            verify(repository, never()).save(any());
+        }
+
+        private PackageRequestEntity stubUpdatable(TransportMode current, String weight) {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setTransportMode(current);
+            entity.setWeightKg(new BigDecimal(weight));
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            lenient().when(threadRepository.findByPackageRequestId(entity.getId())).thenReturn(List.of());
+            lenient().when(repository.save(any(PackageRequestEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+            return entity;
+        }
+
+        @Test @DisplayName("modification route → avion avec 60 kg : 422, la demande reste en route")
+        void update_roadToPlane_with60kg_refused422() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.CAR, "60");
+
+            assertWeightTooHeavy(() -> service.update(SENDER_ID, entity.getId(),
+                requestWithModeAndWeight("PLANE", "60")), "32");
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.CAR);
+            verify(repository, never()).save(any());
+        }
+
+        @Test @DisplayName("modification sans mode d'une demande route : 1 200 kg accepté (mode conservé)")
+        void update_withoutMode_onRoadRequest_1200kg_accepted() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.CAR, "60");
+
+            service.update(SENDER_ID, entity.getId(), requestWithModeAndWeight(null, "1200"));
+
+            assertThat(entity.getWeightKg()).isEqualByComparingTo("1200");
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.CAR);
+        }
+
+        @Test @DisplayName("modification sans mode d'une demande avion : 33 kg refusé")
+        void update_withoutMode_onPlaneRequest_33kg_refused() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.PLANE, "5");
+
+            assertWeightTooHeavy(() -> service.update(SENDER_ID, entity.getId(),
+                requestWithModeAndWeight(null, "33")), "32");
+        }
+
+        @Test @DisplayName("publication d'un brouillon avion de 60 kg : la règle de poids est rejouée (422), reste DRAFT")
+        void publishDraft_replaysWeightRule() {
+            PackageRequestEntity e = buildEntity(SENDER_ID, PackageRequestStatus.DRAFT);
+            e.setTransportMode(TransportMode.PLANE);
+            e.setWeightKg(new BigDecimal("60"));
+            e.setTargetPriceEur(new BigDecimal("30.00"));
+            when(repository.findByIdForUpdate(e.getId())).thenReturn(Optional.of(e));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            assertWeightTooHeavy(() -> service.publish(SENDER_ID, e.getId()), "32");
+            assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.DRAFT);
+            verify(repository, never()).save(any());
+        }
+
+        @Test @DisplayName("publication d'un brouillon route de 1 200 kg : publiée")
+        void publishDraft_road1200kg_published() {
+            PackageRequestEntity e = buildEntity(SENDER_ID, PackageRequestStatus.DRAFT);
+            e.setTransportMode(TransportMode.CAR);
+            e.setWeightKg(new BigDecimal("1200"));
+            e.setTargetPriceEur(new BigDecimal("30.00"));
+            e.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.STRIPE));
+            when(repository.findByIdForUpdate(e.getId())).thenReturn(Optional.of(e));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any(PackageRequestEntity.class))).thenAnswer(i -> i.getArgument(0));
+
+            service.publish(SENDER_ID, e.getId());
+
+            assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
+        }
+    }
+
+    // ─── Taille facultative et budget par mode (lot 2 route, B4) ────────────────
+
+    @Nested @DisplayName("taille facultative et budget par mode")
+    class ItemSizeAndBudgetByMode {
+
+        private void stubCreateSaves() {
+            lenient().when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            lenient().when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            lenient().when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+        }
+
+        private PackageRequestEntity stubUpdatable(TransportMode current, com.yadony.api.matching.ItemSize size) {
+            PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            entity.setTransportMode(current);
+            entity.setItemSize(size);
+            when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
+            lenient().when(threadRepository.findByPackageRequestId(entity.getId())).thenReturn(List.of());
+            lenient().when(repository.save(any(PackageRequestEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+            return entity;
+        }
+
+        private void assertBudgetOutOfBounds(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+            assertThatThrownBy(call)
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("request/budget-out-of-bounds");
+        }
+
+        // --- taille ---
+
+        @Test @DisplayName("route (voiture, bus) : la taille est gardée ; avion, bateau, train : ramenée à null")
+        void create_road_keepsItemSize_plane_dropsIt() {
+            stubCreateSaves();
+
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("CAR", "M", "28.00")).getItemSize())
+                .isEqualTo(com.yadony.api.matching.ItemSize.M);
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("BUS", "XL", "28.00")).getItemSize())
+                .isEqualTo(com.yadony.api.matching.ItemSize.XL);
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("PLANE", "M", "28.00")).getItemSize())
+                .isNull();
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("BOAT", "L", "28.00")).getItemSize())
+                .isNull();
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("TRAIN", "S", "28.00")).getItemSize())
+                .isNull();
+        }
+
+        @Test @DisplayName("ancienne app (mode absent = avion) : la taille est ignorée")
+        void create_withoutMode_dropsItemSize() {
+            stubCreateSaves();
+
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith(null, "M", "28.00")).getItemSize())
+                .isNull();
+        }
+
+        @Test @DisplayName("route sans taille : acceptée, taille null (jamais exigée)")
+        void create_road_withoutItemSize_accepted() {
+            stubCreateSaves();
+
+            PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
+                requestWith("CAR", null, "28.00"));
+
+            assertThat(saved.getItemSize()).isNull();
+            assertThat(saved.getTransportMode()).isEqualTo(TransportMode.CAR);
+        }
+
+        @Test @DisplayName("« peu importe » : la taille est gardée, en minuscule aussi")
+        void create_any_keepsItemSize() {
+            stubCreateSaves();
+
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("ANY", "L", "28.00")).getItemSize())
+                .isEqualTo(com.yadony.api.matching.ItemSize.L);
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("ANY", "m", "28.00")).getItemSize())
+                .isEqualTo(com.yadony.api.matching.ItemSize.M);
+        }
+
+        @Test @DisplayName("modification route → avion : la taille est effacée")
+        void update_roadToPlane_clearsItemSize() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.CAR, com.yadony.api.matching.ItemSize.L);
+
+            service.update(SENDER_ID, entity.getId(), requestWith("PLANE", null, "28.00"));
+
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.PLANE);
+            assertThat(entity.getItemSize()).isNull();
+        }
+
+        @Test @DisplayName("modification route → avion avec une taille envoyée : effacée quand même")
+        void update_roadToPlane_withItemSize_clearsItemSize() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.CAR, com.yadony.api.matching.ItemSize.L);
+
+            service.update(SENDER_ID, entity.getId(), requestWith("PLANE", "M", "28.00"));
+
+            assertThat(entity.getItemSize()).isNull();
+        }
+
+        @Test @DisplayName("modification : taille absente = conservée (route, « peu importe » ou mode absent)")
+        void update_absentItemSize_keepsCurrent() {
+            PackageRequestEntity road = stubUpdatable(TransportMode.CAR, com.yadony.api.matching.ItemSize.M);
+            service.update(SENDER_ID, road.getId(), requestWith("CAR", null, "28.00"));
+            assertThat(road.getItemSize()).isEqualTo(com.yadony.api.matching.ItemSize.M);
+
+            PackageRequestEntity noMode = stubUpdatable(TransportMode.BUS, com.yadony.api.matching.ItemSize.S);
+            service.update(SENDER_ID, noMode.getId(), requestWith(null, null, "28.00"));
+            assertThat(noMode.getTransportMode()).isEqualTo(TransportMode.BUS);
+            assertThat(noMode.getItemSize()).isEqualTo(com.yadony.api.matching.ItemSize.S);
+
+            PackageRequestEntity any = stubUpdatable(null, com.yadony.api.matching.ItemSize.XL);
+            service.update(SENDER_ID, any.getId(), requestWith("ANY", null, "28.00"));
+            assertThat(any.getItemSize()).isEqualTo(com.yadony.api.matching.ItemSize.XL);
+        }
+
+        @Test @DisplayName("modification : « NONE » efface la taille, une valeur la remplace, avion → route sans taille reste null")
+        void update_noneClears_valueReplaces() {
+            PackageRequestEntity cleared = stubUpdatable(TransportMode.CAR, com.yadony.api.matching.ItemSize.M);
+            service.update(SENDER_ID, cleared.getId(), requestWith("CAR", "NONE", "28.00"));
+            assertThat(cleared.getItemSize()).isNull();
+
+            PackageRequestEntity replaced = stubUpdatable(TransportMode.CAR, com.yadony.api.matching.ItemSize.M);
+            service.update(SENDER_ID, replaced.getId(), requestWith("CAR", "XL", "28.00"));
+            assertThat(replaced.getItemSize()).isEqualTo(com.yadony.api.matching.ItemSize.XL);
+
+            PackageRequestEntity planeToRoad = stubUpdatable(TransportMode.PLANE, null);
+            service.update(SENDER_ID, planeToRoad.getId(), requestWith("CAR", null, "28.00"));
+            assertThat(planeToRoad.getItemSize()).isNull();
+        }
+
+        // --- budget ---
+
+        @Test @DisplayName("route : budget de 900 € accepté (voiture, bus, bateau), sans plafond métier")
+        void create_road_budget900Eur_accepted() {
+            stubCreateSaves();
+
+            for (String mode : List.of("CAR", "BUS", "BOAT")) {
+                PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
+                    requestWith(mode, null, "900.00"));
+                // net = 900 / 1,12 (taux global du test)
+                assertThat(saved.getTargetPriceEur()).isEqualByComparingTo("803.57");
+            }
+        }
+
+        @Test @DisplayName("route : le garde-fou technique de 1 000 000 reste (422, jamais une 500 SQL)")
+        void create_road_budgetAboveTechnicalGuard_refused422() {
+            stubCreateSaves();
+
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("CAR", null, "1000000"))
+                .getTargetPriceEur()).isNotNull();
+            assertBudgetOutOfBounds(() -> service.createAndReturnEntity(SENDER_ID,
+                requestWith("CAR", null, "1000000.01")));
+        }
+
+        @Test @DisplayName("avion : 560 € accepté, 561 € refusé en 422")
+        void create_plane_budget561Eur_refused422() {
+            stubCreateSaves();
+
+            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("PLANE", null, "560.00"))
+                .getTargetPriceEur()).isNotNull();
+            assertBudgetOutOfBounds(() -> service.createAndReturnEntity(SENDER_ID,
+                requestWith("PLANE", null, "561.00")));
+        }
+
+        @Test @DisplayName("« peu importe » : 561 € refusé en 422")
+        void create_any_budget561Eur_refused422() {
+            stubCreateSaves();
+
+            assertBudgetOutOfBounds(() -> service.createAndReturnEntity(SENDER_ID,
+                requestWith("ANY", null, "561.00")));
+        }
+
+        @Test @DisplayName("ancienne app (mode absent = avion) : 561 € refusé en 422, comportement inchangé")
+        void create_withoutMode_budget561Eur_refused422() {
+            stubCreateSaves();
+
+            assertBudgetOutOfBounds(() -> service.createAndReturnEntity(SENDER_ID,
+                requestWith(null, null, "561.00")));
+        }
+
+        @Test @DisplayName("modification d'une demande route : 900 € accepté (mode conservé)")
+        void update_road_budget900Eur_accepted() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.CAR, null);
+
+            service.update(SENDER_ID, entity.getId(), requestWith(null, null, "900.00"));
+
+            assertThat(entity.getTargetPriceEur()).isEqualByComparingTo("803.57");
+        }
+
+        @Test @DisplayName("modification route → avion avec 900 € : 422, la demande reste en route")
+        void update_roadToPlane_budget900_refused422() {
+            PackageRequestEntity entity = stubUpdatable(TransportMode.CAR, null);
+
+            assertBudgetOutOfBounds(() -> service.update(SENDER_ID, entity.getId(),
+                requestWith("PLANE", null, "900.00")));
+            assertThat(entity.getTransportMode()).isEqualTo(TransportMode.CAR);
+            verify(repository, never()).save(any());
+        }
+
+        @Test @DisplayName("publication d'un brouillon route : pas de plafond de budget rejoué (net seul connu)")
+        void publishDraft_road_noBudgetCapReplayed() {
+            PackageRequestEntity e = buildEntity(SENDER_ID, PackageRequestStatus.DRAFT);
+            e.setTransportMode(TransportMode.CAR);
+            e.setTargetPriceEur(new BigDecimal("800.00"));
+            e.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.STRIPE));
+            when(repository.findByIdForUpdate(e.getId())).thenReturn(Optional.of(e));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(config.maxOpenRequestsPerSender()).thenReturn(10);
+            when(repository.countBySenderIdAndStatusIn(eq(SENDER_ID), any())).thenReturn(0L);
+            when(repository.save(any(PackageRequestEntity.class))).thenAnswer(i -> i.getArgument(0));
+
+            service.publish(SENDER_ID, e.getId());
+
+            assertThat(e.getStatus()).isEqualTo(PackageRequestStatus.OPEN);
+        }
+
+        // --- réponse ---
+
+        @Test @DisplayName("la réponse porte la taille (nom de l'enum) ; null sans taille")
+        void toResponse_exposesItemSize() {
+            PackageRequestEntity e = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
+            e.setItemSize(com.yadony.api.matching.ItemSize.L);
+
+            assertThat(service.toResponse(e).itemSize()).isEqualTo("L");
+            e.setItemSize(null);
+            assertThat(service.toResponse(e).itemSize()).isNull();
+        }
+    }
+
+    /** Demande valide avec mode brut, taille brute (null = absente) et budget donnés. */
+    private PackageRequestCreateRequest requestWith(String transportMode, String itemSize, String budget) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal("5"), "vetements",
+            "Cadeau pour ma mère", new BigDecimal(budget), null,
+            "10e arr", "Plateau",
+            true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null, transportMode, itemSize);
+    }
+
+    /** Demande valide avec un mode brut (null = absent) et un poids donnés. */
+    private PackageRequestCreateRequest requestWithModeAndWeight(String transportMode, String weightKg) {
+        return new PackageRequestCreateRequest(
+            "Paris", "Dakar",
+            LocalDate.now().plusDays(7), 2,
+            new BigDecimal(weightKg), "vetements",
+            "Cadeau pour ma mère", new BigDecimal("28.00"), null,
+            "10e arr", "Plateau",
+            true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null, transportMode);
+    }
+
     // ─── Shared helpers ─────────────────────────────────────────────────────────
 
     private PackageRequestEntity buildEntity(UUID senderId, PackageRequestStatus status) {

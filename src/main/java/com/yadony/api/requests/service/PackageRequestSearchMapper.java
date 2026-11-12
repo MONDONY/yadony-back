@@ -163,7 +163,8 @@ public class PackageRequestSearchMapper {
                 null,
                 // Négociation en cours : posée par le service, qui connaît le lecteur.
                 null,
-                entity.getCommissionGridId()
+                entity.getCommissionGridId(),
+                entity.getItemSize() == null ? null : entity.getItemSize().name()
         );
     }
 

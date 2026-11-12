@@ -218,12 +218,14 @@ public class MatchingService {
     /**
      * Règle de match commune à {@link #findMatchingRequests},
      * {@link #findBestMatchByRequestId} et {@link #findTravelersMatchingPackage} : corridor
-     * déjà filtré en SQL, restent le mode de transport, le poids et la fenêtre de date.
+     * déjà filtré en SQL, restent le mode de transport, le poids, la taille et la fenêtre de date.
      * Point d'extension unique : ajouter un critère ici le propage aux trois chemins.
      */
     private boolean matches(PackageRequestEntity request, AnnouncementEntity announcement) {
         return fitsMode(request, announcement)
-                && fitsWeight(request, announcement) && fitsDate(request, announcement);
+                && fitsWeight(request, announcement)
+                && fitsSize(request, announcement)
+                && fitsDate(request, announcement);
     }
 
     /**
@@ -239,8 +241,27 @@ public class MatchingService {
         return TransportMode.accepts(request.getTransportMode(), announcement.getTransportMode());
     }
 
+    /**
+     * Poids : une capacité en kilo libre ({@code KG_FREE}) n'est pas bornée (son {@code availableKg}
+     * d'environ 1 kg est technique, même règle que {@code reserveCapacity}), seul le poids max par colis
+     * compte ; sinon le poids tient dans les kilos restants, puis dans le poids max par colis quand le
+     * trajet en renseigne un. Un poids max absent ne bloque rien.
+     */
     private boolean fitsWeight(PackageRequestEntity request, AnnouncementEntity announcement) {
-        return request.getWeightKg().compareTo(announcement.getAvailableKg()) <= 0;
+        if (!isKgFree(announcement)
+                && request.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
+            return false;
+        }
+        return ParcelFitRules.fits(announcement, request.getWeightKg(), null);
+    }
+
+    /** Taille de la demande contre la taille max du trajet ; une taille inconnue d'un côté ne bloque rien. */
+    private boolean fitsSize(PackageRequestEntity request, AnnouncementEntity announcement) {
+        return ParcelFitRules.fits(announcement, null, request.getItemSize());
+    }
+
+    private static boolean isKgFree(AnnouncementEntity announcement) {
+        return announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
     }
 
     private boolean fitsDate(PackageRequestEntity request, AnnouncementEntity announcement) {
@@ -291,9 +312,15 @@ public class MatchingService {
     private int computeMatchScore(PackageRequestEntity request,
                                   AnnouncementEntity announcement,
                                   double budgetPerKg) {
-        double ratio = request.getWeightKg().divide(announcement.getAvailableKg(),
-                4, java.math.RoundingMode.HALF_UP).doubleValue();
-        int weightScore = (int) Math.round((1.0 - Math.min(ratio, 1.0)) * 40);
+        // Kilo libre : pas de capacité réelle à remplir, la part « poids » est neutre (la moitié).
+        int weightScore;
+        if (isKgFree(announcement)) {
+            weightScore = 20;
+        } else {
+            double ratio = request.getWeightKg().divide(announcement.getAvailableKg(),
+                    4, java.math.RoundingMode.HALF_UP).doubleValue();
+            weightScore = (int) Math.round((1.0 - Math.min(ratio, 1.0)) * 40);
+        }
 
         // Budget (devise de la demande) et prix (devise de l'annonce) ne se comparent
         // que sur une échelle commune : le pivot EUR. Sans conversion, 5000 XOF/kg de

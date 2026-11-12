@@ -40,6 +40,8 @@ public record TripTemplateDto(
     String departureCountryCode,
     String arrivalCountryCode,
     int arrivalDayOffset,
+    String maxItemSize,
+    Double maxParcelWeightKg,
     LocalDateTime createdAt,
     LocalDateTime updatedAt
 ) {}

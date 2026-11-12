@@ -887,10 +887,16 @@ public class NegotiationService {
         if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/not-active");
         }
-        if (ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
+        // Kilo libre : availableKg est une valeur technique (~1) sans signification, la capacité
+        // n'est pas bornée (même exemption que BidService, BidCheckoutService, BidNegotiationService et
+        // le matching) : sans elle une demande matchée serait refusée « insufficient-capacity ».
+        if (ann.getCapacityUnit() != com.yadony.api.matching.CapacityUnit.KG_FREE
+            && ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "announcement/insufficient-capacity");
         }
+        // Taille et poids max par colis du trajet, y compris en kilo libre (422 parcel-too-*).
+        com.yadony.api.matching.ParcelFitRules.assertFits(ann, request.getWeightKg(), request.getItemSize());
         if (!cityKey(ann.getDepartureCity()).equals(cityKey(request.getDepartureCity()))
             || !cityKey(ann.getArrivalCity()).equals(cityKey(request.getArrivalCity()))) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -1054,6 +1060,10 @@ public class NegotiationService {
         ann.setAcceptedPaymentMethods(offerable.isEmpty()
                 ? java.util.EnumSet.of(PaymentMethod.CASH) : java.util.EnumSet.copyOf(offerable));
         ann.setTransportMode(mode);
+        // Taille max du trajet dédié = taille de la demande (route seulement, null sans taille) ; la
+        // capacité (total = réservé = poids de la demande) est bornée à 999 999,99 kg par la demande.
+        ann.setMaxItemSize(com.yadony.api.matching.ParcelFitRules.normalizeMaxItemSize(
+            request.getItemSize(), mode));
         ann.setStatus(com.yadony.api.matching.AnnouncementStatus.ACTIVE);
         ann.setDescription(req.description());
         ann.setAcceptedContentTypes(req.acceptedContentTypes() != null
@@ -1801,7 +1811,8 @@ public class NegotiationService {
             thread.getCurrency(),
             thread.getCommissionGridId(),
             // Espèces : la commission est due par le voyageur, l'expéditeur paie le net.
-            thread.getPaymentMethod() != PaymentMethod.CASH ? thread.getSealedGrossEur() : null
+            thread.getPaymentMethod() != PaymentMethod.CASH ? thread.getSealedGrossEur() : null,
+            request.getItemSize()
         ));
         // paymentIntentId est null pour un accord cash scellé par settleCommission/
         // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les
@@ -2110,6 +2121,10 @@ public class NegotiationService {
         }
         threadRepo.findByTravelerAnnouncementIdAndStatus(announcementId, NegotiationThreadStatus.ACCEPTED)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "surplus/negotiation-not-accepted"));
+        // Capacité totale du trajet dédié après ouverture (réservé + surplus), bornée par mode (V380) :
+        // 999,99 kg en avion (avant : 500 SQL au-delà), tonnes en route et bateau.
+        com.yadony.api.matching.WeightLimits.assertTripCapacity(
+            ann.getReservedKg().add(surplusKg), ann.getTransportMode());
 
         ann.setAvailableKg(surplusKg);
         ann.setTotalKg(ann.getReservedKg().add(surplusKg));

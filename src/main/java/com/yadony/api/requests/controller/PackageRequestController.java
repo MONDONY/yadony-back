@@ -68,14 +68,18 @@ public class PackageRequestController {
      * @param currency devise de la future demande, facultative : sans elle, celle que la
      *                 création retiendrait (portefeuille, sinon pays). Sous grille, elle fixe
      *                 le minimum de commission ; sans grille, elle est ignorée.
+     * @param transportMode mode de la future demande, facultatif : en route (CAR, BUS) et en bateau, le
+     *                 budget n'a pas de plafond métier ; absent ou inconnu (anciennes apps), le plafond
+     *                 de 560 € (mis à l'échelle de la devise) s'applique.
      */
     @GetMapping("/quote")
     @PreAuthorize("hasRole('SENDER')")
     public NegotiationQuoteResponse quote(
             @RequestParam BigDecimal budgetEur,
             @RequestParam(required = false) String promoCode,
-            @RequestParam(required = false) String currency) {
-        return service.quote(requireUserId(), budgetEur, promoCode, currency);
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false) String transportMode) {
+        return service.quote(requireUserId(), budgetEur, promoCode, currency, transportMode);
     }
 
     @GetMapping("/me")

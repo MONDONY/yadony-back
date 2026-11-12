@@ -15,7 +15,9 @@ public record PackageRequestCreateRequest(
     @FutureOrPresent LocalDate desiredDate,
     // Ignorée (stockée null) sans date ; avec une date, null retombe sur 2 jours.
     @Min(0) @Max(7) Integer dateToleranceDays,
-    @NotNull @DecimalMin("0.5") @DecimalMax("32.0") BigDecimal weightKg,
+    // Maximum technique (NUMERIC(8,2), V380). Le plafond par mode (32 kg en avion et « peu importe »)
+    // est appliqué au service (WeightLimits, 422 weight-too-heavy) : il dépend du mode.
+    @NotNull @DecimalMin("0.5") @DecimalMax("999999.99") BigDecimal weightKg,
     // Multi-sélection jointe par virgule côté front — alignée sur BidCheckoutRequest
     // (500, cf. V171__unify_content_categories.sql pour le pourquoi).
     @NotBlank @Size(max = 500) String contentCategory,
@@ -47,7 +49,13 @@ public record PackageRequestCreateRequest(
     // Mode de transport voulu. Absent/null : PLANE (anciennes apps, qui ne l'envoient pas) ;
     // « ANY » : peu importe (stocké null en base) ; sinon l'un des modes, soumis aux
     // interrupteurs route/bateau dans PackageRequestService. Valeur inconnue : 422 validation.
-    @Pattern(regexp = "ANY|PLANE|CAR|TRAIN|BUS|BOAT|OTHER") String transportMode
+    @Pattern(regexp = "ANY|PLANE|CAR|TRAIN|BUS|BOAT|OTHER") String transportMode,
+    // Taille du colis (S, M, L, XL), facultative, jamais exigée. Chaîne et non enum : une valeur
+    // inconnue donne un 422 avec « violations », pas une erreur de désérialisation.
+    // Création : absente = pas de taille. Modification : ABSENTE (null) = taille conservée (ancienne
+    // app) ; « NONE » = effacer la taille. Gardée en voiture, bus et « peu importe » ; toute autre
+    // demande (avion, bateau, train, autre, mode absent) ramène la taille à null (ParcelFitRules).
+    @Pattern(regexp = "NONE|S|M|L|XL", message = "{validation.request.item-size.pattern}") String itemSize
 ) {
     /**
      * Constructeur de compatibilité (sans promoCode ni currency) — évite de
@@ -92,5 +100,20 @@ public record PackageRequestCreateRequest(
         this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
             description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
             acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, currency, null);
+    }
+
+    /**
+     * Constructeur de compatibilité (sans itemSize) — l'ancienne forme canonique : la taille y est
+     * absente (null), comme chez une ancienne application.
+     */
+    public PackageRequestCreateRequest(
+            String departureCity, String arrivalCity, LocalDate desiredDate, Integer dateToleranceDays,
+            BigDecimal weightKg, String contentCategory, String description, BigDecimal totalBudgetEur,
+            String photoUrl, String pickupNeighborhood, String deliveryNeighborhood, boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods, List<String> photoKeys, Boolean saveAsDraft,
+            String promoCode, String currency, String transportMode) {
+        this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
+            description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
+            acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, currency, transportMode, null);
     }
 }

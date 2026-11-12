@@ -20,6 +20,8 @@ import java.util.List;
  */
 public record BidNegotiationStartRequest(
         @DecimalMin(value = "0.1", message = "{validation.bid.weight.min}")
+        // Maximum technique (NUMERIC(8,2), V380) : en kilo libre rien d'autre ne borne le poids.
+        @DecimalMax(value = "999999.99", message = "{validation.bid.weight.max}")
         BigDecimal weightKg,
 
         @NotBlank(message = "{validation.bid.description.required}")
@@ -56,5 +58,21 @@ public record BidNegotiationStartRequest(
         @Size(max = 10, message = "{validation.bid.custom-items.max}")
         @Valid List<BidCustomItemRequest> customItems,
 
-        @Valid List<BidGridItemRequest> gridItems
-) {}
+        @Valid List<BidGridItemRequest> gridItems,
+
+        /** Taille du colis (S, M, L, XL), facultative : absente = acceptée comme avant. */
+        @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}")
+        String itemSize
+) {
+    /** Constructeur de compatibilité (sans taille) : la forme d'avant le contrôle de taille. */
+    public BidNegotiationStartRequest(BigDecimal weightKg, String description, String contentCategory,
+                                      String recipientName, String recipientPhone, Boolean disclaimerSigned,
+                                      String paymentMethod, String phoneNumber, String countryCode,
+                                      List<String> photoKeys, BigDecimal proposedTotalEur,
+                                      List<BidCustomItemRequest> customItems,
+                                      List<BidGridItemRequest> gridItems) {
+        this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
+                paymentMethod, phoneNumber, countryCode, photoKeys, proposedTotalEur, customItems,
+                gridItems, null);
+    }
+}

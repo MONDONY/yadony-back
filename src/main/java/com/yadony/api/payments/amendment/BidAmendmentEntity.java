@@ -57,11 +57,11 @@ public class BidAmendmentEntity extends BaseEntity {
     private String currency;
 
     /** Kilos ajoutés par la demande. */
-    @Column(name = "added_weight_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "added_weight_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal addedWeightKg = BigDecimal.ZERO;
 
     /** Kilos réellement retirés de l'annonce : remis à 0 quand ils sont rendus (une seule fois). */
-    @Column(name = "capacity_reserved_kg", nullable = false, precision = 5, scale = 2)
+    @Column(name = "capacity_reserved_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal capacityReservedKg = BigDecimal.ZERO;
 
     @Column(name = "net_amount", nullable = false, precision = 14, scale = 2)
