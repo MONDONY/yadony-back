@@ -251,6 +251,10 @@ class GuestDataExposureIT {
             // weightKg, que le transporteur doit voir pour decider de la prendre. Aucune donnee
             // personnelle.
             "itemSize",
+            // Dimensions (cm) et volume (m3) du colis, demande bateau (lot 3) : meme nature que weightKg
+            // et itemSize, que le transporteur doit voir pour decider de la prendre. Aucune donnee
+            // personnelle ; le volume est calcule par le serveur.
+            "lengthCm", "widthCm", "heightCm", "volumeM3",
             // targetPriceEur est bien un net, mais AUCUN des deux motifs qui ont fait masquer le
             // net d'un trajet ne s'y applique, verification faite : la recherche de colis ne sert
             // aucun brut a cote (il n'y a donc pas de couple a lire, et le masquer priverait le

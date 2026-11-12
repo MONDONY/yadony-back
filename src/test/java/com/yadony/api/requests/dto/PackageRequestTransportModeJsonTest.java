@@ -61,6 +61,56 @@ class PackageRequestTransportModeJsonTest {
         assertThat(json.get("transportMode").asText()).isEqualTo("PLANE");
     }
 
+    // ── Dimensions et volume (bateau, lot 3) ─────────────────────────────────────────────
+
+    @Test
+    void detailSansDimensionsExposeLesCleesANull() throws Exception {
+        JsonNode json = mapper.readTree(mapper.writeValueAsString(response(TransportMode.PLANE)));
+        for (String key : new String[] {"lengthCm", "widthCm", "heightCm", "volumeM3"}) {
+            assertThat(json.has(key)).as(key).isTrue();
+            assertThat(json.get(key).isNull()).as(key).isTrue();
+        }
+    }
+
+    @Test
+    void detailBateauExposeLesDimensionsEtLeVolume() throws Exception {
+        PackageRequestResponse base = response(TransportMode.BOAT);
+        PackageRequestResponse boat = new PackageRequestResponse(
+                base.id(), base.senderId(), base.departureCity(), base.arrivalCity(), base.desiredDate(),
+                base.dateToleranceDays(), base.weightKg(), base.parcelSize(), base.transportMode(),
+                base.contentCategory(), base.description(), base.targetPriceEur(), base.photoUrl(),
+                base.pickupNeighborhood(), base.deliveryNeighborhood(), base.status(), base.createdAt(),
+                base.negotiable(), base.acceptedPaymentMethods(), base.grossPriceEur(), base.photos(),
+                base.viewerThreadId(), base.viewerThreadStatus(), base.promoCode(), base.currency(),
+                base.availablePaymentMethods(), null, null, false, null, null,
+                60, 40, 40, new BigDecimal("0.096"));
+
+        JsonNode json = mapper.readTree(mapper.writeValueAsString(boat));
+        assertThat(json.get("lengthCm").asInt()).isEqualTo(60);
+        assertThat(json.get("widthCm").asInt()).isEqualTo(40);
+        assertThat(json.get("heightCm").asInt()).isEqualTo(40);
+        assertThat(json.get("volumeM3").decimalValue()).isEqualByComparingTo("0.096");
+        // La copie convertie garde les dimensions.
+        JsonNode converted = mapper.readTree(mapper.writeValueAsString(
+                boat.withConvertedPrice(new BigDecimal("1.00"), "XOF")));
+        assertThat(converted.get("volumeM3").decimalValue()).isEqualByComparingTo("0.096");
+        assertThat(converted.get("lengthCm").asInt()).isEqualTo(60);
+    }
+
+    @Test
+    void uneRequeteQuiPorteUnVolumeLIgnore() throws Exception {
+        String body = """
+                {"departureCity":"Paris","arrivalCity":"Dakar","weightKg":5,"contentCategory":"x",
+                 "acceptedPaymentMethods":["CASH"],"transportMode":"BOAT",
+                 "lengthCm":60,"widthCm":40,"heightCm":40,"volumeM3":999}
+                """;
+        PackageRequestCreateRequest req = mapper.readValue(body, PackageRequestCreateRequest.class);
+        assertThat(req.lengthCm()).isEqualTo(60);
+        assertThat(req.heightCm()).isEqualTo(40);
+        assertThat(PackageRequestCreateRequest.class.getRecordComponents())
+                .noneMatch(c -> c.getName().equals("volumeM3"));
+    }
+
     // ── Recherche (PackageRequestSearchResponse) ─────────────────────────────────────────
 
     @Test

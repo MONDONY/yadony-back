@@ -100,6 +100,88 @@ public final class ParcelFitRules {
                 : CapacityUnit.SUITCASE_23KG;
     }
 
+    /** Volume minimal d'un colis : 1 litre. En dessous, l'arrondi à 3 décimales donnerait 0, refusé par les CHECK. */
+    public static final BigDecimal MIN_VOLUME_M3 = new BigDecimal("0.001");
+
+    private static final BigDecimal CM3_PER_M3 = new BigDecimal("1000000");
+
+    /**
+     * Volume en m³ d'un colis de {@code lengthCm} x {@code widthCm} x {@code heightCm} : produit en cm³ divisé par
+     * 1 000 000, arrondi à 3 décimales (HALF_UP), jamais sous {@link #MIN_VOLUME_M3}. Calculé côté serveur, jamais
+     * lu du client. Les dimensions sont déjà bornées à 1-400 cm par la validation de la requête.
+     */
+    public static BigDecimal volumeM3(int lengthCm, int widthCm, int heightCm) {
+        BigDecimal cm3 = BigDecimal.valueOf((long) lengthCm * widthCm * heightCm);
+        BigDecimal m3 = cm3.divide(CM3_PER_M3, 3, RoundingMode.HALF_UP);
+        return m3.compareTo(MIN_VOLUME_M3) < 0 ? MIN_VOLUME_M3 : m3;
+    }
+
+    /**
+     * Le volume d'un colis tient dans le volume restant d'un trajet au m³ ; un côté inconnu (trajet sans volume,
+     * demande sans dimensions) ne bloque rien (spec §5.6). Logique pure : la mise en relation reste fermée aux
+     * trajets au m³ jusqu'à la réservation au volume (BB2), qui s'en servira.
+     */
+    public static boolean fitsVolume(BigDecimal availableVolumeM3, BigDecimal volumeM3) {
+        return availableVolumeM3 == null || volumeM3 == null || volumeM3.compareTo(availableVolumeM3) <= 0;
+    }
+
+    /** Dimensions d'une demande de colis (cm) et volume calculé (m³) : toutes renseignées ou toutes nulles. */
+    public record RequestDimensions(Integer lengthCm, Integer widthCm, Integer heightCm, BigDecimal volumeM3) {
+        public static final RequestDimensions NONE = new RequestDimensions(null, null, null, null);
+
+        public boolean isPresent() {
+            return volumeM3 != null;
+        }
+    }
+
+    /**
+     * Dimensions d'une demande à enregistrer. Gardées en bateau et en « peu importe » ({@code mode == null}),
+     * ignorées (effacées) pour tout autre mode, sans contrôle.
+     *
+     * <ul>
+     *   <li>trois dimensions : volume calculé par {@link #volumeM3} (jamais lu du client) ;</li>
+     *   <li>une ou deux seulement : 422 {@code dimensions-incomplete} (toutes ou aucune) ;</li>
+     *   <li>aucune : {@code current} conservé quand il existe (modification par une ancienne application,
+     *       qui ne les envoie pas) ; sinon 422 {@code boat-dimensions-required} en bateau si
+     *       {@code requiredForBoat} (un brouillon peut rester sans dimensions, la publication les exige).</li>
+     * </ul>
+     * À la création, {@code current} vaut {@link RequestDimensions#NONE}.
+     */
+    public static RequestDimensions resolveRequestDimensions(Integer lengthCm, Integer widthCm, Integer heightCm,
+                                                             RequestDimensions current, TransportMode mode,
+                                                             boolean requiredForBoat) {
+        if (mode != null && mode != TransportMode.BOAT) {
+            return RequestDimensions.NONE;
+        }
+        int given = (lengthCm == null ? 0 : 1) + (widthCm == null ? 0 : 1) + (heightCm == null ? 0 : 1);
+        if (given == 3) {
+            return new RequestDimensions(lengthCm, widthCm, heightCm, volumeM3(lengthCm, widthCm, heightCm));
+        }
+        if (given > 0) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dimensions-incomplete",
+                    "problem.dimensions-incomplete");
+        }
+        if (current != null && current.isPresent()) {
+            return current;
+        }
+        if (mode == TransportMode.BOAT && requiredForBoat) {
+            throw boatDimensionsRequired();
+        }
+        return RequestDimensions.NONE;
+    }
+
+    /** Une demande bateau ne se publie pas sans dimensions : sans volume, aucun trajet au m³ ne peut la prendre. */
+    public static void assertBoatDimensionsPresent(TransportMode mode, BigDecimal volumeM3) {
+        if (mode == TransportMode.BOAT && volumeM3 == null) {
+            throw boatDimensionsRequired();
+        }
+    }
+
+    private static YadonyBusinessException boatDimensionsRequired() {
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-dimensions-required",
+                "problem.boat-dimensions-required");
+    }
+
     /** Refuse un colis plus lourd ou plus grand que ce que le trajet accepte (422). */
     public static void assertFits(AnnouncementEntity trip, BigDecimal weightKg, ItemSize itemSize) {
         BigDecimal maxKg = trip.getMaxParcelWeightKg();
