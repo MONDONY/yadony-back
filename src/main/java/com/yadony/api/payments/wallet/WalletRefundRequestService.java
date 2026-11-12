@@ -75,8 +75,7 @@ public class WalletRefundRequestService {
                 .filter(w -> code.equalsIgnoreCase(w.getCurrency()))
                 .filter(w -> w.getBalance().compareTo(BigDecimal.ZERO) > 0)
                 .findFirst()
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "wallet-balance-empty", "Unprocessable", "Aucun solde à rembourser"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-balance-empty", "problem.wallet-balance-empty.no-balance"));
         return requestForCurrency(userId, wallet);
     }
 
@@ -273,8 +272,7 @@ public class WalletRefundRequestService {
         // sont sérialisées, la seconde voit l'état laissé par la première (sinon : versement
         // pawaPay ET paiement hors app, l'utilisateur remboursé deux fois).
         WalletRefundRequestEntity request = refundRequestRepository.findByIdForUpdate(requestId)
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                        "wallet-refund-request-not-found", "Not Found", "Demande introuvable"));
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "wallet-refund-request-not-found", "problem.wallet-refund-request-not-found"));
         // findByIdForUpdate rend toujours une entité gérée ; le garde ne sert qu'aux tests dont le
         // dépôt est simulé (entité détachée, que refresh refuserait).
         if (entityManager.contains(request)) {
@@ -282,13 +280,10 @@ public class WalletRefundRequestService {
         }
 
         if (request.getStatus() == WalletRefundRequestStatus.PROCESSING || pawapayOperationInFlight(request)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-in-progress",
-                    "Unprocessable", "Un remboursement mobile money est en cours pour cette demande : "
-                            + "attendez son issue avant de la résoudre à la main");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-retry-in-progress", "problem.wallet-refund-retry-in-progress");
         }
         if (request.getStatus() != WalletRefundRequestStatus.PENDING) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "already-resolved",
-                    "Unprocessable", "Cette demande a déjà été traitée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "already-resolved", "problem.already-resolved");
         }
         validatePaidAmount(request, paidAmount);
         String resolutionNote = normalizeNote(note);
@@ -364,24 +359,14 @@ public class WalletRefundRequestService {
             return;
         }
         if (paidAmount.signum() <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-refund-paid-amount-invalid", "Unprocessable",
-                    "Le montant versé doit être strictement positif");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-paid-amount-invalid", "problem.wallet-refund-paid-amount-invalid");
         }
         if (paidAmount.compareTo(request.getAmount()) > 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-refund-paid-amount-too-high", "Unprocessable",
-                    "Le montant versé dépasse le montant de la demande ("
-                            + request.getAmount().toPlainString() + " " + request.getCurrency() + ")",
-                    Map.of("maxAmount", request.getAmount()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-paid-amount-too-high", "problem.wallet-refund-paid-amount-too-high", Map.of("maxAmount", request.getAmount()), String.valueOf(request.getAmount().toPlainString()), String.valueOf(request.getCurrency()));
         }
         int maxDecimals = SupportedCurrency.fromCodeOrDefault(request.getCurrency()).minorUnit();
         if (Math.max(paidAmount.stripTrailingZeros().scale(), 0) > maxDecimals) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-refund-paid-amount-scale", "Unprocessable",
-                    "Le montant versé a trop de décimales pour la devise " + request.getCurrency()
-                            + " (" + maxDecimals + " au plus)",
-                    Map.of("maxDecimals", maxDecimals));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-paid-amount-scale", "problem.wallet-refund-paid-amount-scale", Map.of("maxDecimals", maxDecimals), String.valueOf(request.getCurrency()), String.valueOf(maxDecimals));
         }
     }
 
@@ -391,9 +376,7 @@ public class WalletRefundRequestService {
         }
         String trimmed = note.trim();
         if (trimmed.length() > RESOLUTION_NOTE_MAX_LENGTH) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "wallet-refund-note-too-long", "Unprocessable",
-                    "La note dépasse " + RESOLUTION_NOTE_MAX_LENGTH + " caractères");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-note-too-long", "problem.wallet-refund-note-too-long", String.valueOf(RESOLUTION_NOTE_MAX_LENGTH));
         }
         return trimmed;
     }

@@ -54,11 +54,9 @@ public class BidSupplementWindow {
      */
     public LocalDateTime requireOpen(BidEntity bid, AnnouncementEntity announcement) {
         if (bid.getStatus() != BidStatus.ACCEPTED && bid.getStatus() != BidStatus.HANDED_OVER) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status",
-                    "Unprocessable", "Un supplément ne se demande que sur un colis accepté ou remis avant le départ");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status", "problem.invalid-bid-status.supplement-demande-que-sur");
         }
-        return expiresAt(announcement).orElseThrow(() -> new YadonyBusinessException(HttpStatus.CONFLICT,
-                "supplement-locked", "Supplement Locked", "Le départ est trop proche pour demander un supplément"));
+        return expiresAt(announcement).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-locked", "problem.supplement-locked"));
     }
 
     /** Même règle que {@link #requireOpen}, sans exception : pour {@code supplementRequestAllowed}. */

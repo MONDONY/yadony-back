@@ -84,16 +84,13 @@ public class WalletService {
             throw externalRefundHeld();
         }
         if (isFrozen(userId, code)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending",
-                    "Unprocessable", "Solde gelé - une demande de remboursement est en cours sur cette devise");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-refund-pending", "problem.wallet-refund-pending");
         }
     }
 
     /** 422 d'un portefeuille gelé par un litige carte ouvert sur l'une de ses recharges. */
     public static YadonyBusinessException disputeHeld() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-dispute-hold",
-                "Unprocessable", "Solde bloqué : une recharge de cette devise fait l'objet d'une contestation "
-                        + "bancaire. Contactez le support.");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-dispute-hold", "problem.wallet-dispute-hold");
     }
 
     /**
@@ -101,9 +98,7 @@ public class WalletService {
      * crédit est déjà revenu sur la carte, l'équipe doit régulariser le solde.
      */
     public static YadonyBusinessException externalRefundHeld() {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-external-refund-hold",
-                "Unprocessable", "Solde bloqué : une recharge de cette devise vous a déjà été remboursée sur "
-                        + "votre carte. Contactez le support.");
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "wallet-external-refund-hold", "problem.wallet-external-refund-hold");
     }
 
     /**

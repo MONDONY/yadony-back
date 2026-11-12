@@ -139,8 +139,7 @@ public class MobileMoneyBidPricing {
     /** Net strictement positif à l'unité mineure de la devise, sinon 422 {@code invalid-amount}. */
     private static BigDecimal requirePositive(BigDecimal net, SupportedCurrency currency) {
         if (net.setScale(currency.minorUnit(), RoundingMode.HALF_UP).signum() <= 0) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "invalid-amount", "Invalid Amount", "Le montant calculé est invalide (≤ 0)");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-amount", "problem.invalid-amount");
         }
         return net;
     }

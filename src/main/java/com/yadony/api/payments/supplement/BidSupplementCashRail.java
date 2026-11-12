@@ -239,8 +239,7 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "supplement-commission-charge-failed",
-                    "Commission Charge Failed", "Le débit de la commission n'a pas pu aboutir. Veuillez réessayer.");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "supplement-commission-charge-failed", "problem.supplement-commission-charge-failed");
         }
         return applyPaymentIntent(supplementId, pi, "create");
     }
@@ -250,13 +249,11 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
      * enregistre son issue. Idempotent ; vue du voyageur.
      */
     public BidSupplementResponse confirmCommission(UUID bidId, UUID supplementId, String firebaseUid) {
-        UserEntity traveler = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        UserEntity traveler = users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
         BidSupplementEntity s = supplements.findByIdAndBidId(supplementId, bidId)
                 .orElseThrow(BidSupplementCashRail::notFound);
         if (!traveler.getId().equals(s.getTravelerId())) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                    "Vous n'êtes pas partie à ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-etes-pas-partie");
         }
         if (s.getRail() != BidSupplementRail.CASH) {
             throw BidSupplementRail.unsupported();
@@ -276,8 +273,7 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
             if (StripeUnavailable.isNetworkFailure(e)) {
                 throw StripeUnavailable.exception();
             }
-            throw new YadonyBusinessException(HttpStatus.BAD_GATEWAY, "stripe-error", "Stripe Error",
-                    "Impossible de vérifier le paiement auprès de Stripe");
+            throw YadonyBusinessException.localized(HttpStatus.BAD_GATEWAY, "stripe-error", "problem.stripe-error");
         }
         return applyPaymentIntent(supplementId, pi, "confirm");
     }
@@ -365,13 +361,10 @@ public class BidSupplementCashRail implements BidSupplementRailHandler {
         if (declineCode != null) {
             props.put("declineCode", declineCode);
         }
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-commission-card-declined",
-                "Commission Card Declined",
-                "Votre carte commission a été refusée : rien n'a été prélevé et la demande est annulée", props);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-commission-card-declined", "problem.supplement-commission-card-declined", props);
     }
 
     private static YadonyBusinessException notFound() {
-        return new YadonyBusinessException(HttpStatus.NOT_FOUND, "supplement-not-found", "Supplement Not Found",
-                "Demande de supplément introuvable");
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "supplement-not-found", "problem.supplement-not-found");
     }
 }

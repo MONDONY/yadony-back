@@ -1,5 +1,6 @@
 package com.yadony.api.payments.supplement;
 
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayerRefusals;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.Msisdn;
@@ -161,7 +162,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
             resolved = providers.resolve(msisdn, PawapayOperationKind.DEPOSIT, claim.currency(), provider,
                     "l'initiation du dépôt du supplément " + supplementId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw payerUnsupported(payerReason(e, claim.currency()));
+            throw MobileMoneyPayerRefusals.of(e, claim.currency());
         }
         // Même couplage que le colis : l'expéditeur paie sur un opérateur (code exact) où le voyageur
         // a un compte de versement dans la devise du supplément.
@@ -172,8 +173,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         PawapayProviderConfig.Limits limits = resolved.config().deposit();
         if (limits != null && (limits.minAmount() != null && claim.gross().compareTo(limits.minAmount()) < 0
                 || limits.maxAmount() != null && claim.gross().compareTo(limits.maxAmount()) > 0)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-amount-out-of-range",
-                    "Mobile Money Amount Out Of Range", "Montant hors des limites de " + resolved.providerLabel() + ".");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-amount-out-of-range", "problem.mobile-money-amount-out-of-range", String.valueOf(resolved.providerLabel()));
         }
         String successfulUrl = null;
         String failedUrl = null;
@@ -199,8 +199,8 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
                 "operationId", op.getId().toString(), "provider", op.getProvider(),
                 "msisdnMasked", op.getMsisdnMasked(), "operationStatus", op.getStatus().name()));
         if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
-                    "Deposit Rejected", views.rejectedDetail(op));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-deposit-rejected",
+                    "problem.mobile-money-deposit-rejected.resolved", views.rejectedDetail(op));
         }
         log.info("Dépôt mobile money {} soumis pour le supplément {}", op.getId(), supplementId);
         return status(supplementId);
@@ -224,7 +224,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
             try {
                 return Msisdn.normalize(phoneOverride);
             } catch (IllegalArgumentException e) {
-                throw payerUnsupported("Numéro de téléphone invalide.");
+                throw MobileMoneyPayerRefusals.invalidPhone();
             }
         }
         Optional<String> account = payoutAccounts.payerMsisdnIn(sender.getId(), currency);
@@ -234,8 +234,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
         if (bid.getMobileMoneyPhone() != null && !bid.getMobileMoneyPhone().isBlank()) {
             return bid.getMobileMoneyPhone();
         }
-        throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required",
-                "Phone Required", "Indiquez le numéro mobile money qui paiera.");
+        throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-phone-required", "problem.mobile-money-phone-required");
     }
 
     // ── Catalogue du payeur ──────────────────────────────────────────────────
@@ -256,8 +255,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
             throw BidSupplementMobileMoneyLedger.forbidden();
         }
         if (s.getRail() != BidSupplementRail.PAWAPAY) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-mismatch",
-                    "Supplement Rail Mismatch", "Ce supplément ne se paie pas en mobile money");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-rail-mismatch", "problem.supplement-rail-mismatch");
         }
         if (s.getStatus() != BidSupplementStatus.PROPOSED && s.getStatus() != BidSupplementStatus.PAYMENT_PENDING) {
             throw BidSupplementMobileMoneyLedger.notPending();
@@ -273,7 +271,7 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
             catalogue = providers.catalogue(msisdn, PawapayOperationKind.DEPOSIT, s.getCurrency(),
                     "le catalogue payeur du supplément " + supplementId);
         } catch (PawapayProviderResolver.UnsupportedNumberException e) {
-            throw payerUnsupported(payerReason(e, s.getCurrency()));
+            throw MobileMoneyPayerRefusals.of(e, s.getCurrency());
         }
         Set<String> accepted = payoutAccounts.acceptedCodes(traveler.getId(), s.getCurrency());
         List<MobileMoneyProvidersResponse.ProviderOption> options = catalogue.options().stream()
@@ -351,30 +349,17 @@ public class BidSupplementMobileMoneyRail implements BidSupplementRailHandler {
     // ── Aides ────────────────────────────────────────────────────────────────
 
     private UserEntity user(String firebaseUid) {
-        return users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        return users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
     }
 
     private UserEntity traveler(BidEntity bid) {
         AnnouncementEntity announcement = announcements.findById(bid.getAnnouncementId())
-                .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
-                        "Announcement Not Found", "Annonce introuvable"));
-        return users.findById(announcement.getTravelerId()).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "user-not-found", "User Not Found", "Voyageur introuvable"));
-    }
-
-    private static String payerReason(PawapayProviderResolver.UnsupportedNumberException e, String currency) {
-        return switch (e.reason()) {
-            case NO_PROVIDER -> "Aucun opérateur mobile money reconnu pour ce numéro.";
-            case OPERATION_CLOSED -> e.providerLabel() + " ne permet pas le paiement pour le moment.";
-            case CURRENCY_MISMATCH -> "Ce numéro paie en " + e.providerCurrency() + ", ce colis est en " + currency + ".";
-            case COUNTRY_UNKNOWN -> "Pays non reconnu pour ce numéro.";
-            case PROVIDER_NOT_AVAILABLE -> "Réseau " + e.providerLabel() + " indisponible pour ce numéro.";
-        };
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
+        return users.findById(announcement.getTravelerId()).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found.voyageur-introuvable"));
     }
 
     private static YadonyBusinessException payerUnsupported(String detail) {
-        return new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payer-unsupported",
-                "Mobile Money Payer Unsupported", detail);
+        return YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "mobile-money-payer-unsupported",
+                "problem.mobile-money-payer-unsupported.resolved", detail);
     }
 }

@@ -190,9 +190,7 @@ public class BidSupplementService {
             throw alreadyActive();
         }
         if (supplements.countTowardLimit(bidId, NEVER_PROPOSED_REASONS) >= properties.getMaxPerBid()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-limit-reached",
-                    "Supplement Limit Reached", "Le nombre maximum de demandes de supplément pour ce colis est atteint",
-                    Map.of("max", properties.getMaxPerBid()));
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-limit-reached", "problem.supplement-limit-reached", Map.of("max", properties.getMaxPerBid()));
         }
         SupportedCurrency currency = currency(bid);
         BigDecimal net = requireAmountInRange(request.netAmount(), currency);
@@ -515,8 +513,7 @@ public class BidSupplementService {
     private void requireBidInHandover(UUID bidId) {
         BidStatus status = bid(bidId).getStatus();
         if (status != BidStatus.ACCEPTED && status != BidStatus.HANDED_OVER) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status",
-                    "Unprocessable", "Ce colis n'attend plus de réponse à un supplément");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status", "problem.invalid-bid-status");
         }
     }
 
@@ -525,8 +522,7 @@ public class BidSupplementService {
             throw notPending();
         }
         if (!s.getExpiresAt().isAfter(window.now())) {
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-expired", "Supplement Expired",
-                    "Le délai de réponse à cette demande de supplément est dépassé");
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-expired", "problem.supplement-expired");
         }
     }
 
@@ -539,8 +535,7 @@ public class BidSupplementService {
             props.put("min", min);
             props.put("max", max);
             props.put("currency", currency.name());
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-amount-out-of-range",
-                    "Supplement Amount Out Of Range", "Le montant du supplément est hors des limites autorisées", props);
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-amount-out-of-range", "problem.supplement-amount-out-of-range", props);
         }
         return net;
     }
@@ -557,8 +552,7 @@ public class BidSupplementService {
     private static String requirePhotoKey(UUID bidId, String photoKey) {
         String prefix = "tracking/" + bidId + "/";
         if (photoKey == null || photoKey.contains("..") || !photoKey.startsWith(prefix)) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-photo-url",
-                    "Invalid Photo URL", "La photo doit être une clé de stockage valide pour ce colis");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-photo-url", "problem.invalid-photo-url");
         }
         return photoKey;
     }
@@ -573,8 +567,7 @@ public class BidSupplementService {
 
     private void requireEnabled() {
         if (!properties.isEnabled()) {
-            throw new YadonyBusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-disabled",
-                    "Supplement Disabled", "La demande de supplément n'est pas disponible");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-disabled", "problem.supplement-disabled");
         }
     }
 
@@ -591,23 +584,19 @@ public class BidSupplementService {
     }
 
     private UserEntity user(String firebaseUid) {
-        return users.findByFirebaseUid(firebaseUid).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.UNAUTHORIZED, "user-not-found", "User Not Found", "Utilisateur introuvable"));
+        return users.findByFirebaseUid(firebaseUid).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.UNAUTHORIZED, "user-not-found", "problem.user-not-found"));
     }
 
     private BidEntity bid(UUID bidId) {
-        return bids.findById(bidId).orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND,
-                "bid-not-found", "Bid Not Found", "Transaction introuvable"));
+        return bids.findById(bidId).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "bid-not-found", "problem.bid-not-found.transaction-introuvable"));
     }
 
     private AnnouncementEntity announcement(BidEntity bid) {
-        return announcements.findById(bid.getAnnouncementId()).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "announcement-not-found", "Announcement Not Found", "Annonce introuvable"));
+        return announcements.findById(bid.getAnnouncementId()).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
     }
 
     private BidSupplementEntity supplementForUpdate(UUID bidId, UUID supplementId) {
-        return supplements.findByIdAndBidIdForUpdate(supplementId, bidId).orElseThrow(() -> new YadonyBusinessException(
-                HttpStatus.NOT_FOUND, "supplement-not-found", "Supplement Not Found", "Demande de supplément introuvable"));
+        return supplements.findByIdAndBidIdForUpdate(supplementId, bidId).orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "supplement-not-found", "problem.supplement-not-found"));
     }
 
     private static SupportedCurrency currency(BidEntity bid) {
@@ -632,17 +621,14 @@ public class BidSupplementService {
     }
 
     private static YadonyBusinessException forbidden() {
-        return new YadonyBusinessException(HttpStatus.FORBIDDEN, "forbidden", "Forbidden",
-                "Vous n'êtes pas partie à ce colis");
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.vous-etes-pas-partie");
     }
 
     private static YadonyBusinessException notPending() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-not-pending", "Supplement Not Pending",
-                "Cette demande de supplément n'attend plus de réponse");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-not-pending", "problem.supplement-not-pending");
     }
 
     private static YadonyBusinessException alreadyActive() {
-        return new YadonyBusinessException(HttpStatus.CONFLICT, "supplement-already-active",
-                "Supplement Already Active", "Une demande de supplément est déjà en cours pour ce colis");
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "supplement-already-active", "problem.supplement-already-active");
     }
 }
