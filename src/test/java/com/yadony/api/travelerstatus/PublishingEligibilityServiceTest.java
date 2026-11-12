@@ -159,9 +159,9 @@ class PublishingEligibilityServiceTest {
         ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
         ArgumentCaptor<LocalDateTime> to = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(announcements).countPublishedInPeriod(eq(userId), from.capture(), to.capture());
-        assertThat(from.getValue()).isEqualTo(LocalDateTime.of(2026, 11, 1, 0, 0));
-        // Intervalle semi-ouvert : le 1er du mois suivant à 00:00 est exclu.
-        assertThat(to.getValue()).isEqualTo(LocalDateTime.of(2026, 12, 1, 0, 0));
+        assertThat(from.getValue()).isEqualTo(LocalDateTime.of(2026, 10, 31, 23, 0));
+        // Intervalle semi-ouvert : minuit Paris du mois suivant (23:00 UTC en hiver) est exclu.
+        assertThat(to.getValue()).isEqualTo(LocalDateTime.of(2026, 11, 30, 23, 0));
     }
 
     @Test
@@ -170,6 +170,18 @@ class PublishingEligibilityServiceTest {
                 Clock.fixed(Instant.parse("2026-12-31T22:00:00Z"), ZoneId.of("UTC")));
 
         assertThat(decembre.evaluate(user).resetsOn()).isEqualTo(LocalDate.of(2027, 1, 1));
+    }
+
+    @Test
+    void mois_suitMinuitParis_pasMinuitUtc() {
+        // 23:30 UTC le 31/12 = 00:30 le 1er janvier à Paris : le mois compté est déjà janvier.
+        PublishingEligibilityService passage = new PublishingEligibilityService(announcements, applications, users,
+                Clock.fixed(Instant.parse("2026-12-31T23:30:00Z"), ZoneId.of("UTC")));
+
+        assertThat(passage.evaluate(user).resetsOn()).isEqualTo(LocalDate.of(2027, 2, 1));
+        ArgumentCaptor<LocalDateTime> from = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(announcements).countPublishedInPeriod(eq(userId), from.capture(), any());
+        assertThat(from.getValue()).isEqualTo(LocalDateTime.of(2026, 12, 31, 23, 0));
     }
 
     // ── Verrou de la ligne utilisateur (course entre deux publications simultanées) ──
