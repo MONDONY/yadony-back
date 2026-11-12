@@ -59,10 +59,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ProblemDetail> handleValidation(MethodArgumentNotValidException ex) {
+        Messages messages = messagesResolver.forRequestEnglishByDefault();
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.UNPROCESSABLE_ENTITY, "Validation failed");
+                HttpStatus.UNPROCESSABLE_ENTITY, messages.get("problem.validation.detail"));
         problem.setType(URI.create(BASE_TYPE + "validation"));
-        problem.setTitle("Validation Error");
+        problem.setTitle(messages.get("problem.validation.title"));
 
         Map<String, String> violations = ex.getBindingResult().getFieldErrors().stream()
                 .collect(Collectors.toMap(
@@ -89,10 +90,12 @@ public class GlobalExceptionHandler {
                                 v -> leafOf(v.getPropertyPath() == null ? "" : v.getPropertyPath().toString()),
                                 v -> v.getMessage() == null ? "invalide" : v.getMessage(),
                                 (first, second) -> first));
+        // Sans Accept-Language : détail français et titre anglais, comme avant la localisation.
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.UNPROCESSABLE_ENTITY, "Paramètres de requête invalides");
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                messagesResolver.forRequest().get("problem.validation.constraint.detail"));
         problem.setType(URI.create(BASE_TYPE + "validation"));
-        problem.setTitle("Constraint Violation");
+        problem.setTitle(messagesResolver.forRequestEnglishByDefault().get("problem.validation.constraint.title"));
         problem.setProperty("violations", violations);
         return ResponseEntity.unprocessableEntity().body(problem);
     }

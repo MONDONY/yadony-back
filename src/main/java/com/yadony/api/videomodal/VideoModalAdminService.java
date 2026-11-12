@@ -470,8 +470,9 @@ public class VideoModalAdminService {
     }
 
     private static String requireVideoId(String url) {
-        return YoutubeUrls.videoId(url).orElseThrow(() -> invalid("video-modal-invalid-youtube-url",
-                "Lien YouTube non reconnu (youtu.be/ID, youtube.com/watch?v=ID, /shorts/ID ou /embed/ID)"));
+        return YoutubeUrls.videoId(url).orElseThrow(() -> YadonyBusinessException.localized(
+                HttpStatus.UNPROCESSABLE_ENTITY, "video-modal-invalid-youtube-url",
+                "problem.video-modal-invalid-youtube-url"));
     }
 
     private static YadonyBusinessException invalid(String code, String detail) {

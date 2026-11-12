@@ -9,4 +9,4 @@ routes:
 Il y a deux façons de répéter un trajet.
 Dans Activités › Modèles de trajet, ouvrez un modèle puis « Programmer la récurrence » : choisissez les jours de répétition et l'heure de départ, puis « Activer la récurrence » pour que les trajets à venir soient publiés automatiquement.
 Ou, après avoir publié un trajet, touchez « Rendre ce trajet récurrent » et choisissez d'autres dates (12 au maximum) : le même trajet est préparé pour chacune, publié ou en brouillon.
-Cette entrée est aussi dans le menu ⋮ d'un trajet existant, publié ou terminé. Elle n'existe que pour un trajet direct : un voyage à étapes ne peut pas être répété.
+Cette entrée est aussi dans le menu ⋮ d'un trajet existant, publié ou terminé. Elle n'existe que pour un trajet direct : un voyage à étapes ne peut pas être répété. Si votre limite mensuelle de trajets est atteinte, on peut toujours enregistrer un brouillon : seule la publication est bloquée, jusqu'au mois suivant ou jusqu'au statut GP Pro.

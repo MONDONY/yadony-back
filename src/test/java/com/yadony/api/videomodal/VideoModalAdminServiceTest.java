@@ -112,6 +112,8 @@ class VideoModalAdminServiceTest {
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
                     assertThat(e.getErrorCode()).isEqualTo("video-modal-invalid-youtube-url");
+                    assertThat(e.getMessage()).contains("https");
+                    assertThat(e.getDetail(com.yadony.api.common.i18n.TestMessages.en())).contains("https");
                 });
         var c = campaign(1, VideoModalAudience.NEVER_ANSWERED);
         ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
