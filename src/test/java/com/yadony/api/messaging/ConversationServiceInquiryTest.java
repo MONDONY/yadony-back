@@ -73,7 +73,7 @@ class ConversationServiceInquiryTest {
         lenient().when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(announcement));
         lenient().when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
                 .thenReturn(Optional.empty());
-        lenient().when(conversationRepository.save(any(ConversationEntity.class))).thenAnswer(inv -> {
+        lenient().when(conversationRepository.saveAndFlush(any(ConversationEntity.class))).thenAnswer(inv -> {
             ConversationEntity c = inv.getArgument(0);
             if (c.getId() == null) {
                 ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
@@ -103,9 +103,9 @@ class ConversationServiceInquiryTest {
                 .containsEntry("senderName", "Fatou D.")
                 .containsEntry("travelerName", "Moussa K.")
                 .containsKeys("createdAt", "lastMessageAt", "lastMessagePreview");
-        verify(firestoreService).addSystemMessage(eq("conv_inq_" + conv.getId()), anyString());
+        verify(firestoreService, never()).addSystemMessage(anyString(), anyString());
         verify(auditService).log(eq("conversation"), eq(conv.getId()), eq("INQUIRY_CREATED"), eq(askerId), anyMap());
-        verify(blockVisibility).assertVisible(askerId, ownerId);
+        verify(blockVisibility).isHidden(askerId, ownerId);
     }
 
     @Test
@@ -117,7 +117,7 @@ class ConversationServiceInquiryTest {
         ConversationEntity second = service.getOrCreateInquiry(askerId, announcementId);
 
         assertThat(second).isSameAs(first);
-        verify(conversationRepository, times(1)).save(any(ConversationEntity.class));
+        verify(conversationRepository, times(1)).saveAndFlush(any(ConversationEntity.class));
         verify(firestoreService, times(1)).createConversation(anyString(), anyMap());
     }
 
@@ -129,7 +129,7 @@ class ConversationServiceInquiryTest {
                 .thenReturn(Optional.of(promoted));
 
         assertThat(service.getOrCreateInquiry(askerId, announcementId)).isSameAs(promoted);
-        verify(conversationRepository, never()).save(any(ConversationEntity.class));
+        verify(conversationRepository, never()).saveAndFlush(any(ConversationEntity.class));
     }
 
     @Test
@@ -137,7 +137,98 @@ class ConversationServiceInquiryTest {
         doThrow(new RuntimeException("boom")).when(firestoreService).createConversation(anyString(), anyMap());
 
         assertThat(service.getOrCreateInquiry(askerId, announcementId)).isNotNull();
-        verify(conversationRepository, times(1)).save(any(ConversationEntity.class));
+        verify(conversationRepository, times(1)).saveAndFlush(any(ConversationEntity.class));
+        verify(auditService).log(eq("conversation"), any(UUID.class), eq("INQUIRY_CREATED"), eq(askerId), anyMap());
+    }
+
+    @Test
+    void existingThreadWithHiddenCounterpartIsSilent404() {
+        ConversationEntity existing = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_x");
+        when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
+                .thenReturn(Optional.of(existing));
+        doThrow(YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "conversation-not-found", "problem.conversation-not-found"))
+                .when(blockVisibility).assertVisible(askerId, ownerId);
+
+        assertThatThrownBy(() -> service.getOrCreateInquiry(askerId, announcementId))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void concurrentDoubleCallReturnsTheWinningThread() {
+        ConversationEntity winner = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_w");
+        when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
+                .thenReturn(Optional.empty(), Optional.of(winner));
+        when(conversationRepository.saveAndFlush(any(ConversationEntity.class)))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("conversations_inquiry_active_idx"));
+
+        assertThat(service.getOrCreateInquiry(askerId, announcementId)).isSameAs(winner);
+        verify(firestoreService, never()).createConversation(anyString(), anyMap());
+    }
+
+    @Test
+    void refusesWhenAskerMissing() {
+        when(userRepository.findById(askerId)).thenReturn(Optional.empty());
+
+        assertError(HttpStatus.FORBIDDEN, "kyc-required");
+    }
+
+    @Test
+    void refusesWhenOwnerAccountDeleted() {
+        when(userRepository.findById(ownerId)).thenReturn(Optional.empty());
+
+        assertError(HttpStatus.NOT_FOUND, "conversation-counterpart-deleted");
+    }
+
+    @Test
+    void draftAnnouncementIsSilent404() {
+        when(announcement.getStatus()).thenReturn(AnnouncementStatus.DRAFT);
+
+        assertError(HttpStatus.NOT_FOUND, "announcement-not-found");
+    }
+
+    @Test
+    void fullAnnouncementIsClosed() {
+        when(announcement.getStatus()).thenReturn(AnnouncementStatus.FULL);
+
+        assertError(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed");
+    }
+
+    @Test
+    void inProgressAnnouncementIsClosed() {
+        when(announcement.getStatus()).thenReturn(AnnouncementStatus.IN_PROGRESS);
+
+        assertError(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed");
+    }
+
+    @Test
+    void repairRecreatesInquiryFieldsInFirestore() {
+        ConversationEntity conv = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_inq_r");
+        when(firestoreService.conversationExists("conv_inq_r")).thenReturn(false);
+
+        service.ensureFirestoreDocument(conv);
+
+        ArgumentCaptor<Map<String, Object>> data = ArgumentCaptor.forClass(Map.class);
+        verify(firestoreService).createConversation(eq("conv_inq_r"), data.capture());
+        assertThat(data.getValue())
+                .containsEntry("kind", "INQUIRY")
+                .containsEntry("askerId", "uid-asker")
+                .containsEntry("quotaLifted", false)
+                .containsEntry("announcementId", announcementId.toString())
+                .containsEntry("senderId", "uid-asker")
+                .containsEntry("travelerId", "uid-owner");
+    }
+
+    @Test
+    void repairOfOrdinaryConversationDoesNotAddInquiryFields() {
+        ConversationEntity conv = new ConversationEntity(UUID.randomUUID(), askerId, ownerId, "conv_o");
+        when(firestoreService.conversationExists("conv_o")).thenReturn(false);
+
+        service.ensureFirestoreDocument(conv);
+
+        ArgumentCaptor<Map<String, Object>> data = ArgumentCaptor.forClass(Map.class);
+        verify(firestoreService).createConversation(eq("conv_o"), data.capture());
+        assertThat(data.getValue()).doesNotContainKeys("kind", "askerId", "quotaLifted", "announcementId");
     }
 
     @Test
@@ -185,11 +276,9 @@ class ConversationServiceInquiryTest {
 
     @Test
     void refusesWhenCounterpartIsHidden() {
-        doThrow(YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "blocked", "problem.conversation-not-found"))
-                .when(blockVisibility).assertVisible(askerId, ownerId);
+        when(blockVisibility.isHidden(askerId, ownerId)).thenReturn(true);
 
-        assertError(HttpStatus.FORBIDDEN, "blocked");
-        verify(conversationRepository, never()).save(any(ConversationEntity.class));
+        assertError(HttpStatus.NOT_FOUND, "announcement-not-found");
     }
 
     private void assertError(HttpStatus status, String code) {
@@ -198,7 +287,7 @@ class ConversationServiceInquiryTest {
                     assertThat(e.getStatus()).isEqualTo(status);
                     assertThat(e.getErrorCode()).isEqualTo(code);
                 });
-        verify(conversationRepository, never()).save(any(ConversationEntity.class));
+        verify(conversationRepository, never()).saveAndFlush(any(ConversationEntity.class));
     }
 
     private static UserEntity user(String uid, String name, KycStatus kyc) {

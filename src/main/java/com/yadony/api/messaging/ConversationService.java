@@ -11,6 +11,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
+import com.yadony.api.matching.DepartureRules;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -25,7 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -167,6 +167,8 @@ public class ConversationService {
         Optional<ConversationEntity> existing =
             conversationRepository.findByAskerAndAnnouncement(askerId, announcementId);
         if (existing.isPresent()) {
+            // Un fil dont la contrepartie est masquée n'existe plus pour l'appelant : 404 silencieux.
+            blockVisibility.assertVisible(askerId, otherUserId(existing.get(), askerId));
             return existing.get();
         }
 
@@ -180,24 +182,33 @@ public class ConversationService {
         }
 
         AnnouncementEntity announcement = announcementRepository.findById(announcementId)
-            .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
+            .orElseThrow(ConversationService::announcementNotFound);
         UUID ownerId = announcement.getTravelerId();
+        // Blocage et brouillon restent silencieux : même 404 qu'une annonce inconnue.
+        if (blockVisibility.isHidden(askerId, ownerId) || announcement.getStatus() == AnnouncementStatus.DRAFT) {
+            throw announcementNotFound();
+        }
         if (askerId.equals(ownerId)) {
             throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "inquiry-own-announcement", "problem.inquiry-own-announcement");
         }
-        if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())
-                || announcement.getDepartureDate().isBefore(LocalDate.now())) {
+        // Liste blanche : seul un trajet ACTIVE ouvre une conversation de questions.
+        if (announcement.getStatus() != AnnouncementStatus.ACTIVE
+                || DepartureRules.hasDeparted(announcement, Instant.now())) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed", "problem.inquiry-announcement-closed");
         }
-
-        blockVisibility.assertVisible(askerId, ownerId);
 
         UserEntity owner = userRepository.findById(ownerId)
             .orElseThrow(ConversationService::counterpartDeleted);
 
         // Identifiant provisoire : l'UUID de la conversation n'existe qu'après l'insertion.
-        ConversationEntity saved = conversationRepository.save(ConversationEntity.forInquiry(
-            askerId, announcementId, ownerId, "conv_inq_pending_" + UUID.randomUUID()));
+        ConversationEntity saved;
+        try {
+            saved = conversationRepository.saveAndFlush(ConversationEntity.forInquiry(
+                askerId, announcementId, ownerId, "conv_inq_pending_" + UUID.randomUUID()));
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Double appel concurrent : l'index unique des fils actifs a joué, on renvoie le gagnant.
+            return conversationRepository.findByAskerAndAnnouncement(askerId, announcementId).orElseThrow(() -> e);
+        }
         String firestoreId = "conv_inq_" + saved.getId();
         saved.assignFirestoreConversationId(firestoreId);
 
@@ -219,12 +230,15 @@ public class ConversationService {
             data.put("lastMessageAt", now);
             data.put("lastMessagePreview", INQUIRY_WELCOME);
             firestoreService.createConversation(firestoreId, data);
-            firestoreService.addSystemMessage(firestoreId, INQUIRY_WELCOME);
         } catch (Exception e) {
             log.warn("Firestore inquiry init failed for announcement {}: {}", announcementId, e.getMessage());
         }
 
         return saved;
+    }
+
+    private static YadonyBusinessException announcementNotFound() {
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
     }
 
     private static YadonyBusinessException kycRequired() {
@@ -327,7 +341,16 @@ public class ConversationService {
                 data.put("senderId", sender.getFirebaseUid());
             }
             data.put("travelerId", traveler.getFirebaseUid());
-            if (conv.isRecipientConversation()) {
+            if (conv.getAskerId() != null) {
+                // Fil de questions : sans ces champs, les règles Firestore le traiteraient comme
+                // une conversation ordinaire (plafond de 10 messages perdu).
+                data.put("kind", conv.getKind().name());
+                data.put("askerId", sender.getFirebaseUid());
+                data.put("quotaLifted", conv.isQuotaLifted());
+                if (conv.getAnnouncementId() != null) {
+                    data.put("announcementId", conv.getAnnouncementId().toString());
+                }
+            } else if (conv.isRecipientConversation()) {
                 data.put("kind", ConversationKind.RECIPIENT_TRAVELER.name());
             }
             data.put("senderName",   fullName(sender));
