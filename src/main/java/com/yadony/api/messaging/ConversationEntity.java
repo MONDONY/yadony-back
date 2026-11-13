@@ -98,7 +98,10 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "asker_id")
     private UUID askerId;
 
-    /** Quota de messages INQUIRY levé (bid créé) ; nul tant que le quota s'applique. */
+    /**
+     * Quota de messages INQUIRY levé (bid créé) ; nul tant que le quota s'applique. Posé et retiré
+     * uniquement par les UPDATE gardés de promotion et de reverrouillage.
+     */
     @Column(name = "quota_lifted_at")
     private LocalDateTime quotaLiftedAt;
 
@@ -107,6 +110,8 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "inquiry_first_message_at", insertable = false, updatable = false)
     private LocalDateTime inquiryFirstMessageAt;
 
+    // Écrit uniquement par les UPDATE ciblés de ConversationRepository (promotion, reverrouillage,
+    // activité INQUIRY) et lu par la purge des INQUIRY inactives.
     @Column(name = "last_activity_at")
     private LocalDateTime lastActivityAt;
 
@@ -146,32 +151,6 @@ public class ConversationEntity extends BaseEntity {
 
     public boolean isQuotaLifted() {
         return quotaLiftedAt != null;
-    }
-
-    /** Un bid est créé : la conversation INQUIRY ouverte devient SENDER_TRAVELER et le quota est levé. */
-    public void promoteToBid(UUID bidId, LocalDateTime at) {
-        Objects.requireNonNull(bidId, "bidId");
-        if (kind != ConversationKind.INQUIRY || isClosed()) {
-            throw new IllegalStateException("Seule une conversation INQUIRY ouverte peut être promue");
-        }
-        this.bidId = bidId;
-        this.kind = ConversationKind.SENDER_TRAVELER;
-        this.quotaLiftedAt = at;
-        this.lastActivityAt = at;
-    }
-
-    /** Le bid est annulé : retour à INQUIRY, sans bid, quota réappliqué. */
-    public void relockToInquiry(LocalDateTime at) {
-        if (kind != ConversationKind.SENDER_TRAVELER || isClosed()
-                || announcementId == null || askerId == null) {
-            throw new IllegalStateException(
-                    "Seule une conversation promue et ouverte (announcement_id et asker_id renseignés) "
-                            + "peut être re-verrouillée en INQUIRY");
-        }
-        this.bidId = null;
-        this.kind = ConversationKind.INQUIRY;
-        this.quotaLiftedAt = null;
-        this.lastActivityAt = at;
     }
 
     public boolean isRecipientConversation() {
@@ -317,9 +296,6 @@ public class ConversationEntity extends BaseEntity {
 
     public UUID getAnnouncementId() { return announcementId; }
     public UUID getAskerId() { return askerId; }
-    public LocalDateTime getQuotaLiftedAt() { return quotaLiftedAt; }
-    public LocalDateTime getInquiryFirstMessageAt() { return inquiryFirstMessageAt; }
-    public LocalDateTime getLastActivityAt() { return lastActivityAt; }
 
     public LocalDateTime getTravelerLastMessageAt() { return travelerLastMessageAt; }
 }

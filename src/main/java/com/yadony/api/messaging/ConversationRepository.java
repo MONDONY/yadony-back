@@ -52,13 +52,6 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "AND c.kind = com.yadony.api.messaging.ConversationKind.RECIPIENT_TRAVELER AND c.closedAt IS NOT NULL")
     boolean existsRevokedForRecipient(@Param("id") UUID id, @Param("userId") UUID userId);
 
-    /** Conversation INQUIRY ouverte du couple (demandeur, annonce) ; ni supprimée ni fermée. */
-    @Query("SELECT c FROM ConversationEntity c WHERE c.askerId = :askerId AND c.announcementId = :announcementId " +
-           "AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.closedAt IS NULL " +
-           "AND c.deletedAt IS NULL")
-    Optional<ConversationEntity> findInquiry(@Param("askerId") UUID askerId,
-                                             @Param("announcementId") UUID announcementId);
-
     /**
      * Conversation ouverte du couple (demandeur, annonce), tous types (INQUIRY ou déjà promue en
      * SENDER_TRAVELER) ; ni supprimée ni fermée. Sert à ne jamais en créer une seconde.

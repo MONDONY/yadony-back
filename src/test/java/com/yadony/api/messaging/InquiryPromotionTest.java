@@ -125,7 +125,7 @@ class InquiryPromotionTest {
     @Test
     void alreadyPromotedThread_isLeftUntouched() {
         UUID firstBid = UUID.randomUUID();
-        inquiry.promoteToBid(firstBid, LocalDateTime.now());
+        InquiryTestFixtures.promoted(inquiry, firstBid, LocalDateTime.now());
 
         assertThat(service.promoteInquiryToBid(askerId, announcementId, bidId)).isFalse();
 
@@ -159,7 +159,7 @@ class InquiryPromotionTest {
 
     @Test
     void ensureFirestoreDocument_repairsAPromotedThreadWithConsistentFields() {
-        inquiry.promoteToBid(bidId, LocalDateTime.now());
+        InquiryTestFixtures.promoted(inquiry, bidId, LocalDateTime.now());
         UserEntity asker = user("uid-asker");
         UserEntity owner = user("uid-owner");
         when(userRepository.findById(askerId)).thenReturn(Optional.of(asker));

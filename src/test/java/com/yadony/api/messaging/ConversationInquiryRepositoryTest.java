@@ -10,11 +10,10 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Modèle INQUIRY (V383) côté JPA : {@code findInquiry}, participants, promotion et
- * re-verrouillage. Les contraintes SQL (unicité, CHECK) sont vérifiées sur un vrai PostgreSQL
+ * Modèle INQUIRY (V383) côté JPA : {@code findByAskerAndAnnouncement}, participants, promotion et
+ * re-verrouillage par UPDATE gardés. Les contraintes SQL (unicité, CHECK) sont vérifiées sur un vrai PostgreSQL
  * dans {@link ConversationInquirySchemaIT}, le profil test tournant sur H2 sans Flyway.
  */
 @SpringBootTest
@@ -30,12 +29,12 @@ class ConversationInquiryRepositoryTest {
     }
 
     @Test
-    void findInquiry_returnsTheConversationOfTheAskerAnnouncementPair() {
+    void findByAskerAndAnnouncement_returnsTheInquiryOfTheAskerAnnouncementPair() {
         UUID asker = UUID.randomUUID(), announcement = UUID.randomUUID(), owner = UUID.randomUUID();
         ConversationEntity saved = newInquiry(asker, announcement, owner);
         newInquiry(UUID.randomUUID(), announcement, owner); // autre demandeur, même annonce
 
-        ConversationEntity found = repo.findInquiry(asker, announcement).orElseThrow();
+        ConversationEntity found = repo.findByAskerAndAnnouncement(asker, announcement).orElseThrow();
 
         assertThat(found.getId()).isEqualTo(saved.getId());
         assertThat(found.isInquiry()).isTrue();
@@ -47,22 +46,22 @@ class ConversationInquiryRepositoryTest {
         assertThat(found.getTravelerId()).isEqualTo(owner);
         assertThat(found.getAnnouncementId()).isEqualTo(announcement);
         assertThat(found.isQuotaLifted()).isFalse();
-        assertThat(repo.findInquiry(UUID.randomUUID(), announcement)).isEmpty();
+        assertThat(repo.findByAskerAndAnnouncement(UUID.randomUUID(), announcement)).isEmpty();
     }
 
     @Test
-    void findInquiry_ignoresClosedAndDeletedThreads() {
+    void findByAskerAndAnnouncement_ignoresClosedAndDeletedThreads() {
         UUID asker = UUID.randomUUID(), announcement = UUID.randomUUID();
         ConversationEntity closed = newInquiry(asker, announcement, UUID.randomUUID());
         closed.close(LocalDateTime.now(ZoneOffset.UTC));
         repo.saveAndFlush(closed);
-        assertThat(repo.findInquiry(asker, announcement)).isEmpty();
+        assertThat(repo.findByAskerAndAnnouncement(asker, announcement)).isEmpty();
 
         UUID asker2 = UUID.randomUUID();
         ConversationEntity deleted = newInquiry(asker2, announcement, UUID.randomUUID());
         deleted.setDeletedAt(LocalDateTime.now(ZoneOffset.UTC));
         repo.saveAndFlush(deleted);
-        assertThat(repo.findInquiry(asker2, announcement)).isEmpty();
+        assertThat(repo.findByAskerAndAnnouncement(asker2, announcement)).isEmpty();
     }
 
     @Test
@@ -74,36 +73,40 @@ class ConversationInquiryRepositoryTest {
         assertThat(c.isInquiry()).isFalse();
         assertThat(c.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
         assertThat(repo.findByBidId(bid)).get().extracting(ConversationEntity::getId).isEqualTo(c.getId());
-        assertThat(repo.findInquiry(c.getSenderId(), UUID.randomUUID())).isEmpty();
+        assertThat(repo.findByAskerAndAnnouncement(c.getSenderId(), UUID.randomUUID())).isEmpty();
     }
 
+    // ── Promotion et reverrouillage : UPDATE gardés (aucun mutateur d'entité) ──
+
     @Test
-    void promoteToBid_thenRelock_roundTrips() {
+    void guardedPromotion_thenRelock_roundTrips() {
         UUID asker = UUID.randomUUID(), announcement = UUID.randomUUID(), bid = UUID.randomUUID();
         ConversationEntity c = newInquiry(asker, announcement, UUID.randomUUID());
         LocalDateTime at = LocalDateTime.now(ZoneOffset.UTC);
 
-        c.promoteToBid(bid, at);
-        repo.saveAndFlush(c);
+        assertThat(repo.promoteInquiryGuarded(c.getId(), bid, at)).isEqualTo(1);
         ConversationEntity promoted = repo.findByBidId(bid).orElseThrow();
+        assertThat(promoted.getId()).isEqualTo(c.getId());
         assertThat(promoted.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
         assertThat(promoted.isQuotaLifted()).isTrue();
-        assertThat(repo.findInquiry(asker, announcement)).isEmpty();
+        assertThat(promoted.getAskerId()).isEqualTo(asker);
+        assertThat(promoted.getAnnouncementId()).isEqualTo(announcement);
 
-        promoted.relockToInquiry(at.plusDays(1));
-        repo.saveAndFlush(promoted);
-        ConversationEntity relocked = repo.findInquiry(asker, announcement).orElseThrow();
+        assertThat(repo.relockInquiryGuarded(c.getId(), at.plusDays(1))).isEqualTo(1);
+        ConversationEntity relocked = repo.findByAskerAndAnnouncement(asker, announcement).orElseThrow();
         assertThat(relocked.getBidId()).isNull();
         assertThat(relocked.isQuotaLifted()).isFalse();
         assertThat(relocked.getKind()).isEqualTo(ConversationKind.INQUIRY);
+        assertThat(repo.findByBidId(bid)).isEmpty();
     }
 
     @Test
-    void relockToInquiry_withoutAnnouncementAndAsker_isRejected() {
-        ConversationEntity c = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "conv_plain");
-        assertThatThrownBy(() -> c.relockToInquiry(LocalDateTime.now(ZoneOffset.UTC)))
-                .isInstanceOf(IllegalStateException.class);
+    void guardedRelock_ofAThreadBornAtAcceptance_isRefused() {
+        ConversationEntity c = repo.saveAndFlush(new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), "conv_plain_" + UUID.randomUUID()));
+
+        assertThat(repo.relockInquiryGuarded(c.getId(), LocalDateTime.now(ZoneOffset.UTC))).isZero();
+        assertThat(repo.findById(c.getId()).orElseThrow().getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
     }
 
     @Test
@@ -113,65 +116,69 @@ class ConversationInquiryRepositoryTest {
         assertThat(repo.findByAskerAndAnnouncement(asker, announcement)).get()
                 .extracting(ConversationEntity::getId).isEqualTo(c.getId());
 
-        c.promoteToBid(UUID.randomUUID(), LocalDateTime.now(ZoneOffset.UTC));
-        repo.saveAndFlush(c);
-        assertThat(repo.findInquiry(asker, announcement)).isEmpty();
-        assertThat(repo.findByAskerAndAnnouncement(asker, announcement)).get()
-                .extracting(ConversationEntity::getId).isEqualTo(c.getId());
+        assertThat(repo.promoteInquiryGuarded(c.getId(), UUID.randomUUID(), LocalDateTime.now(ZoneOffset.UTC)))
+                .isEqualTo(1);
+        ConversationEntity promoted = repo.findByAskerAndAnnouncement(asker, announcement).orElseThrow();
+        assertThat(promoted.getId()).isEqualTo(c.getId());
+        assertThat(promoted.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
 
-        c.close(LocalDateTime.now(ZoneOffset.UTC));
-        repo.saveAndFlush(c);
+        promoted.close(LocalDateTime.now(ZoneOffset.UTC));
+        repo.saveAndFlush(promoted);
         assertThat(repo.findByAskerAndAnnouncement(asker, announcement)).isEmpty();
         assertThat(repo.findByAskerAndAnnouncement(UUID.randomUUID(), announcement)).isEmpty();
     }
 
     @Test
-    void promoteToBid_guards() {
+    void guardedPromotion_stateGuards() {
         LocalDateTime at = LocalDateTime.now(ZoneOffset.UTC);
-        ConversationEntity ok = ConversationEntity.forInquiry(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "c1");
-        ok.promoteToBid(UUID.randomUUID(), at);
-        assertThat(ok.getLastActivityAt()).isEqualTo(at);
-        assertThat(ok.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
+        ConversationEntity ok = newInquiry(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        assertThat(repo.promoteInquiryGuarded(ok.getId(), UUID.randomUUID(), at)).isEqualTo(1);
+        // Même paramètre :at pour la dernière activité et la levée du quota (comparé en SQL : aucun fuseau).
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM conversations WHERE id = ? "
+                + "AND last_activity_at = quota_lifted_at", Integer.class, ok.getId())).isEqualTo(1);
+        assertThat(repo.findById(ok.getId()).orElseThrow().getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
 
         // déjà promue
-        assertThatThrownBy(() -> ok.promoteToBid(UUID.randomUUID(), at)).isInstanceOf(IllegalStateException.class);
-        // bid nul
-        ConversationEntity fresh = ConversationEntity.forInquiry(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "c2");
-        assertThatThrownBy(() -> fresh.promoteToBid(null, at)).isInstanceOf(NullPointerException.class);
+        assertThat(repo.promoteInquiryGuarded(ok.getId(), UUID.randomUUID(), at)).isZero();
         // fermée
-        ConversationEntity closed = ConversationEntity.forInquiry(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "c3");
+        ConversationEntity closed = newInquiry(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         closed.close(at);
-        assertThatThrownBy(() -> closed.promoteToBid(UUID.randomUUID(), at)).isInstanceOf(IllegalStateException.class);
+        repo.saveAndFlush(closed);
+        assertThat(repo.promoteInquiryGuarded(closed.getId(), UUID.randomUUID(), at)).isZero();
         // autre type
-        ConversationEntity plain = new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "c4");
-        assertThatThrownBy(() -> plain.promoteToBid(UUID.randomUUID(), at)).isInstanceOf(IllegalStateException.class);
+        ConversationEntity plain = repo.saveAndFlush(new ConversationEntity(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), "conv_plain_" + UUID.randomUUID()));
+        assertThat(repo.promoteInquiryGuarded(plain.getId(), UUID.randomUUID(), at)).isZero();
+        assertThat(repo.findById(closed.getId()).orElseThrow().getKind()).isEqualTo(ConversationKind.INQUIRY);
     }
 
     @Test
-    void relockToInquiry_guards() {
+    void guardedRelock_stateGuards() {
         LocalDateTime at = LocalDateTime.now(ZoneOffset.UTC);
         // INQUIRY non promue : refus
-        ConversationEntity inquiry = ConversationEntity.forInquiry(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "r1");
-        assertThatThrownBy(() -> inquiry.relockToInquiry(at)).isInstanceOf(IllegalStateException.class);
+        ConversationEntity inquiry = newInquiry(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        assertThat(repo.relockInquiryGuarded(inquiry.getId(), at)).isZero();
         // promue puis fermée : refus
-        ConversationEntity closed = ConversationEntity.forInquiry(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "r2");
-        closed.promoteToBid(UUID.randomUUID(), at);
-        closed.close(at);
-        assertThatThrownBy(() -> closed.relockToInquiry(at)).isInstanceOf(IllegalStateException.class);
-        // promue : ok
-        ConversationEntity promoted = ConversationEntity.forInquiry(UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), "r3");
-        promoted.promoteToBid(UUID.randomUUID(), at);
-        promoted.relockToInquiry(at.plusDays(1));
-        assertThat(promoted.isInquiry()).isTrue();
-        assertThat(promoted.getBidId()).isNull();
-        assertThat(promoted.getLastActivityAt()).isEqualTo(at.plusDays(1));
+        ConversationEntity closed = newInquiry(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        assertThat(repo.promoteInquiryGuarded(closed.getId(), UUID.randomUUID(), at)).isEqualTo(1);
+        ConversationEntity reloaded = repo.findById(closed.getId()).orElseThrow();
+        reloaded.close(at);
+        repo.saveAndFlush(reloaded);
+        assertThat(repo.relockInquiryGuarded(closed.getId(), at)).isZero();
+        // promue : ok, plus de bid, dernière activité avancée
+        ConversationEntity promoted = newInquiry(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        assertThat(repo.promoteInquiryGuarded(promoted.getId(), UUID.randomUUID(), at)).isEqualTo(1);
+        LocalDateTime activityAtPromotion = lastActivityAt(promoted);
+        assertThat(repo.relockInquiryGuarded(promoted.getId(), at.plusDays(1))).isEqualTo(1);
+        ConversationEntity relocked = repo.findById(promoted.getId()).orElseThrow();
+        assertThat(relocked.isInquiry()).isTrue();
+        assertThat(relocked.getBidId()).isNull();
+        assertThat(lastActivityAt(promoted)).isAfter(activityAtPromotion);
+    }
+
+    private LocalDateTime lastActivityAt(ConversationEntity c) {
+        return jdbc.queryForObject("SELECT last_activity_at FROM conversations WHERE id = ?",
+                LocalDateTime.class, c.getId());
     }
 
     @Test

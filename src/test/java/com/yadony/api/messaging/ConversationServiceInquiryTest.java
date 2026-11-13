@@ -283,7 +283,7 @@ class ConversationServiceInquiryTest {
     @Test
     void returnsExistingConversationEvenIfAlreadyPromotedToBid() {
         ConversationEntity promoted = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_x");
-        promoted.promoteToBid(UUID.randomUUID(), java.time.LocalDateTime.now());
+        InquiryTestFixtures.promoted(promoted, UUID.randomUUID(), java.time.LocalDateTime.now());
         when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
                 .thenReturn(Optional.of(promoted));
 

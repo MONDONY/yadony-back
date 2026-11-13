@@ -69,7 +69,7 @@ class InquiryRelockTest {
         listener = new InquiryPromotionListener(service, bidRepository);
         conv = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_inq_abc");
         ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
-        conv.promoteToBid(bidId, LocalDateTime.now());
+        InquiryTestFixtures.promoted(conv, bidId, LocalDateTime.now());
         lenient().when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.of(conv));
         stubGuardedRelock();
         lenient().when(bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
@@ -82,7 +82,7 @@ class InquiryRelockTest {
             if (conv.getKind() != ConversationKind.SENDER_TRAVELER) {
                 return 0;
             }
-            conv.relockToInquiry(inv.getArgument(1));
+            InquiryTestFixtures.relocked(conv, inv.getArgument(1));
             return 1;
         });
     }
@@ -144,7 +144,7 @@ class InquiryRelockTest {
                 BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING}) {
             reset(conversationRepository, firestoreService, auditService);
             if (conv.isInquiry()) {
-                conv.promoteToBid(bidId, LocalDateTime.now());
+                InquiryTestFixtures.promoted(conv, bidId, LocalDateTime.now());
             }
             when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.of(conv));
             stubGuardedRelock();

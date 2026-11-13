@@ -153,17 +153,17 @@ class ConversationInquiryControllerIntegrationTest {
         notifyMessage(conv, owner);
         mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(owner))))
                 .andExpect(jsonPath("$.content[*].id", not(hasItem(id.toString()))));
-        assertThat(conversationRepository.findById(id).orElseThrow().getLastActivityAt()).isNotNull();
-        assertThat(conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt()).isNull();
+        assertThat(column(id, "last_activity_at")).isNotNull();
+        assertThat(column(id, "inquiry_first_message_at")).isNull();
 
         notifyMessage(conv, asker);
-        var first = conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt();
+        Object first = column(id, "inquiry_first_message_at");
         assertThat(first).isNotNull();
         mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(owner))))
                 .andExpect(jsonPath("$.content[*].id", hasItem(id.toString())));
 
         notifyMessage(conv, asker); // idempotent : la date du premier message ne bouge pas
-        assertThat(conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt()).isEqualTo(first);
+        assertThat(column(id, "inquiry_first_message_at")).isEqualTo(first);
     }
 
     @Test
@@ -267,13 +267,13 @@ class ConversationInquiryControllerIntegrationTest {
     void firstMessageDate_isNeverRewrittenByAnEntitySave() throws Exception {
         UUID id = open();
         ConversationEntity stale = conversationRepository.findById(id).orElseThrow();
-        assertThat(stale.getInquiryFirstMessageAt()).isNull();
+        assertThat(column(id, "inquiry_first_message_at")).isNull();
 
         conversationRepository.markInquiryFirstMessage(id, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
         stale.archiveForUser(asker.getId());
         conversationRepository.saveAndFlush(stale);
 
-        assertThat(conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt()).isNotNull();
+        assertThat(column(id, "inquiry_first_message_at")).isNotNull();
     }
 
     @Test
@@ -315,6 +315,11 @@ class ConversationInquiryControllerIntegrationTest {
 
         // Une nouvelle question ouvre un fil neuf : la ligne purgée ne revient pas.
         assertThat(open()).isNotEqualTo(id);
+    }
+
+    /** Colonnes écrites seulement par les UPDATE ciblés du dépôt : lues en SQL, l'entité ne les expose pas. */
+    private Object column(UUID id, String column) {
+        return jdbc.queryForObject("SELECT " + column + " FROM conversations WHERE id = ?", Object.class, id);
     }
 
     private void notifyMessage(ConversationEntity conv, UserEntity from) throws Exception {

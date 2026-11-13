@@ -8,8 +8,8 @@ import java.util.UUID;
 /**
  * État en mémoire d'une conversation de questions après les UPDATE gardés du dépôt
  * ({@link ConversationRepository#promoteInquiryGuarded}, {@link ConversationRepository#relockInquiryGuarded}),
- * pour les tests unitaires où le dépôt est simulé. En production, seuls ces UPDATE font basculer
- * une ligne.
+ * pour les tests unitaires où le dépôt est simulé. L'entité n'expose aucun mutateur pour ces champs :
+ * en production, seuls ces UPDATE font basculer une ligne.
  */
 final class InquiryTestFixtures {
 
