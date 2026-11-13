@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
@@ -40,8 +41,20 @@ class TripRecurrenceServiceTest {
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
-    @Mock TransportModeGuard transportModeGuard;
+    /**
+     * Garde RÉELLE (espion) : le refus des récurrences bateau est celui de la production, plus un mock qui
+     * laisse tout passer. Interrupteur bateau allumé pour isoler le refus « récurrence non prise en
+     * charge » de celui de l'interrupteur.
+     */
+    @Spy TransportModeGuard transportModeGuard = new TransportModeGuard(boatOpenSettings(), mock(BoatCarrierPolicy.class));
     @InjectMocks TripRecurrenceService service;
+
+    private static com.yadony.api.config.PlatformSettingsService boatOpenSettings() {
+        var settings = mock(com.yadony.api.config.PlatformSettingsService.class,
+                withSettings().strictness(org.mockito.quality.Strictness.LENIENT));
+        when(settings.transportBoatEnabled()).thenReturn(true);
+        return settings;
+    }
 
     private final UUID userId = UUID.randomUUID();
 
@@ -941,15 +954,44 @@ class TripRecurrenceServiceTest {
     }
 
     @Test
-    void update_existingBoatRecurrence_keepsBoat_guardSeesItAsPrevious() {
+    void create_boatRecurrence_isRefused422_boatTemplateUnsupported_andNothingIsSaved() {
+        assertThatThrownBy(() -> service.create(userId, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("boat-template-unsupported");
+                });
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+        verifyNoInteractions(auditService, eventPublisher);
+    }
+
+    @Test
+    void update_existingBoatRecurrence_staysBoat_isRefused422_boatTemplateUnsupported() {
         TripRecurrenceEntity existing = entity("1111111", 0, null);
         existing.setTransportMode("BOAT");
         UUID id = UUID.randomUUID();
         when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
 
-        service.update(userId, id, requestWithMode("BOAT"));
+        assertThatThrownBy(() -> service.update(userId, id, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("boat-template-unsupported");
+                });
 
-        verify(transportModeGuard).assertTripModeAllowed(TransportMode.BOAT, TransportMode.BOAT);
+        // Refusé même quand la récurrence est déjà bateau : ni modifiée ni enregistrée.
+        assertThat(existing.getTransportMode()).isEqualTo("BOAT");
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
+    }
+
+    @Test
+    void update_existingBoatRecurrence_toAnotherMode_isAccepted() {
+        TripRecurrenceEntity existing = entity("1111111", 0, null);
+        existing.setTransportMode("BOAT");
+        UUID id = UUID.randomUUID();
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+
+        var dto = service.update(userId, id, requestWithMode("PLANE"));
+
+        assertThat(dto.transportMode()).isEqualTo("PLANE");
         verify(repository).save(existing);
     }
 
@@ -1047,11 +1089,14 @@ class TripRecurrenceServiceTest {
     }
 
     @Test
-    void recurrence_boat_offset120_accepted_121_refused() {
-        assertThat(service.create(userId, seriesWith("BOAT", 5000, 120, null, null)).arrivalDayOffset())
-                .isEqualTo(120);
-        assertThatThrownBy(() -> service.create(userId, seriesWith("BOAT", 5000, 121, null, null)))
-                .satisfies(e -> assertBusiness(e, "arrival-too-far", "120"));
+    void recurrence_boat_isRefusedBeforeAnyDurationOrCapacityCheck() {
+        // Une traversée ne se répète pas à date fixe : refus 422 boat-template-unsupported avant les
+        // contrôles de durée et de capacité, aucune récurrence bateau n'existe à 120 ou 121 jours.
+        for (Integer offset : new Integer[] {null, 120, 121}) {
+            assertThatThrownBy(() -> service.create(userId, seriesWith("BOAT", 5000, offset, null, null)))
+                    .satisfies(e -> assertBusiness(e, "boat-template-unsupported", "bateau"));
+        }
+        verify(repository, never()).save(any(TripRecurrenceEntity.class));
     }
 
     // Review Focus 5 : la limite se contrôle à l'enregistrement, pas à la génération (où elle
@@ -1097,10 +1142,6 @@ class TripRecurrenceServiceTest {
         var road = service.create(userId, seriesWith("BUS", 800, null, "m", 25.0));
         assertThat(road.maxItemSize()).isEqualTo("M");
         assertThat(road.maxParcelWeightKg()).isEqualTo(25.0);
-
-        var boat = service.create(userId, seriesWith("BOAT", 5000, null, "M", 900.0));
-        assertThat(boat.maxItemSize()).isNull();
-        assertThat(boat.maxParcelWeightKg()).isEqualTo(900.0);
 
         var plane = service.create(userId, seriesWith("PLANE", 23, null, "M", 12.0));
         assertThat(plane.maxItemSize()).isNull();

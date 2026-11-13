@@ -11,6 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalTime;
@@ -29,7 +30,14 @@ class TripTemplateServiceTest {
     @Mock TripTemplateRepository repository;
     @Mock AuditService auditService;
     @Mock com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
-    @Mock com.yadony.api.matching.TransportModeGuard transportModeGuard;
+    /**
+     * Garde RÉELLE (espion) : le refus des modèles bateau et l'ordre des contrôles sont ceux de la
+     * production, plus un mock qui laisse tout passer. Interrupteur bateau allumé pour isoler le refus
+     * « modèle non pris en charge » de celui de l'interrupteur.
+     */
+    @Spy com.yadony.api.matching.TransportModeGuard transportModeGuard =
+            new com.yadony.api.matching.TransportModeGuard(boatOpenSettings(),
+                    mock(com.yadony.api.matching.BoatCarrierPolicy.class));
     @InjectMocks TripTemplateService service;
 
     // Mockito renvoie null pour un retour String non stubé, et non Optional.empty() :
@@ -38,6 +46,13 @@ class TripTemplateServiceTest {
     void stubDefaultActiveCurrency() {
         lenient().when(activeCurrencyResolver.resolve(org.mockito.ArgumentMatchers.any()))
                 .thenReturn("EUR");
+    }
+
+    private static com.yadony.api.config.PlatformSettingsService boatOpenSettings() {
+        var settings = mock(com.yadony.api.config.PlatformSettingsService.class,
+                withSettings().strictness(org.mockito.quality.Strictness.LENIENT));
+        when(settings.transportBoatEnabled()).thenReturn(true);
+        return settings;
     }
 
     private final UUID userId = UUID.randomUUID();
@@ -94,7 +109,18 @@ class TripTemplateServiceTest {
     }
 
     @Test
-    void update_existingBoatTemplate_guardSeesBoatAsPrevious() {
+    void create_boatTemplate_isRefused422_boatTemplateUnsupported_andNothingIsSaved() {
+        assertThatThrownBy(() -> service.create(userId, requestWithMode("BOAT")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("boat-template-unsupported");
+                });
+        verify(repository, never()).save(any(TripTemplateEntity.class));
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void update_existingBoatTemplate_staysBoat_isRefused422_boatTemplateUnsupported() {
         TripTemplateEntity existing = new TripTemplateEntity();
         existing.setUserId(userId);
         existing.setTransportMode("BOAT");
@@ -105,10 +131,32 @@ class TripTemplateServiceTest {
                 "BOAT", "SUITCASE_23KG", 23, 8.0, List.of(), false, null,
                 null, null, null, null, null, null, null, null, null, null, null, null);
 
-        service.update(userId, id, request);
+        assertThatThrownBy(() -> service.update(userId, id, request))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("boat-template-unsupported");
+                });
 
-        verify(transportModeGuard).assertTripModeAllowed(
-                com.yadony.api.matching.TransportMode.BOAT, com.yadony.api.matching.TransportMode.BOAT);
+        // Refusé même quand le modèle est déjà bateau : l'entité n'est ni modifiée ni enregistrée.
+        assertThat(existing.getTransportMode()).isEqualTo("BOAT");
+        verify(repository, never()).save(any(TripTemplateEntity.class));
+    }
+
+    @Test
+    void update_existingBoatTemplate_toAnotherMode_isAccepted() {
+        TripTemplateEntity existing = new TripTemplateEntity();
+        existing.setUserId(userId);
+        existing.setTransportMode("BOAT");
+        UUID id = UUID.randomUUID();
+        when(repository.findByUserIdAndId(userId, id)).thenReturn(Optional.of(existing));
+        var request = new UpdateTripTemplateRequest(
+                "Mon Paris->Dakar", "🇸🇳", "Paris", 48.85, 2.35, "Dakar", 14.71, -17.46,
+                "PLANE", "SUITCASE_23KG", 23, 8.0, List.of(), false, null,
+                null, null, null, null, null, null, null, null, null, null, null, null);
+
+        var dto = service.update(userId, id, request);
+
+        assertThat(dto.transportMode()).isEqualTo("PLANE");
         verify(repository).save(existing);
     }
 
@@ -242,12 +290,12 @@ class TripTemplateServiceTest {
 
         var req = new UpdateTripTemplateRequest(
                 "new label", null, "Marseille", null, null, "Dakar", null, null,
-                "BOAT", "KG_FREE", 30, 9.0, List.of("Documents"), true, java.time.LocalTime.of(18, 30),
+                "CAR", "KG_FREE", 30, 9.0, List.of("Documents"), true, java.time.LocalTime.of(18, 30),
                 null, null, null, null, null, null, null, null, null, null, null, null);
         var dto = service.update(userId, id, req);
 
         assertThat(dto.label()).isEqualTo("new label");
-        assertThat(dto.transportMode()).isEqualTo("BOAT");
+        assertThat(dto.transportMode()).isEqualTo("CAR");
         // C2 : "Documents" (legacy) → persisté canonique "Documents & administratif".
         assertThat(dto.acceptedCategories()).containsExactly("Documents & administratif");
         verify(auditService).log(eq("TRIP_TEMPLATE"), any(), eq("TRIP_TEMPLATE_UPDATED"), eq(userId), anyMap());
@@ -614,12 +662,14 @@ class TripTemplateServiceTest {
     }
 
     @Test
-    void template_boat_offset120_accepted_121_refused() {
-        assertThat(service.create(userId, modelWith("BOAT", 100, 120, null, null)).arrivalDayOffset())
-                .isEqualTo(120);
-
-        assertThatThrownBy(() -> service.create(userId, modelWith("BOAT", 100, 121, null, null)))
-                .satisfies(e -> assertBusiness(e, "arrival-too-far", "120"));
+    void template_boat_isRefusedBeforeAnyDurationOrCapacityCheck() {
+        // Le bateau ne se répète pas à date fixe : le refus (422 boat-template-unsupported) précède
+        // les contrôles de durée et de capacité, aucun modèle bateau n'existe donc à 120 ou 121 jours.
+        for (Integer offset : new Integer[] {null, 120, 121}) {
+            assertThatThrownBy(() -> service.create(userId, modelWith("BOAT", 100, offset, null, null)))
+                    .satisfies(e -> assertBusiness(e, "boat-template-unsupported", "bateau"));
+        }
+        verify(repository, never()).save(any(TripTemplateEntity.class));
     }
 
     // Review Focus 3 : l'avion garde sa limite de 3 jours, la limite de la route ne déborde pas.
@@ -655,8 +705,6 @@ class TripTemplateServiceTest {
     void template_road_2000kg_accepted_plane_1000kg_refused() {
         assertThat(service.create(userId, modelWith("CAR", 2000, null, null, null)).availableKg())
                 .isEqualTo(2000);
-        assertThat(service.create(userId, modelWith("BOAT", 20000, null, null, null)).availableKg())
-                .isEqualTo(20000);
         // Plafond de l'avion : 999,99 kg accepté (989 en entier), 1 000 refusé.
         assertThat(service.create(userId, modelWith("PLANE", 999, null, null, null)).availableKg())
                 .isEqualTo(999);
@@ -683,14 +731,6 @@ class TripTemplateServiceTest {
     void template_lowercaseSize_isNormalized() {
         assertThat(service.create(userId, modelWith("BUS", 100, null, "xl", null)).maxItemSize())
                 .isEqualTo("XL");
-    }
-
-    @Test
-    void template_boat_dropsSizeButKeepsMaxWeight() {
-        var dto = service.create(userId, modelWith("BOAT", 5000, null, "M", 1500.0));
-
-        assertThat(dto.maxItemSize()).isNull();
-        assertThat(dto.maxParcelWeightKg()).isEqualTo(1500.0);
     }
 
     @Test

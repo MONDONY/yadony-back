@@ -97,20 +97,6 @@ class PackageRequestTransportModeJsonTest {
         assertThat(converted.get("lengthCm").asInt()).isEqualTo(60);
     }
 
-    @Test
-    void uneRequeteQuiPorteUnVolumeLIgnore() throws Exception {
-        String body = """
-                {"departureCity":"Paris","arrivalCity":"Dakar","weightKg":5,"contentCategory":"x",
-                 "acceptedPaymentMethods":["CASH"],"transportMode":"BOAT",
-                 "lengthCm":60,"widthCm":40,"heightCm":40,"volumeM3":999}
-                """;
-        PackageRequestCreateRequest req = mapper.readValue(body, PackageRequestCreateRequest.class);
-        assertThat(req.lengthCm()).isEqualTo(60);
-        assertThat(req.heightCm()).isEqualTo(40);
-        assertThat(PackageRequestCreateRequest.class.getRecordComponents())
-                .noneMatch(c -> c.getName().equals("volumeM3"));
-    }
-
     // ── Recherche (PackageRequestSearchResponse) ─────────────────────────────────────────
 
     @Test

@@ -411,6 +411,20 @@ class PackageRequestBoatTest {
     }
 
     @Test
+    @DisplayName("modification d'une demande « peu importe » sans dimensions envoyées : dimensions et volume conservés")
+    void update_anyRequest_withoutDimensions_keepsCurrent() {
+        PackageRequestEntity e = openRequest(null, 40);
+
+        service.update(senderId, e.getId(), req(null, "5", "30.00", null, null, null, null));
+
+        assertThat(e.getTransportMode()).isNull();
+        assertThat(e.getLengthCm()).isEqualTo(40);
+        assertThat(e.getWidthCm()).isEqualTo(40);
+        assertThat(e.getHeightCm()).isEqualTo(40);
+        assertThat(e.getVolumeM3()).isEqualByComparingTo("0.096");
+    }
+
+    @Test
     @DisplayName("modification d'une demande bateau sans dimensions connues : 422 boat-dimensions-required")
     void update_boatWithoutAnyDimensions_422() {
         PackageRequestEntity e = openRequest(TransportMode.BOAT, null);

@@ -2710,7 +2710,6 @@ class PackageRequestServiceTest {
             true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null, transportMode, itemSize);
     }
 
-    /** Demande valide avec un mode brut (null = absent) et un poids donnés. */
     /** Même demande avec des dimensions (60 x 40 x 40 cm), exigées en bateau depuis le lot 3. */
     private static PackageRequestCreateRequest withBoatDimensions(PackageRequestCreateRequest r) {
         return new PackageRequestCreateRequest(
@@ -2720,6 +2719,7 @@ class PackageRequestServiceTest {
             r.saveAsDraft(), r.promoCode(), r.currency(), r.transportMode(), r.itemSize(), 60, 40, 40);
     }
 
+    /** Demande valide avec un mode brut (null = absent) et un poids donnés. */
     private PackageRequestCreateRequest requestWithModeAndWeight(String transportMode, String weightKg) {
         return new PackageRequestCreateRequest(
             "Paris", "Dakar",
