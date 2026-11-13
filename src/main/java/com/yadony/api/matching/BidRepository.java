@@ -630,6 +630,20 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     int lockForUpdate(@Param("id") UUID id);
 
     /**
+     * Verrou de ligne de tous les colis du trajet dans ces statuts, tenu jusqu'à la fin de la transaction, par un
+     * UPDATE neutre (exécutable sous H2, comme {@link #lockForUpdate}). À appeler AVANT de charger ces colis : la
+     * lecture qui suit voit leur dernier état commité. Un colis qui change de statut pendant l'attente du verrou
+     * (scan DEPART : ACCEPTED → HANDED_OVER) est réévalué par PostgreSQL après le commit concurrent.
+     *
+     * @return le nombre de colis verrouillés
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BidEntity b SET b.status = b.status WHERE b.announcementId = :announcementId "
+            + "AND b.deletedAt IS NULL AND b.status IN :statuses")
+    int lockByAnnouncementIdAndStatusIn(@Param("announcementId") UUID announcementId,
+                                        @Param("statuses") java.util.Collection<BidStatus> statuses);
+
+    /**
      * Heure serveur (UTC) de l'étape DEPART du colis (dépôt ou remise au transporteur), null tant qu'elle n'est pas
      * enregistrée. Un seul DEPART par colis (index unique V48) ; {@code MIN} rend une ligne même sans DEPART.
      */

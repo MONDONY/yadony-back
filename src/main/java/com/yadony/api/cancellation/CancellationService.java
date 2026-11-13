@@ -63,6 +63,14 @@ public class CancellationService {
     private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
     private final NegotiationThreadRepository negotiationThreadRepository;
 
+    /**
+     * Colis vivants d'un trajet que son annulation touche : ouverts (annulés) et déjà remis (procédure de retour).
+     * Tous verrouillés par {@link #cancelTrip} avant d'être lus.
+     */
+    static final java.util.Set<BidStatus> TRIP_LIVE_STATUSES = java.util.EnumSet.of(BidStatus.PENDING,
+            BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED, BidStatus.NEGOTIATING, BidStatus.HANDED_OVER,
+            BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+
     /** Même code que le retrait d'offre et la suppression du trajet (FLUTTER-F9, PR #445). */
     static final String OFFER_ACCEPTED_AWAITING_PAYMENT = "offer-accepted-awaiting-payment";
 
@@ -140,9 +148,15 @@ public class CancellationService {
                     "problem.offer-accepted-awaiting-payment", Map.of("negotiationStatus", awaitingPayment.get(0).name()));
         }
 
-        // Colis déjà remis : verrouillés ici (ordre colis puis paiement), avant toute écriture. Un colis payé au dépôt
-        // dont le transporteur a déjà reçu l'argent ne peut pas être remboursé automatiquement : l'annulation du
-        // trajet est refusée (409 deposit-paid-no-refund) et l'équipe est alertée, rien n'est modifié.
+        // Tous les colis vivants du trajet (acceptés compris) verrouillés AVANT d'être lus (ordre colis puis paiement).
+        // Sans cela, un scan DEPART concurrent (ACCEPTED → HANDED_OVER, puis versement au dépôt) pouvait être écrasé
+        // par l'annulation d'un colis lu ACCEPTED : colis annulé sans procédure de retour, transporteur payé. Le scan
+        // verrouille le même colis : l'un attend l'autre et voit son état commité.
+        bidRepository.lockByAnnouncementIdAndStatusIn(announcement.getId(), TRIP_LIVE_STATUSES);
+
+        // Colis déjà remis, relus sous ce verrou, avant toute écriture. Un colis payé au dépôt dont le transporteur a
+        // déjà reçu l'argent ne peut pas être remboursé automatiquement : l'annulation du trajet est refusée (409
+        // deposit-paid-no-refund) et l'équipe est alertée, rien n'est modifié.
         List<BidEntity> handedOverBids = bidRepository.findHandedOverByAnnouncementIdForUpdate(announcement.getId());
         List<UUID> paidAtDeposit = handedOverBids.stream()
                 .filter(bid -> CancellationGuard.depositPaid(bid, depositPayouts))

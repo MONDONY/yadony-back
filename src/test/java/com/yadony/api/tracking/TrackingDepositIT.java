@@ -96,6 +96,7 @@ class TrackingDepositIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired com.yadony.api.common.media.MediaUploadRepository mediaUploads;
     @Autowired com.yadony.api.common.i18n.MessagesResolver messagesResolver;
+    @Autowired com.yadony.api.cancellation.CancellationService cancellationService;
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
     @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
@@ -214,6 +215,64 @@ class TrackingDepositIT {
     }
 
     // ── Gabarits ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("scan DEPART et annulation du trajet en même temps : jamais un colis remis écrasé en annulé sans retour")
+    void departScanAndTripCancellationInParallel_neverOrphanNorOverwritten() throws Exception {
+        for (int round = 0; round < 5; round++) {
+            UserEntity traveler = persistUser(Role.TRAVELER);
+            BidEntity bid = persistAcceptedBid(traveler, PayoutTrigger.DEPOSIT);
+            // Espèces : aucun argent plateforme, le versement au dépôt qui suit le scan ne fait rien.
+            jdbc.update("UPDATE bids SET payment_method = 'CASH' WHERE id = ?", bid.getId());
+            QrScanRequest depart = depart(bid, uploadedPhoto(bid, traveler), bid.getQrToken());
+            com.yadony.api.cancellation.dto.CancellationRequest cancel =
+                    new com.yadony.api.cancellation.dto.CancellationRequest(bid.getAnnouncementId(), "Bateau annulé");
+
+            CountDownLatch start = new CountDownLatch(1);
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                List<Future<Object>> calls = List.of(
+                        pool.submit(() -> {
+                            start.await();
+                            return catchThrowable(() -> trackingService.recordScan(depart, traveler.getFirebaseUid()));
+                        }),
+                        pool.submit(() -> {
+                            start.await();
+                            return catchThrowable(() -> cancellationService.cancelTrip(traveler.getFirebaseUid(), cancel));
+                        }));
+                start.countDown();
+                for (Future<Object> call : calls) {
+                    call.get(60, TimeUnit.SECONDS);
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+
+            boolean deposited = count("SELECT COUNT(*) FROM tracking_events WHERE bid_id = ? AND event_type = 'DEPART'",
+                    bid.getId()) == 1;
+            String bidStatus = jdbc.queryForObject("SELECT status FROM bids WHERE id = ?", String.class, bid.getId());
+            String returnCode = jdbc.queryForObject("SELECT return_code FROM bids WHERE id = ?", String.class,
+                    bid.getId());
+            String tripStatus = jdbc.queryForObject("SELECT status FROM announcements WHERE id = ?", String.class,
+                    bid.getAnnouncementId());
+            if (deposited) {
+                // Déposé : soit le trajet n'est pas annulé (colis remis), soit il l'est et le colis suit la procédure
+                // de retour. Jamais « annulé » sans code de retour (écrasement d'un colis lu ACCEPTED).
+                assertThat(bidStatus).as("round %d", round).isIn("HANDED_OVER", "CANCELLED");
+                if ("CANCELLED".equals(bidStatus)) {
+                    assertThat(returnCode).as("round %d", round).isNotNull();
+                    assertThat(tripStatus).as("round %d", round).isEqualTo("CANCELLED");
+                } else {
+                    assertThat(tripStatus).as("round %d", round).isNotEqualTo("CANCELLED");
+                }
+            } else {
+                // Pas de dépôt : l'annulation est passée la première, le scan d'un colis annulé est refusé.
+                assertThat(bidStatus).as("round %d", round).isEqualTo("CANCELLED");
+                assertThat(returnCode).as("round %d", round).isNull();
+                assertThat(tripStatus).as("round %d", round).isEqualTo("CANCELLED");
+            }
+        }
+    }
 
     private static QrScanRequest depart(BidEntity bid, String photo, String qrToken) {
         return new QrScanRequest(bid.getId(), TrackingEventType.DEPART, null, null, null, photo, null,

@@ -196,6 +196,11 @@ class DepositPaidCancellationTest {
         verify(eventPublisher).publishEvent(events.capture());
         assertThat(events.getValue()).isEqualTo(
                 new TripCancelRefusedDepositPaidEvent(ANN_ID, TRAVELER_ID, List.of(BID_ID)));
+        // Tous les colis vivants (acceptés compris) verrouillés avant d'être lus.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository);
+        order.verify(bidRepository).lockByAnnouncementIdAndStatusIn(ANN_ID, CancellationService.TRIP_LIVE_STATUSES);
+        order.verify(bidRepository).findHandedOverByAnnouncementIdForUpdate(ANN_ID);
+        assertThat(CancellationService.TRIP_LIVE_STATUSES).contains(BidStatus.ACCEPTED, BidStatus.HANDED_OVER);
         assertThat(trip.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
         verify(announcementRepository, never()).save(any());
         verify(bidRepository, never()).save(any());
