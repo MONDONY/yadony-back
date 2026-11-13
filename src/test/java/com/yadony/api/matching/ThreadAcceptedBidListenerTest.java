@@ -237,6 +237,24 @@ class ThreadAcceptedBidListenerTest {
         }
 
         @Test
+        @DisplayName("I3 : fil payé sur un trajet au m³ plein, le colis ne prend que le restant et l'équipe est alertée")
+        void threadAccepted_overbookedPerM3Trip_recordsTakenVolumeAndAlerts() {
+            AnnouncementEntity trip = boatPerM3Trip("0.030");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+
+            listener.onPackageRequestAccepted(eventWithVolume("0.050"));
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getCapacityReservedVolumeM3()).isEqualByComparingTo("0.030");
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("0");
+            verify(eventPublisher).publishEvent(org.mockito.ArgumentMatchers.<Object>argThat(e ->
+                    e instanceof com.yadony.api.matching.events.TripVolumeOverbookedEvent o
+                            && o.takenM3().compareTo(new BigDecimal("0.030")) == 0
+                            && o.volumeM3().compareTo(new BigDecimal("0.050")) == 0));
+        }
+
+        @Test
         @DisplayName("trajet dédié au m³ : colis au volume de la demande, rien n'est pris (tout lui est réservé)")
         void threadAccepted_dedicatedPerM3Trip_volumeKeptReserved() {
             AnnouncementEntity trip = boatPerM3Trip("0.050");

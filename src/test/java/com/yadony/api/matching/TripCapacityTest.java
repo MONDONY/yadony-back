@@ -115,6 +115,47 @@ class TripCapacityTest {
         }
 
         @Test
+        @DisplayName("I3 : colis surréservé, il ne prend que le restant et ne rend que ce qu'il a pris (pas de volume fantôme)")
+        void overbooked_releaseReturnsOnlyWhatWasTaken() {
+            // Trajet de 10 m³ : A prend 6, B (fil payé, 6 m³) trouve 4, A s'annule puis B s'annule.
+            AnnouncementEntity trip = boatPerM3("10", "10");
+            BidEntity a = parcel(null, "6");
+            BidEntity b = parcel(null, "6");
+
+            TripCapacity.reserve(trip, a);
+            TripCapacity.reserve(trip, b);
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("0");
+            assertThat(a.getCapacityReservedVolumeM3()).isEqualByComparingTo("6");
+            assertThat(b.getCapacityReservedVolumeM3()).isEqualByComparingTo("4");
+            assertThat(TripCapacity.overbooked(a)).isFalse();
+            assertThat(TripCapacity.overbooked(b)).isTrue();
+
+            TripCapacity.release(trip, a);
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("6");
+            TripCapacity.release(trip, b);
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("10");
+            assertThat(b.getCapacityReservedVolumeM3()).isEqualByComparingTo("0");
+
+            // Un second rendu ne rend plus rien.
+            TripCapacity.release(trip, b);
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("10");
+        }
+
+        @Test
+        @DisplayName("I3 : colis d'avant V385 (rien de mémorisé) rendu comme avant, plafonné au volume proposé")
+        void legacyParcel_releasesItsVolume() {
+            AnnouncementEntity trip = boatPerM3("2.5", "1.000");
+            BidEntity legacy = parcel(null, "0.500");
+
+            TripCapacity.release(trip, legacy);
+
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("1.500");
+            assertThat(legacy.getCapacityReservedVolumeM3()).isNull();
+            assertThat(TripCapacity.overbooked(legacy)).isFalse();
+            assertThat(TripCapacity.overbooked(null)).isFalse();
+        }
+
+        @Test
         @DisplayName("rendu plafonné au volume proposé (trajet dédié qui garde tout son volume)")
         void release_cappedAtCapacity() {
             AnnouncementEntity trip = boatPerM3("0.800", "0.800");

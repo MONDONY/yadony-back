@@ -178,6 +178,12 @@ public class ThreadAcceptedBidListener {
             announcementRepository.save(announcement);
         });
         BidEntity saved = bidRepository.save(bid);
+        // Fil déjà payé dont le trajet au m³ s'est rempli pendant le paiement : le colis ne prend que ce qui restait
+        // (TripCapacity), l'équipe est alertée pour arbitrer avec le transporteur.
+        if (TripCapacity.overbooked(saved)) {
+            eventPublisher.publishEvent(new com.yadony.api.matching.events.TripVolumeOverbookedEvent(
+                    saved.getAnnouncementId(), saved.getId(), saved.getVolumeM3(), saved.getCapacityReservedVolumeM3()));
+        }
 
         // Rachat (redeem) du code promo appliqué au paiement, si présent — le bid_id vient
         // d'être créé, c'est le SEUL point où promo_redemptions (UNIQUE(promo_code_id, bid_id))

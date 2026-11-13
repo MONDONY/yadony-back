@@ -978,9 +978,10 @@ public class NegotiationService {
      * un autre trajet. Transaction courte appelée par le contrôleur carte ; les chemins mobile money et espèces passent
      * par {@link #assertLinkedTripVolume} dans leur propre transaction.
      *
-     * <p>Reste connu (second temps, non fait) : la place peut encore être prise PENDANT le paiement ; le colis payé est
-     * alors matérialisé quand même et le trajet ramené à 0 m³ (alerte de journal dans {@code TripCapacity.reserveVolume}).
-     * Le refus au scellé avec remboursement par le rail reste à écrire.
+     * <p>Reste connu (second temps, non fait, condition d'allumage) : la place peut encore être prise PENDANT le
+     * paiement ; le colis payé est alors matérialisé quand même, ne prend que le volume restant (mémorisé, jamais rendu
+     * en plus à l'annulation) et l'équipe est alertée ({@code VOLUME_OVERBOOKED_<trajet>}). Le refus au scellé avec
+     * remboursement par le rail reste à écrire.
      */
     @Transactional
     public void assertLinkedTripVolumeBeforePayment(UUID threadId) {

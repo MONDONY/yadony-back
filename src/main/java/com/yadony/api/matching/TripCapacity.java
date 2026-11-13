@@ -82,7 +82,24 @@ public final class TripCapacity {
         if (!trip.isPricedPerM3()) {
             return trip.reserveCapacity(bid.getWeightKg());
         }
-        return reserveVolume(trip, bid.getVolumeM3(), "colis " + bid.getId());
+        BigDecimal volume = bid.getVolumeM3();
+        BigDecimal available = trip.getAvailableVolumeM3();
+        boolean changed = reserveVolume(trip, volume, "colis " + bid.getId());
+        if (changed) {
+            // Volume réellement pris : tout le colis, ou ce qui restait si le trajet était surréservé. Le rendu ne rendra
+            // jamais plus (pas de volume fantôme).
+            bid.setCapacityReservedVolumeM3(volume.min(available.max(BigDecimal.ZERO)));
+        }
+        return changed;
+    }
+
+    /**
+     * Le colis a-t-il pris moins que son volume (trajet surréservé à sa réservation) ? Seul un fil déjà payé peut
+     * l'être (toute autre réservation contrôle le volume restant sous le verrou du trajet).
+     */
+    public static boolean overbooked(BidEntity bid) {
+        return bid != null && bid.getVolumeM3() != null && bid.getCapacityReservedVolumeM3() != null
+                && bid.getCapacityReservedVolumeM3().compareTo(bid.getVolumeM3()) < 0;
     }
 
     /**
@@ -141,7 +158,14 @@ public final class TripCapacity {
         if (!trip.isPricedPerM3()) {
             return trip.releaseCapacity(bid.getWeightKg());
         }
-        return releaseVolume(trip, bid.getVolumeM3(), "colis " + bid.getId());
+        // Ce que le colis a réellement pris (V385) ; à défaut (colis d'avant V385, trajet dédié), son volume, plafonné
+        // au volume proposé. Remis à 0 : un second rendu ne rend rien.
+        BigDecimal reserved = bid.getCapacityReservedVolumeM3();
+        boolean changed = releaseVolume(trip, reserved != null ? reserved : bid.getVolumeM3(), "colis " + bid.getId());
+        if (reserved != null) {
+            bid.setCapacityReservedVolumeM3(BigDecimal.ZERO);
+        }
+        return changed;
     }
 
     /**
