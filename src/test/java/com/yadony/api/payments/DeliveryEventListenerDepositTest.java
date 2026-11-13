@@ -276,6 +276,24 @@ class DeliveryEventListenerDepositTest {
     }
 
     @Test
+    @DisplayName("M2 : séquestre tardif d'un colis payé au dépôt annulé avant le claim : relu sous verrou, rien ne part")
+    void lateEscrowOfDepositBidCancelledBeforeClaim_relockedReadStopsRelease() {
+        BidEntity cancelled = new BidEntity();
+        ReflectionTestUtils.setField(cancelled, "id", bidId);
+        cancelled.setSenderId(senderId);
+        cancelled.setStatus(BidStatus.CANCELLED);
+        freeze(cancelled, PayoutTrigger.DEPOSIT);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid), Optional.of(cancelled));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            assertThat(listener.releaseAfterLateEscrow(bidId, senderId, travelerId, "late-escrow"))
+                    .isEqualTo(EscrowReleaseOutcome.NOT_DEPOSITED);
+            transferStatic.verifyNoInteractions();
+        }
+        verifyNothingPaid();
+    }
+
+    @Test
     @DisplayName("claim perdu (un autre traitement a versé) : rien ne part")
     void depositClaimLost_releasesNothing() {
         when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(0);

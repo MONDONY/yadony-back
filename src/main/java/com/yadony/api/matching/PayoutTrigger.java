@@ -1,5 +1,8 @@
 package com.yadony.api.matching;
 
+import java.util.EnumSet;
+import java.util.Set;
+
 /**
  * Moment où l'argent d'un colis part vers le transporteur ({@code bids.payout_trigger}, V383).
  *
@@ -15,5 +18,13 @@ public enum PayoutTrigger {
      * Au dépôt du colis chez le transporteur (scan de départ), sans attendre la livraison : trajet
      * bateau d'un transporteur vérifié, interrupteur bateau allumé au moment de l'acceptation.
      */
-    DEPOSIT
+    DEPOSIT;
+
+    /**
+     * Statuts d'un colis déposé et toujours dans le parcours (seul le scan DEPART fait passer un colis accepté à
+     * HANDED_OVER). Définition unique du « déposé », partagée par le versement au dépôt, les gardes d'annulation et la
+     * fermeture du supplément de prix.
+     */
+    public static final Set<BidStatus> DEPOSITED_STATUSES = java.util.Collections.unmodifiableSet(
+            EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED));
 }

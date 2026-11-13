@@ -5,7 +5,6 @@ import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.PayoutTrigger;
 
-import java.util.EnumSet;
 import java.util.Set;
 
 /**
@@ -20,9 +19,8 @@ import java.util.Set;
  */
 final class DepositRelease {
 
-    /** Statuts d'un colis déposé et toujours dans le parcours (seul le scan DEPART fait passer à HANDED_OVER). */
-    static final Set<BidStatus> DEPOSITED_STATUSES =
-            EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+    /** Statuts d'un colis déposé et toujours dans le parcours : {@link PayoutTrigger#DEPOSITED_STATUSES}. */
+    static final Set<BidStatus> DEPOSITED_STATUSES = PayoutTrigger.DEPOSITED_STATUSES;
 
     private DepositRelease() {
     }

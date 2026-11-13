@@ -375,6 +375,23 @@ class DepositReleaseConcurrencyIT {
         assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
     }
 
+    @Test
+    @DisplayName("M1 : alerte J+48 du dépôt et rattrapage ignorent un colis déposé puis annulé (jamais « Forcer le versement »)")
+    void cancelledDepositedParcel_neverInJ48NorRetry() {
+        Seed s = seed(PaymentRail.STRIPE);
+        jdbc.update("UPDATE bids SET status = 'CANCELLED' WHERE id = ?", s.bidId);
+
+        assertThat(paymentRepository.findDepositedUnreleasedEscrows(LocalDateTime.now(ZoneOffset.UTC).plusDays(1)))
+                .extracting(PaymentEntity::getId).doesNotContain(s.paymentId);
+        assertThat(paymentRepository.findDepositReleaseRetryCandidates(LocalDateTime.now(ZoneOffset.UTC).plusDays(1),
+                LocalDateTime.now(ZoneOffset.UTC).minusDays(3), org.springframework.data.domain.PageRequest.of(0, 500)))
+                .extracting(PaymentRepository.DepositRetryCandidate::getPaymentId).doesNotContain(s.paymentId);
+
+        jdbc.update("UPDATE bids SET status = 'HANDED_OVER' WHERE id = ?", s.bidId);
+        assertThat(paymentRepository.findDepositedUnreleasedEscrows(LocalDateTime.now(ZoneOffset.UTC).plusDays(1)))
+                .extracting(PaymentEntity::getId).contains(s.paymentId);
+    }
+
     private DepositReleaseRetryJob retryJob() {
         return new DepositReleaseRetryJob(paymentRepository, bidRepository, announcementRepository, listener,
                 alertEscalator, true, java.time.Duration.ofMinutes(1), java.time.Duration.ofDays(3),

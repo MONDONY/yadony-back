@@ -175,13 +175,18 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
      * Séquestres (tous rails) d'un colis payé au dépôt ({@code DEPOSIT}), hors espèces, déposé (étape DEPART) avant
      * {@code depositedBefore} et toujours pas versé : le versement au dépôt n'est pas parti (garde, compte Connect,
      * échec technique). Par {@code bid_id} ou par le colis rattaché au fil de négociation. Pour l'alerte J+48 du
-     * dépôt ({@link EscrowScheduler}) : rien n'est versé automatiquement.
+     * dépôt ({@link EscrowScheduler}) : rien n'est versé automatiquement. Seulement un colis toujours dans le parcours
+     * (déposé, en route, arrivé, livré) : jamais un colis annulé, refusé ou absent, que l'alerte inviterait à payer.
      */
     @Query("""
             SELECT p FROM PaymentEntity p, com.yadony.api.matching.BidEntity b
              WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
                AND b.payoutTrigger = com.yadony.api.matching.PayoutTrigger.DEPOSIT
                AND (b.paymentMethod IS NULL OR b.paymentMethod <> com.yadony.api.payments.cash.PaymentMethod.CASH)
+               AND b.status IN (com.yadony.api.matching.BidStatus.HANDED_OVER,
+                                com.yadony.api.matching.BidStatus.IN_TRANSIT,
+                                com.yadony.api.matching.BidStatus.ARRIVED,
+                                com.yadony.api.matching.BidStatus.COMPLETED)
                AND ((p.bidId IS NOT NULL AND b.id = p.bidId)
                     OR (p.bidId IS NULL AND p.negotiationThreadId IS NOT NULL
                         AND b.linkedNegotiationThreadId = p.negotiationThreadId))

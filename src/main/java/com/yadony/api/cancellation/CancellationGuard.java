@@ -7,7 +7,6 @@ import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.PayoutTrigger;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.EnumSet;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 
@@ -21,9 +20,8 @@ import org.springframework.http.HttpStatus;
  */
 public final class CancellationGuard {
 
-    /** Statuts d'un colis déposé (seul le scan DEPART fait passer un colis accepté à HANDED_OVER). */
-    static final Set<BidStatus> DEPOSITED_STATUSES =
-            EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+    /** Statuts d'un colis déposé : {@link PayoutTrigger#DEPOSITED_STATUSES} (définition unique). */
+    static final Set<BidStatus> DEPOSITED_STATUSES = PayoutTrigger.DEPOSITED_STATUSES;
 
     private CancellationGuard() {
     }

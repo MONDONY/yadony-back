@@ -481,12 +481,13 @@ public class DeliveryEventListener {
         if (event.getBidId() != null) {
             bidRepository.lockForUpdate(event.getBidId());
         }
-        // Versement au dépôt : « déposé et versable » relu SOUS le verrou du colis. La lecture du début de release()
-        // a pu précéder une annulation, un refus ou une annulation de trajet commités depuis (ils verrouillent le colis
-        // avant de lire le paiement) : le colis n'est alors plus dans le parcours, rien ne part, l'expéditeur est
-        // remboursé par leur propre chemin.
-        if (event.deposit()) {
-            BidEntity locked = bidRepository.findById(event.getBidId()).orElse(null);
+        // Colis payé au dépôt (ou déclencheur « dépôt ») : « déposé et versable » relu SOUS le verrou du colis, quelle
+        // que soit la source (dépôt, séquestre tardif, resynchronisation, auto-réparation, rattrapage). La lecture du
+        // début de release() a pu précéder une annulation, un refus ou une annulation de trajet commités depuis (ils
+        // verrouillent le colis avant de lire le paiement) : le colis n'est alors plus dans le parcours, rien ne part,
+        // l'expéditeur est remboursé par leur propre chemin.
+        BidEntity locked = event.getBidId() == null ? null : bidRepository.findById(event.getBidId()).orElse(null);
+        if (event.deposit() || DepositRelease.paidAtDeposit(locked)) {
             if (!DepositRelease.depositedAndPayable(locked, bidRepository)) {
                 log.warn("Versement au dépôt du colis {} abandonné : colis sorti du parcours avant le claim",
                         event.getBidId());

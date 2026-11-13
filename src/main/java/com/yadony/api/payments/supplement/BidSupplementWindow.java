@@ -13,7 +13,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.EnumSet;
 import java.util.Optional;
 import java.util.Set;
 
@@ -30,9 +29,8 @@ import java.util.Set;
 @Component
 public class BidSupplementWindow {
 
-    /** Statuts d'un colis déposé (seul le scan DEPART fait passer un colis accepté à HANDED_OVER). */
-    private static final Set<BidStatus> DEPOSITED =
-            EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+    /** Statuts d'un colis déposé : {@link PayoutTrigger#DEPOSITED_STATUSES} (définition unique). */
+    private static final Set<BidStatus> DEPOSITED = PayoutTrigger.DEPOSITED_STATUSES;
 
     private final BidSupplementProperties properties;
     private final Clock clock;
