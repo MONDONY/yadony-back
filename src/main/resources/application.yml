@@ -426,6 +426,9 @@ yadony:
     # Lot 3a DAC7 : endpoints voyageur GET/PUT /travelers/me/tax-info (404 dac7-disabled tant qu'éteint). ÉTEINT par
     # défaut, transmis par deploy-prod.yml et deploy-staging.yml (vars.YADONY_DAC7_ENABLED). Ne pas l'allumer avant la
     # mise à jour de la politique de confidentialité et des CGU (préavis de 30 jours) : la collecte du NIF en dépend.
+    # AMORÇAGE SEULEMENT : la valeur sert à créer le réglage plateforme dac7_enabled quand il n'existe pas encore ;
+    # ensuite c'est l'admin (Réglages) qui décide, sans redéploiement (PlatformDac7Switches). Elle sert aussi à valider
+    # la durée de conservation du NIF au démarrage.
     enabled: ${YADONY_DAC7_ENABLED:false}
     # États ou territoires PARTENAIRES hors Union dont les résidents sont déclarables (codes ISO alpha-2). VIDE :
     # la liste de l'arrêté du 26/12/2022 reste à confirmer pays par pays (dont CI, SN, ML, CM) par l'expert-comptable.
@@ -447,6 +450,7 @@ yadony:
     # voyageurs « à solliciter ». ÉTEINTS par défaut (deploy-prod.yml et deploy-staging.yml), et sans effet tant que
     # la collecte (enabled) est éteinte. Fenêtre 10 h-20 h heure locale, au plus un message par jour.
     reminders:
+      # Amorçage seulement (réglage plateforme dac7_reminders_enabled), comme la collecte.
       enabled: ${YADONY_DAC7_REMINDERS_ENABLED:false}
       cron: ${YADONY_DAC7_REMINDERS_CRON:0 15 * * * *}
       first-reminder-delay: P14D

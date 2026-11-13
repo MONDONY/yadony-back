@@ -34,17 +34,22 @@ public class Dac7AcceptanceListener {
 
     private static final Logger log = LoggerFactory.getLogger(Dac7AcceptanceListener.class);
 
-    private final Dac7Properties properties;
-    private final Dac7ReminderProperties reminderProperties;
+    private final Dac7Switches switches;
     private final Dac7ReminderService reminders;
     private final Clock clock;
     private final Executor executor;
 
-    public Dac7AcceptanceListener(Dac7Properties properties, Dac7ReminderProperties reminderProperties,
-                                  Dac7ReminderService reminders, Clock clock,
+    /** Tests : interrupteurs dérivés des propriétés (collecte et messages, sans le back-office). */
+    Dac7AcceptanceListener(Dac7Properties properties, Dac7ReminderProperties reminderProperties,
+                           Dac7ReminderService reminders, Clock clock, Executor executor) {
+        this(Dac7Switches.fixed(properties.enabledOrDefault(), reminderProperties.enabled()), reminders, clock,
+                executor);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public Dac7AcceptanceListener(Dac7Switches switches, Dac7ReminderService reminders, Clock clock,
                                   @Qualifier(Dac7ExecutorConfig.EXECUTOR) Executor executor) {
-        this.properties = properties;
-        this.reminderProperties = reminderProperties;
+        this.switches = switches;
         this.reminders = reminders;
         this.clock = clock;
         this.executor = executor;
@@ -61,7 +66,7 @@ public class Dac7AcceptanceListener {
     }
 
     private void prompt(UUID travelerId) {
-        if (!properties.enabledOrDefault() || !reminderProperties.enabled() || travelerId == null) {
+        if (!switches.remindersEnabled() || travelerId == null) {
             return;
         }
         try {

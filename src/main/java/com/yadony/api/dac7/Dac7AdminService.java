@@ -37,25 +37,41 @@ public class Dac7AdminService {
     private final Dac7AdminReadModel reads;
     private final Dac7ReminderService reminders;
     private final Dac7DueDiligenceService diligence;
-    private final Dac7ReminderProperties reminderProperties;
+    private final Dac7Switches switches;
     private final AuditService audit;
     private final Clock clock;
 
     @Autowired
     public Dac7AdminService(Dac7DeclarationService declarations, Dac7AdminReadModel reads,
                             Dac7ReminderService reminders, Dac7DueDiligenceService diligence,
-                            Dac7ReminderProperties reminderProperties, AuditService audit) {
-        this(declarations, reads, reminders, diligence, reminderProperties, audit, Clock.systemUTC());
+                            Dac7Switches switches, AuditService audit) {
+        this(declarations, reads, reminders, diligence, switches, audit, Clock.systemUTC());
     }
 
+    /** Tests : messages dérivés des propriétés, collecte lue sur la déclaration (sans le back-office). */
     Dac7AdminService(Dac7DeclarationService declarations, Dac7AdminReadModel reads, Dac7ReminderService reminders,
                      Dac7DueDiligenceService diligence, Dac7ReminderProperties reminderProperties,
                      AuditService audit, Clock clock) {
+        this(declarations, reads, reminders, diligence, new Dac7Switches() {
+            @Override
+            public boolean collectionEnabled() {
+                return declarations.collectionEnabled();
+            }
+
+            @Override
+            public boolean remindersEnabled() {
+                return reminderProperties.enabled() && declarations.collectionEnabled();
+            }
+        }, audit, clock);
+    }
+
+    Dac7AdminService(Dac7DeclarationService declarations, Dac7AdminReadModel reads, Dac7ReminderService reminders,
+                     Dac7DueDiligenceService diligence, Dac7Switches switches, AuditService audit, Clock clock) {
         this.declarations = declarations;
         this.reads = reads;
         this.reminders = reminders;
         this.diligence = diligence;
-        this.reminderProperties = reminderProperties;
+        this.switches = switches;
         this.audit = audit;
         this.clock = clock;
     }
@@ -69,8 +85,8 @@ public class Dac7AdminService {
         int withTax = (int) sellers.stream().filter(Seller::taxInfoProvided).count();
         int identityReview = (int) sellers.stream()
                 .filter(s -> s.identityStatus() != Dac7IdentityStatus.COMPLETE).count();
-        return new Dac7OverviewResponse(d.year(), declarations.collectionEnabled(),
-                reminderProperties.enabled() && declarations.collectionEnabled(), sellers.size(), withTax,
+        return new Dac7OverviewResponse(d.year(), switches.collectionEnabled(),
+                switches.remindersEnabled(), sellers.size(), withTax,
                 sellers.size() - withTax, identityReview, d.report().unknownResidenceTravelers().size(),
                 d.report().nonDeclarableTravelers().size(), d.report().refundsToReconcile().size(),
                 d.report().pendingSplits().size(), d.report().anomalies().size(), d.invalidPartnerJurisdictions(),

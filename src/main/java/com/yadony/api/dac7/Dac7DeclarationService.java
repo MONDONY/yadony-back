@@ -140,21 +140,31 @@ public class Dac7DeclarationService {
     private final Dac7AdminReadModel adminReads;
     private final Dac7ResidencyPolicy residency;
     private final Dac7Properties properties;
+    private final Dac7Switches switches;
     private final Dac7ExportProperties exportProperties;
     private final Clock clock;
 
     @Autowired
     public Dac7DeclarationService(Dac7ReportService reports, EcbExchangeRateProvider rates,
                                   Dac7IdentityResolver identities, UserRepository users, Dac7AdminReadModel adminReads,
-                                  Dac7ResidencyPolicy residency, Dac7Properties properties,
+                                  Dac7ResidencyPolicy residency, Dac7Properties properties, Dac7Switches switches,
                                   Dac7ExportProperties exportProperties) {
-        this(reports, rates, identities, users, adminReads, residency, properties, exportProperties,
+        this(reports, rates, identities, users, adminReads, residency, properties, switches, exportProperties,
                 Clock.systemUTC());
+    }
+
+    /** Tests : collecte dérivée des propriétés (sans le back-office). */
+    Dac7DeclarationService(Dac7ReportService reports, EcbExchangeRateProvider rates, Dac7IdentityResolver identities,
+                           UserRepository users, Dac7AdminReadModel adminReads, Dac7ResidencyPolicy residency,
+                           Dac7Properties properties, Dac7ExportProperties exportProperties, Clock clock) {
+        this(reports, rates, identities, users, adminReads, residency, properties,
+                Dac7Switches.fixed(properties.enabledOrDefault(), false), exportProperties, clock);
     }
 
     Dac7DeclarationService(Dac7ReportService reports, EcbExchangeRateProvider rates, Dac7IdentityResolver identities,
                            UserRepository users, Dac7AdminReadModel adminReads, Dac7ResidencyPolicy residency,
-                           Dac7Properties properties, Dac7ExportProperties exportProperties, Clock clock) {
+                           Dac7Properties properties, Dac7Switches switches, Dac7ExportProperties exportProperties,
+                           Clock clock) {
         this.reports = reports;
         this.rates = rates;
         this.identities = identities;
@@ -162,6 +172,7 @@ public class Dac7DeclarationService {
         this.adminReads = adminReads;
         this.residency = residency;
         this.properties = properties;
+        this.switches = switches;
         this.exportProperties = exportProperties;
         this.clock = clock;
     }
@@ -362,7 +373,7 @@ public class Dac7DeclarationService {
     }
 
     public boolean collectionEnabled() {
-        return properties.enabledOrDefault();
+        return switches.collectionEnabled();
     }
 
     Dac7ResidencyPolicy residency() {

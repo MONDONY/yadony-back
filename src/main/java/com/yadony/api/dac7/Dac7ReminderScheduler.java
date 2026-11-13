@@ -34,32 +34,40 @@ public class Dac7ReminderScheduler {
     private final Dac7AdminReadModel reads;
     private final Dac7ReportReadModel reportReads;
     private final Dac7ResidencyPolicy residency;
-    private final Dac7Properties dac7;
+    private final Dac7Switches switches;
     private final Dac7ReminderProperties properties;
     private final Clock clock;
 
     @Autowired
     public Dac7ReminderScheduler(Dac7ReminderService reminders, Dac7AdminReadModel reads,
-                                 Dac7ReportReadModel reportReads, Dac7ResidencyPolicy residency, Dac7Properties dac7,
+                                 Dac7ReportReadModel reportReads, Dac7ResidencyPolicy residency, Dac7Switches switches,
                                  Dac7ReminderProperties properties) {
-        this(reminders, reads, reportReads, residency, dac7, properties, Clock.systemUTC());
+        this(reminders, reads, reportReads, residency, switches, properties, Clock.systemUTC());
+    }
+
+    /** Tests : interrupteurs dérivés des propriétés (collecte et messages, sans le back-office). */
+    Dac7ReminderScheduler(Dac7ReminderService reminders, Dac7AdminReadModel reads, Dac7ReportReadModel reportReads,
+                          Dac7ResidencyPolicy residency, Dac7Properties dac7, Dac7ReminderProperties properties,
+                          Clock clock) {
+        this(reminders, reads, reportReads, residency,
+                Dac7Switches.fixed(dac7.enabledOrDefault(), properties.enabled()), properties, clock);
     }
 
     Dac7ReminderScheduler(Dac7ReminderService reminders, Dac7AdminReadModel reads, Dac7ReportReadModel reportReads,
-                          Dac7ResidencyPolicy residency, Dac7Properties dac7, Dac7ReminderProperties properties,
+                          Dac7ResidencyPolicy residency, Dac7Switches switches, Dac7ReminderProperties properties,
                           Clock clock) {
         this.reminders = reminders;
         this.reads = reads;
         this.reportReads = reportReads;
         this.residency = residency;
-        this.dac7 = dac7;
+        this.switches = switches;
         this.properties = properties;
         this.clock = clock;
     }
 
     @Scheduled(cron = "${yadony.dac7.reminders.cron:0 15 * * * *}", zone = "UTC")
     public void run() {
-        if (!properties.enabled() || !dac7.enabledOrDefault()) {
+        if (!switches.remindersEnabled()) {
             return;
         }
         Instant now = clock.instant();
