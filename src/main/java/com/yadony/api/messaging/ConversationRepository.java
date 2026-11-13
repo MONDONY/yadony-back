@@ -191,6 +191,16 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
             @Param("deliveredBefore") java.time.LocalDateTime deliveredBefore);
 
     /**
+     * Conversations INQUIRY inactives : dernière activité (à défaut la création) antérieure à la
+     * date limite. Fermées ou non : une conversation fermée inactive est aussi à effacer. Une
+     * conversation promue (SENDER_TRAVELER) n'est jamais sélectionnée.
+     */
+    @Query("SELECT c FROM ConversationEntity c " +
+           "WHERE c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.deletedAt IS NULL " +
+           "AND COALESCE(c.lastActivityAt, c.createdAt) < :cutoff")
+    java.util.List<ConversationEntity> findStaleInquiries(@Param("cutoff") java.time.LocalDateTime cutoff);
+
+    /**
      * Conversations de la modération, filtrables : seulement celles qui ont un signalement ouvert sur
      * un message ({@code reports.target_id} = {@code conversations.id}), et/ou dont un participant est
      * l'un de ces comptes. Les drapeaux évitent un {@code IN ()} vide : {@code userIds} n'est lu que si

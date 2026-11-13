@@ -459,6 +459,41 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Suppression complète d'une conversation INQUIRY inactive : document conversation, TOUS ses
+     * messages (avec leurs sous-collections) ET le compteur {@code inquiryQuota/{convId}}, ensemble.
+     * Le compteur n'est jamais supprimé seul : tant que des messages {@code inq<n>} existent, il
+     * doit rester pour que le plafond tienne. Idempotent (document absent : rien à faire).
+     *
+     * @return vrai si tout est effacé (ou Firestore désactivé) ; faux sur échec, la prochaine passe
+     *         réessaiera
+     */
+    public boolean purgeInquiryConversation(String conversationId) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping purgeInquiryConversation");
+            return true;
+        }
+        try {
+            Firestore db = firestore;
+            var convRef = db.collection("conversations").document(conversationId);
+            var snap = convRef.get().get();
+            if (snap.exists()) {
+                for (String field : new String[] {"senderId", "travelerId"}) {
+                    Object uid = snap.get(field);
+                    if (uid instanceof String s && !s.isBlank()) {
+                        clearUnread(db, s, conversationId);
+                    }
+                }
+            }
+            db.recursiveDelete(convRef).get();
+            db.collection("inquiryQuota").document(conversationId).delete().get();
+            return true;
+        } catch (Exception e) {
+            log.warn("Firestore purgeInquiryConversation failed for {}: {}", conversationId, e.getMessage());
+            return false;
+        }
+    }
+
     /** Retire le non-lu d'une conversation du compteur {@code userMeta/{uid}}. Meilleur effort. */
     private static void clearUnread(Firestore firestore, String uid, String conversationId) {
         String key = "unread_" + conversationId;
