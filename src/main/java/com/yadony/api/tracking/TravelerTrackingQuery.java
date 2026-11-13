@@ -107,7 +107,7 @@ public class TravelerTrackingQuery {
         if (!activated) {
             return TrackingStatus.NOT_ACTIVATED;
         }
-        Optional<OffsetDateTime> arrival = a != null ? arrivalInstant.of(a) : Optional.empty();
+        Optional<OffsetDateTime> arrival = a != null ? arrivalInstant.latestOf(a) : Optional.empty();
         if (arrival.isPresent() && now.isAfter(arrival.get().plus(STALE_AFTER))) {
             OffsetDateTime freshSince = now.minus(STALE_AFTER);
             boolean recentSample = !window.isEmpty()

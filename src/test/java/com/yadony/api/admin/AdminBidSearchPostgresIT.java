@@ -246,6 +246,35 @@ class AdminBidSearchPostgresIT {
         assertThat(none.getTodo()).isZero();
     }
 
+    /**
+     * M4 : l'alerte « en route après l'arrivée prévue » d'un bateau à fourchette se lit à la FIN de la fourchette
+     * ({@code COALESCE(arrival_date_max, arrival_date, departure_date)}) : un navire encore dans sa fourchette
+     * n'est pas en retard, un navire au-delà l'est.
+     */
+    @Test
+    void lateAlert_readsTheEndOfTheBoatRange_onPostgres() {
+        UserEntity traveler = user("Mamadou", "Kouyaté");
+        UserEntity sender = user("Aïcha", "Diallo");
+        AnnouncementEntity inRange = trip(traveler);
+        inRange.setTransportMode(TransportMode.BOAT);
+        inRange.setArrivalDate(NOW.toLocalDate().minusDays(3));
+        inRange.setArrivalDateMax(NOW.toLocalDate().plusDays(20));
+        inRange = announcementRepository.saveAndFlush(inRange);
+        AnnouncementEntity pastRange = trip(traveler);
+        pastRange.setTransportMode(TransportMode.BOAT);
+        pastRange.setArrivalDate(NOW.toLocalDate().minusDays(3));
+        pastRange.setArrivalDateMax(NOW.toLocalDate().minusDays(2));
+        pastRange = announcementRepository.saveAndFlush(pastRange);
+        BidEntity early = bid(inRange, sender, BidStatus.IN_TRANSIT);
+        BidEntity late = bid(pastRange, sender, BidStatus.IN_TRANSIT);
+
+        List<BidRepository.AlertRankRow> rows = bidRepository.alertRanks(
+                List.of(early.getId(), late.getId()), NOW, AdminBidQuery.lateBefore(NOW));
+
+        assertThat(rows).extracting(BidRepository.AlertRankRow::getBidId, BidRepository.AlertRankRow::getRank)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(late.getId(), 4));
+    }
+
     @Test
     void suggestions_runOnPostgres() {
         String tag = UUID.randomUUID().toString().replace("-", "").substring(0, 8);

@@ -55,4 +55,24 @@ class TripArrivalInstantTest {
     void emptyWithoutArrivalTime() {
         assertThat(helper.of(trip(LocalDate.of(2026, 7, 2), null))).isEmpty();
     }
+
+    @Test
+    void latestOf_readsTheEndOfTheBoatRange_whileOfKeepsTheStart() {
+        when(repository.findTimezoneByCityName("Abidjan", "CI")).thenReturn(Optional.of("Africa/Abidjan"));
+        AnnouncementEntity boat = trip(LocalDate.of(2026, 7, 20), LocalTime.of(9, 0));
+        boat.setTransportMode(TransportMode.BOAT);
+        boat.setArrivalDateMax(LocalDate.of(2026, 7, 30));
+
+        assertThat(helper.of(boat)).contains(OffsetDateTime.of(2026, 7, 20, 9, 0, 0, 0, ZoneOffset.UTC));
+        assertThat(helper.latestOf(boat)).contains(OffsetDateTime.of(2026, 7, 30, 9, 0, 0, 0, ZoneOffset.UTC));
+    }
+
+    @Test
+    void latestOf_equalsOf_withoutARange() {
+        when(repository.findTimezoneByCityName("Abidjan", "CI")).thenReturn(Optional.of("Africa/Abidjan"));
+        AnnouncementEntity plane = trip(LocalDate.of(2026, 7, 2), LocalTime.of(6, 30));
+
+        assertThat(helper.latestOf(plane)).isEqualTo(helper.of(plane));
+        assertThat(helper.latestOf(trip(LocalDate.of(2026, 7, 2), null))).isEmpty();
+    }
 }

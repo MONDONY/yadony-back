@@ -45,7 +45,7 @@ class TravelerTrackingQueryTest {
         trip = new AnnouncementEntity();
         ReflectionTestUtils.setField(trip, "id", annId);
         when(announcementRepository.findById(annId)).thenReturn(Optional.of(trip));
-        when(arrivalInstant.of(any())).thenReturn(Optional.empty());
+        when(arrivalInstant.latestOf(any())).thenReturn(Optional.empty());
         when(sampleRepository.findByAnnouncementIdAndCapturedAtBetweenOrderByCapturedAtAsc(
                 eq(annId), any(), any())).thenAnswer(inv -> {
             OffsetDateTime from = inv.getArgument(1);
@@ -104,7 +104,7 @@ class TravelerTrackingQueryTest {
 
         // STALE : 72 h passées l'arrivée prévue, plus rien de récent
         OffsetDateTime eta = T0.plusHours(8);
-        when(arrivalInstant.of(any())).thenReturn(Optional.of(eta));
+        when(arrivalInstant.latestOf(any())).thenReturn(Optional.of(eta));
         assertThat(query.forSender(inTransit, eta.plusHours(71)).status()).isEqualTo(TrackingStatus.EN_ROUTE);
         assertThat(query.forSender(inTransit, eta.plusHours(73)).status()).isEqualTo(TrackingStatus.STALE);
         // un échantillon récent (moins de 72 h) l'empêche
@@ -116,7 +116,7 @@ class TravelerTrackingQueryTest {
 
     @Test
     void neverActivatedTripIsNotStaleAfterArrival() {
-        when(arrivalInstant.of(any())).thenReturn(Optional.of(T0.plusHours(8)));
+        when(arrivalInstant.latestOf(any())).thenReturn(Optional.of(T0.plusHours(8)));
         BidEntity b = bid(BidStatus.IN_TRANSIT, T0, null);
         assertThat(query.forSender(b, T0.plusDays(10)).status()).isEqualTo(TrackingStatus.NOT_ACTIVATED);
     }

@@ -13,6 +13,10 @@ import java.util.Optional;
  * lus dans le fuseau de la VILLE D'ARRIVÉE (référentiel {@code cities}, ville + pays), à
  * défaut dans le fuseau du trajet (celui du départ). Un Paris → Abidjan arrivant à 06:30
  * n'est pas à l'heure de Paris. Vide sans heure d'arrivée ou sans jour d'arrivée.
+ *
+ * <p>Deux lectures : {@link #of} au plus tôt (début de la fourchette d'un bateau : le rappel « êtes-vous
+ * arrivé ? »), {@link #latestOf} au plus tard (fin de la fourchette : « sans nouvelles » ne se déclare pas
+ * tant que le navire est encore dans sa fourchette). Hors bateau, les deux sont identiques.
  */
 @Component
 public class TripArrivalInstant {
@@ -23,12 +27,18 @@ public class TripArrivalInstant {
         this.announcementRepository = announcementRepository;
     }
 
+    /** Arrivée au plus tôt : début de la fourchette d'un bateau, jour d'arrivée sinon. */
     public Optional<OffsetDateTime> of(AnnouncementEntity a) {
-        if (a.getArrivalTime() == null) {
-            return Optional.empty();
-        }
-        var day = ArrivalRules.effectiveArrivalDate(a);
-        if (day == null) {
+        return at(a, ArrivalRules.effectiveArrivalDate(a));
+    }
+
+    /** Arrivée au plus tard : fin de la fourchette d'un bateau, jour d'arrivée sinon. */
+    public Optional<OffsetDateTime> latestOf(AnnouncementEntity a) {
+        return at(a, ArrivalRules.latestArrivalDate(a));
+    }
+
+    private Optional<OffsetDateTime> at(AnnouncementEntity a, java.time.LocalDate day) {
+        if (a.getArrivalTime() == null || day == null) {
             return Optional.empty();
         }
         return Optional.of(day.atTime(a.getArrivalTime()).atZone(arrivalZone(a)).toOffsetDateTime());
