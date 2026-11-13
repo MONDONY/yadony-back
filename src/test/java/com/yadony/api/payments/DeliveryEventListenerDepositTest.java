@@ -251,6 +251,31 @@ class DeliveryEventListenerDepositTest {
     }
 
     @Test
+    @DisplayName("colis annulé (ou refusé) après la première lecture, avant le claim : relu sous verrou, rien ne part")
+    void depositCancelledBeforeClaim_relockedReadStopsRelease() {
+        BidEntity cancelled = new BidEntity();
+        ReflectionTestUtils.setField(cancelled, "id", bidId);
+        cancelled.setSenderId(senderId);
+        cancelled.setStatus(BidStatus.CANCELLED);
+        freeze(cancelled, PayoutTrigger.DEPOSIT);
+        // 1re lecture (pré-filtre) : déposé ; 2e lecture, sous le verrou du colis : annulé entre-temps.
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid), Optional.of(cancelled));
+
+        try (MockedStatic<Transfer> transferStatic = mockStatic(Transfer.class)) {
+            assertThat(listener.releaseAtDeposit(deposited())).isEqualTo(EscrowReleaseOutcome.NOT_DEPOSITED);
+            transferStatic.verifyNoInteractions();
+        }
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository);
+        order.verify(bidRepository).lockForUpdate(bidId);
+        order.verify(bidRepository).findById(bidId);
+        verify(auditService).log(eq("BID"), eq(bidId), eq("DEPOSIT_RELEASE_IGNORED_NOT_DEPOSITED"), eq(travelerId),
+                anyMap());
+        verifyNothingPaid();
+        verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyMap());
+    }
+
+    @Test
     @DisplayName("claim perdu (un autre traitement a versé) : rien ne part")
     void depositClaimLost_releasesNothing() {
         when(paymentRepository.markReleasedIfEscrowAndUnguarded(any(), any())).thenReturn(0);

@@ -125,6 +125,18 @@ public class BidService {
         this.tripDelayRepository = tripDelayRepository;
     }
 
+    /**
+     * Versement au dépôt déjà parti ? (payments, port de cancellation/) ; repli prudent
+     * {@link com.yadony.api.cancellation.DepositPayoutPort#ASSUME_PAID} tant que Spring ne l'a pas injecté.
+     */
+    private com.yadony.api.cancellation.DepositPayoutPort depositPayouts =
+            com.yadony.api.cancellation.DepositPayoutPort.ASSUME_PAID;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDepositPayoutPort(com.yadony.api.cancellation.DepositPayoutPort depositPayouts) {
+        this.depositPayouts = depositPayouts;
+    }
+
     /** Supplément de prix à la remise (payments/supplement) ; aucun tant que Spring ne l'a pas injecté. */
     private BidSupplementSummaryPort supplementSummary = BidSupplementSummaryPort.NONE;
 
@@ -1168,6 +1180,9 @@ public class BidService {
 
         // Verrou D3 : pas d'annulation en transit ni après le départ réel (colis remis).
         com.yadony.api.cancellation.CancellationGuard.assertCancellable(bid, announcement);
+        // Colis payé au dépôt dont le transporteur a déjà reçu l'argent : aucun remboursement automatique (409
+        // deposit-paid-no-refund), le support ouvre un litige.
+        com.yadony.api.cancellation.CancellationGuard.assertNoRefundAfterDepositPayout(bid, depositPayouts);
 
         BidStatus statusBeforeCancel = bid.getStatus();
 
@@ -1324,6 +1339,9 @@ public class BidService {
     public BidResponse refuseParcel(UUID bidId, String firebaseUid,
                                     String reason, String refusalPhotoUrl) {
         UserEntity traveler = findUserByFirebaseUid(firebaseUid);
+        // Verrou du colis avant sa lecture (comme cancelBid) : sérialisé avec le versement au dépôt, qui verrouille le
+        // colis avant son claim ; le statut et la règle testés ci-dessous sont ceux relus sous verrou.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = findBid(bidId);
 
         AnnouncementEntity announcement = findAnnouncement(bid.getAnnouncementId());
@@ -1338,6 +1356,9 @@ public class BidService {
                 && com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "parcel-refusal-locked", "problem.parcel-refusal-locked");
         }
+        // Colis payé au dépôt dont le transporteur a déjà reçu l'argent : refuser le colis rembourserait l'expéditeur
+        // après ce versement. 409 deposit-paid-no-refund, le support ouvre un litige.
+        com.yadony.api.cancellation.CancellationGuard.assertNoRefundAfterDepositPayout(bid, depositPayouts);
 
         // Le colis refusé rend sa place au trajet, comme une annulation (restoreCapacityIfNeeded) :
         // ses kilos restaient prélevés, et un trajet FULL le restait. Seul endroit où la capacité

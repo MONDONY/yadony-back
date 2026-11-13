@@ -4341,6 +4341,103 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("colis payé au dépôt, déposé, transporteur payé → 409 deposit-paid-no-refund, rien ne change")
+        void refuseParcel_depositPaid_409() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = depositBid(BidStatus.HANDED_OVER);
+            bidService.setDepositPayoutPort(id -> true);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.refuseParcel(BID_ID, TRAVELER_UID, "raison", null))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("deposit-paid-no-refund");
+                    });
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+            verify(bidRepository).lockForUpdate(BID_ID);
+            verify(bidRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("colis payé au dépôt pas encore déposé (ACCEPTED) → refus permis, remboursé comme avant")
+        void refuseParcel_depositBidBeforeScan_allowedAndRefunded() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UserEntity sender = buildSender();
+            BidEntity bid = depositBid(BidStatus.ACCEPTED);
+            java.util.List<UUID> asked = new java.util.ArrayList<>();
+            bidService.setDepositPayoutPort(id -> asked.add(id));
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.save(any())).thenReturn(sender);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+            assertThat(asked).isEmpty();
+            verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.ParcelRefusedEvent.class));
+        }
+
+        @Test
+        @DisplayName("colis payé au dépôt, déposé, aucun argent versé (espèces) → refus permis comme avant")
+        void refuseParcel_depositedNotPaid_allowed() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UserEntity sender = buildSender();
+            BidEntity bid = depositBid(BidStatus.HANDED_OVER);
+            bidService.setDepositPayoutPort(id -> false);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.save(any())).thenReturn(sender);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+        }
+
+        @Test
+        @DisplayName("annulation d'un colis payé au dépôt, déposé, transporteur payé → 409 deposit-paid-no-refund")
+        void cancelBid_depositPaid_409() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = depositBid(BidStatus.HANDED_OVER);
+            bidService.setDepositPayoutPort(id -> true);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.cancelBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("deposit-paid-no-refund"));
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        private BidEntity depositBid(BidStatus status) {
+            BidEntity bid = buildBid();
+            bid.setStatus(status);
+            org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTrigger",
+                    com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+            org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt",
+                    java.time.LocalDateTime.now());
+            return bid;
+        }
+
+        @Test
         @DisplayName("PROD-15 : refus du seul colis d'un trajet FULL avant départ → kilos rendus, trajet ACTIVE")
         void refuseParcel_onFullTripBeforeDeparture_releasesCapacityAndReopens() {
             UserEntity traveler = buildTraveler();

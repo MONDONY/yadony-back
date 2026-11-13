@@ -481,6 +481,22 @@ public class DeliveryEventListener {
         if (event.getBidId() != null) {
             bidRepository.lockForUpdate(event.getBidId());
         }
+        // Versement au dépôt : « déposé et versable » relu SOUS le verrou du colis. La lecture du début de release()
+        // a pu précéder une annulation, un refus ou une annulation de trajet commités depuis (ils verrouillent le colis
+        // avant de lire le paiement) : le colis n'est alors plus dans le parcours, rien ne part, l'expéditeur est
+        // remboursé par leur propre chemin.
+        if (event.deposit()) {
+            BidEntity locked = bidRepository.findById(event.getBidId()).orElse(null);
+            if (!DepositRelease.depositedAndPayable(locked, bidRepository)) {
+                log.warn("Versement au dépôt du colis {} abandonné : colis sorti du parcours avant le claim",
+                        event.getBidId());
+                auditService.log("BID", event.getBidId(), "DEPOSIT_RELEASE_IGNORED_NOT_DEPOSITED",
+                        event.getTravelerId(), Map.of("bidId", event.getBidId().toString(),
+                                "bidStatus", locked != null ? locked.getStatus().name() : "UNKNOWN",
+                                "stage", "after-bid-lock"));
+                return Phase1.done(EscrowReleaseOutcome.NOT_DEPOSITED);
+            }
+        }
         // Claim atomique ESCROW → RELEASED, PARTAGÉ par les deux rails (Stripe et pawaPay) :
         // empêche un double versement (double capture / double Transfer / double payout) si
         // l'événement de livraison est traité deux fois en parallèle. Le branchement par rail

@@ -12,6 +12,7 @@ import com.yadony.api.disputes.events.DisputeOpenedEvent;
 import com.yadony.api.cancellation.dto.ReturnCodeResponse;
 import com.yadony.api.cancellation.events.ParcelReturnedEvent;
 import com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent;
+import com.yadony.api.cancellation.events.TripCancelRefusedDepositPaidEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.cancellation.events.TravelerHighCancellationEvent;
 import com.yadony.api.cancellation.events.TravelerNoShowReportedEvent;
@@ -66,6 +67,18 @@ public class CancellationService {
     static final String OFFER_ACCEPTED_AWAITING_PAYMENT = "offer-accepted-awaiting-payment";
 
     static final int MAX_RETURN_CODE_ATTEMPTS = 3;
+
+    /**
+     * Versement au dépôt déjà parti ? Branché par Spring (implémentation du paquet {@code payments}) ; repli prudent
+     * {@link DepositPayoutPort#ASSUME_PAID} sans implémentation (tests de tranche, hors Spring) : un colis payé au dépôt
+     * et déposé n'est alors jamais remboursé automatiquement.
+     */
+    private DepositPayoutPort depositPayouts = DepositPayoutPort.ASSUME_PAID;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDepositPayoutPort(DepositPayoutPort depositPayouts) {
+        this.depositPayouts = depositPayouts;
+    }
 
     public CancellationService(CancellationRepository cancellationRepository,
                                 RematchSuggestionRepository rematchSuggestionRepository,
@@ -127,12 +140,26 @@ public class CancellationService {
                     "problem.offer-accepted-awaiting-payment", Map.of("negotiationStatus", awaitingPayment.get(0).name()));
         }
 
+        // Colis déjà remis : verrouillés ici (ordre colis puis paiement), avant toute écriture. Un colis payé au dépôt
+        // dont le transporteur a déjà reçu l'argent ne peut pas être remboursé automatiquement : l'annulation du
+        // trajet est refusée (409 deposit-paid-no-refund) et l'équipe est alertée, rien n'est modifié.
+        List<BidEntity> handedOverBids = bidRepository.findHandedOverByAnnouncementIdForUpdate(announcement.getId());
+        List<UUID> paidAtDeposit = handedOverBids.stream()
+                .filter(bid -> CancellationGuard.depositPaid(bid, depositPayouts))
+                .map(BidEntity::getId)
+                .toList();
+        if (!paidAtDeposit.isEmpty()) {
+            eventPublisher.publishEvent(new TripCancelRefusedDepositPaidEvent(
+                    announcement.getId(), traveler.getId(), paidAtDeposit));
+            throw CancellationGuard.depositPaidNoRefund();
+        }
+
         // Cancel the announcement
         announcement.setStatus(AnnouncementStatus.CANCELLED);
         announcementRepository.save(announcement);
 
         TripCancellationOutcome outcome =
-                cancelBidsAndPublish(announcement, traveler.getId(), request.reason(), true);
+                cancelBidsAndPublish(announcement, traveler.getId(), request.reason(), handedOverBids);
         List<CancellationEntity> cancellations = outcome.openCancellations();
         int parcelsToReturn = outcome.returnedBidIds().size();
 
@@ -201,7 +228,7 @@ public class CancellationService {
 
         List<CancellationEntity> cancellations = cancelBidsAndPublish(
                 announcement, announcement.getTravelerId(), CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
-                false).openCancellations();
+                List.of()).openCancellations();
 
         auditService.log("ANNOUNCEMENT", announcementId, "TRIP_CANCELLED", announcement.getTravelerId(),
                 Map.of("reason", CancellationReason.TRAVELER_ACCOUNT_DELETED.name(),
@@ -222,15 +249,16 @@ public class CancellationService {
      * (déclenche refund + notification + rematch côté listeners). L'annonce elle-même doit déjà
      * avoir été basculée à CANCELLED par l'appelant.
      *
-     * <p>Avec {@code returnHandedOver}, les colis déjà remis au voyageur (HANDED_OVER,
-     * IN_TRANSIT, ARRIVED) suivent la procédure de l'annulation après remise par le voyageur
+     * <p>Les colis déjà remis au voyageur ({@code handedOverBids} : HANDED_OVER, IN_TRANSIT, ARRIVED, chargés et
+     * verrouillés par l'appelant ; vide pour la suppression de compte) suivent la procédure de l'annulation après
+     * remise par le voyageur
      * (FLUTTER-FH) : code de retour et délai de 3 jours, annulation
      * {@link CancellationReason#TRAVELER_CANCEL_AFTER_HANDOVER} confirmée, remboursement intégral
      * par le même {@link TripCancelledEvent}, notification de retour à l'expéditeur. Sans cela, ces
      * colis restaient orphelins sur un trajet annulé.
      */
     private TripCancellationOutcome cancelBidsAndPublish(
-            AnnouncementEntity announcement, UUID actorId, String reason, boolean returnHandedOver) {
+            AnnouncementEntity announcement, UUID actorId, String reason, List<BidEntity> handedOverBids) {
         // Cancel ALL in-progress bids on this trip (not just ACCEPTED) so each
         // sender's bid reflects the cancelled trip — sinon un bid PENDING /
         // PAYMENT_ESCROWED gardait son statut partout. Set « actif » canonique
@@ -278,9 +306,6 @@ public class CancellationService {
         List<CancellationEntity> rematchCancellations = new ArrayList<>(cancellations);
 
         // Colis déjà remis : même procédure que l'annulation après remise par le voyageur.
-        List<BidEntity> handedOverBids = returnHandedOver
-                ? bidRepository.findHandedOverByAnnouncementIdForUpdate(announcement.getId())
-                : List.of();
         List<UUID> returnedBidIds = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
         for (BidEntity bid : handedOverBids) {
@@ -704,6 +729,9 @@ public class CancellationService {
         }
 
         CancellationGuard.assertCancellable(bid, announcement);
+        // Colis payé au dépôt dont le transporteur a déjà reçu l'argent : aucun remboursement automatique (409
+        // deposit-paid-no-refund), le support ouvre un litige.
+        CancellationGuard.assertNoRefundAfterDepositPayout(bid, depositPayouts);
 
         // UNIQUE(bid_id, scope) : une seule ligne HANDOVER par colis. Une déclaration « expéditeur
         // absent » levée (RESOLVED, par le scan de remise ou par l'équipe) n'est plus une
