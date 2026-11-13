@@ -189,9 +189,13 @@ jobs:
           YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED=${{ vars.YADONY_INDIVIDUAL_FREQUENCY_SCHEDULER_ENABLED || 'false' }}
           # DAC7 (lot 3a) : endpoints voyageur des informations fiscales (NIF). Éteint par défaut : ne l'allumer
           # qu'après la mise à jour de la politique de confidentialité et des CGU (préavis de 30 jours).
+          # AMORÇAGE SEULEMENT : lue une fois, au premier démarrage qui voit la clé dac7_enabled absente des réglages
+          # plateforme ; ensuite c'est l'admin (Réglages) qui décide, sans redéploiement. Changer la variable après
+          # coup ne fait plus rien.
           YADONY_DAC7_ENABLED=${{ vars.YADONY_DAC7_ENABLED || 'false' }}
           # DAC7 (lot 3b) : demande du numéro fiscal et deux rappels (14 et 30 jours) aux seuls voyageurs à solliciter.
-          # Éteint par défaut ; sans effet tant que YADONY_DAC7_ENABLED est éteint.
+          # Éteint par défaut ; sans effet tant que la collecte est éteinte. Même règle : amorçage seulement, puis
+          # réglage dac7_reminders_enabled dans l'admin.
           YADONY_DAC7_REMINDERS_ENABLED=${{ vars.YADONY_DAC7_REMINDERS_ENABLED || 'false' }}
           # Relance J+1/J+3 des comptes vérifiés sans première action : éteinte par défaut.
           # Manquait ici (staging l'allume par son application-staging.yml) : la variable posée

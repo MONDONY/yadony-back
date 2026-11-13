@@ -43,6 +43,8 @@ public class PlatformSettingsInitializer {
     private final int smsOtpMaxSendsPerHourGlobalProperty;
     private final int smsOtpMaxSendsPerDayGlobalProperty;
     private final String smsBlockedCountryCodesProperty;
+    private final boolean dac7EnabledProperty;
+    private final boolean dac7RemindersEnabledProperty;
 
     public PlatformSettingsInitializer(PlatformSettingRepository repository,
                                        YadonyConfigProperties config,
@@ -71,7 +73,9 @@ public class PlatformSettingsInitializer {
                                        @Value("${yadony.sms.max-sends-per-day-global:150}")
                                        String smsOtpMaxSendsPerDayGlobalProperty,
                                        @Value("${yadony.sms.blocked-country-codes:}")
-                                       String smsBlockedCountryCodesProperty) {
+                                       String smsBlockedCountryCodesProperty,
+                                       @Value("${yadony.dac7.enabled:}") String dac7EnabledProperty,
+                                       @Value("${yadony.dac7.reminders.enabled:}") String dac7RemindersEnabledProperty) {
         this.repository = repository;
         this.config = config;
         this.smsEnabledProperty = smsEnabledProperty;
@@ -108,6 +112,8 @@ public class PlatformSettingsInitializer {
                 PlatformSettingKey.MAX_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL,
                 PlatformSettingKey.DEFAULT_SMS_OTP_MAX_SENDS_PER_DAY_GLOBAL);
         this.smsBlockedCountryCodesProperty = blockedCountryCodesOr(smsBlockedCountryCodesProperty);
+        this.dac7EnabledProperty = booleanOrFalse(dac7EnabledProperty);
+        this.dac7RemindersEnabledProperty = booleanOrFalse(dac7RemindersEnabledProperty);
     }
 
     /**
@@ -231,6 +237,11 @@ public class PlatformSettingsInitializer {
                 String.valueOf(assistantFormDraftDailyQuotaProperty));
         // Moyens de paiement : amorcés une seule fois depuis PAYMENTS_*_ENABLED (faux par défaut),
         // le back-office fait ensuite autorité — changer la variable après coup ne fait plus rien.
+        // DAC7 : amorcés une seule fois depuis YADONY_DAC7_ENABLED et YADONY_DAC7_REMINDERS_ENABLED (faux par défaut),
+        // le back-office fait ensuite autorité. Les messages ne s'amorcent allumés que si la collecte l'est.
+        defaults.put(PlatformSettingKey.DAC7_ENABLED, String.valueOf(dac7EnabledProperty));
+        defaults.put(PlatformSettingKey.DAC7_REMINDERS_ENABLED,
+                String.valueOf(dac7EnabledProperty && dac7RemindersEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_PAYPAL_ENABLED, String.valueOf(paypalEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_APPLE_PAY_ENABLED, String.valueOf(applePayEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED, String.valueOf(googlePayEnabledProperty));

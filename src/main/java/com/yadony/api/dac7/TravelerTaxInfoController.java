@@ -25,11 +25,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class TravelerTaxInfoController {
 
     private final TravelerTaxInfoService service;
-    private final Dac7Properties properties;
+    private final Dac7Switches switches;
 
-    public TravelerTaxInfoController(TravelerTaxInfoService service, Dac7Properties properties) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public TravelerTaxInfoController(TravelerTaxInfoService service, Dac7Switches switches) {
         this.service = service;
-        this.properties = properties;
+        this.switches = switches;
+    }
+
+    /** Tests : collecte dérivée des propriétés (sans le back-office). */
+    TravelerTaxInfoController(TravelerTaxInfoService service, Dac7Properties properties) {
+        this(service, Dac7Switches.fixed(properties.enabledOrDefault(), false));
     }
 
     @GetMapping
@@ -47,7 +53,7 @@ public class TravelerTaxInfoController {
     }
 
     private void requireEnabled() {
-        if (!properties.enabledOrDefault()) {
+        if (!switches.collectionEnabled()) {
             throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "dac7-disabled", "problem.dac7.dac7-disabled");
         }
     }

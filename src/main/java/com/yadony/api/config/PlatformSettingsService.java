@@ -191,6 +191,16 @@ public class PlatformSettingsService {
         return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.TRANSPORT_BOAT_ENABLED.key()));
     }
 
+    /** Collecte DAC7 ouverte — voir {@link PlatformSettingKey#DAC7_ENABLED}. Ligne absente : éteinte. */
+    public boolean dac7Enabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.DAC7_ENABLED.key()));
+    }
+
+    /** Messages DAC7 (invite, rappels) — voir {@link PlatformSettingKey#DAC7_REMINDERS_ENABLED}. Absente : éteints. */
+    public boolean dac7RemindersEnabled() {
+        return Boolean.parseBoolean(cache.all().get(PlatformSettingKey.DAC7_REMINDERS_ENABLED.key()));
+    }
+
     /** Feature flag de l'offre PRO — voir {@link PlatformSettingKey#PRO_ENABLED}. */
     public boolean proEnabled() {
         String raw = cache.all().get(PlatformSettingKey.PRO_ENABLED.key());
@@ -362,6 +372,23 @@ public class PlatformSettingsService {
                 .toList();
     }
 
+    /**
+     * Les messages DAC7 n'ont de sens que si la collecte est ouverte (l'écran de saisie n'existe pas sinon) : les allumer
+     * alors que la collecte est éteinte, et qu'elle ne s'allume pas dans la même demande, est refusé.
+     */
+    private void requireCollectionForReminders(Map<PlatformSettingKey, String> changes) {
+        String reminders = changes.get(PlatformSettingKey.DAC7_REMINDERS_ENABLED);
+        if (reminders == null || !Boolean.parseBoolean(normalize(PlatformSettingKey.DAC7_REMINDERS_ENABLED, reminders))) {
+            return;
+        }
+        String collection = changes.get(PlatformSettingKey.DAC7_ENABLED);
+        boolean collectionAfter = collection == null ? dac7Enabled()
+                : Boolean.parseBoolean(normalize(PlatformSettingKey.DAC7_ENABLED, collection));
+        if (!collectionAfter) {
+            throw invalid("Les messages DAC7 exigent la collecte DAC7 : allumez d'abord la collecte");
+        }
+    }
+
     /** Valeur servie quand la ligne manque : la meme que celle lue par le contrat public. */
     private String effectiveValue(PlatformSettingKey key) {
         return switch (key) {
@@ -391,6 +418,8 @@ public class PlatformSettingsService {
             case PAYMENTS_GOOGLE_PAY_ENABLED -> String.valueOf(googlePayEnabled());
             case REMOTE_CONFIG_FETCH_MINUTES -> String.valueOf(remoteConfigFetchMinutes());
             case INDIVIDUAL_TRIPS_ALERT_THRESHOLD -> String.valueOf(individualTripsAlertThreshold());
+            case DAC7_ENABLED -> String.valueOf(dac7Enabled());
+            case DAC7_REMINDERS_ENABLED -> String.valueOf(dac7RemindersEnabled());
         };
     }
 
@@ -403,6 +432,7 @@ public class PlatformSettingsService {
      */
     @Transactional
     public PlatformSettingsSnapshot update(Map<PlatformSettingKey, String> changes, UUID adminId) {
+        requireCollectionForReminders(changes);
         boolean touched = false;
         for (Map.Entry<PlatformSettingKey, String> entry : changes.entrySet()) {
             PlatformSettingKey key = entry.getKey();
@@ -561,6 +591,9 @@ public class PlatformSettingsService {
                     "Le quota de questions à l'assistant doit être un entier entre 1 et 1000");
             case ASSISTANT_FORM_DRAFT_DAILY_QUOTA -> boundedInt(value, MIN_ASSISTANT_QUOTA, MAX_ASSISTANT_QUOTA,
                     "Le quota de remplissage par l'IA doit être un entier entre 1 et 1000");
+            case DAC7_ENABLED -> strictBoolean(value, "L'activation de la collecte DAC7 attend true ou false");
+            case DAC7_REMINDERS_ENABLED -> strictBoolean(value,
+                    "L'activation des messages DAC7 attend true ou false");
             case PAYMENTS_PAYPAL_ENABLED -> strictBoolean(value, "L'activation de PayPal attend true ou false");
             case PAYMENTS_APPLE_PAY_ENABLED -> strictBoolean(value, "L'activation d'Apple Pay attend true ou false");
             case PAYMENTS_GOOGLE_PAY_ENABLED -> strictBoolean(value,

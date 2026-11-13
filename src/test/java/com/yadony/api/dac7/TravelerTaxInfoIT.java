@@ -54,6 +54,7 @@ class TravelerTaxInfoIT {
     @Autowired Dac7ReminderService reminders;
     @Autowired Dac7Properties dac7Properties;
     @Autowired java.time.Clock clock;
+    @Autowired com.yadony.api.config.PlatformSettingsService platformSettings;
 
     /**
      * Écouteur d'acceptation avec les messages DAC7 allumés (le profil de test laisse
@@ -106,6 +107,27 @@ class TravelerTaxInfoIT {
         mockMvc.perform(get(URL)).andExpect(status().isUnauthorized());
         mockMvc.perform(put(URL).contentType(MediaType.APPLICATION_JSON).content(body(NIF, "FR", null)))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void interrupteurDuBackOffice_sAppliqueSansRedemarrage() throws Exception {
+        java.util.UUID admin = UUID.randomUUID();
+        try {
+            // Amorcé à vrai depuis application-test.yml ; le back-office fait ensuite autorité, tout de suite.
+            platformSettings.update(java.util.Map.of(com.yadony.api.config.PlatformSettingKey.DAC7_ENABLED, "false"),
+                    admin);
+            mockMvc.perform(get(URL).with(as(me, "ROLE_TRAVELER"))).andExpect(status().isNotFound());
+            mockMvc.perform(put(URL).with(as(me, "ROLE_TRAVELER")).contentType(MediaType.APPLICATION_JSON)
+                    .content(body(NIF, "FR", null))).andExpect(status().isNotFound());
+            assertThat(users.findById(me.getId()).orElseThrow().getTaxIdentificationNumber()).isNull();
+
+            platformSettings.update(java.util.Map.of(com.yadony.api.config.PlatformSettingKey.DAC7_ENABLED, "true"),
+                    admin);
+            mockMvc.perform(get(URL).with(as(me, "ROLE_TRAVELER"))).andExpect(status().isOk());
+        } finally {
+            platformSettings.update(java.util.Map.of(com.yadony.api.config.PlatformSettingKey.DAC7_ENABLED, "true"),
+                    admin);
+        }
     }
 
     @Test

@@ -40,21 +40,37 @@ public class Dac7TaxInfoRetention implements TaxInfoRetentionPort {
     private final Dac7ResidencyPolicy residency;
     private final Dac7ReportReadModel readModel;
     private final Dac7Properties properties;
+    private final Dac7Switches switches;
     private final Clock clock;
     private final TransactionOperations ownTransaction;
 
     @Autowired
     public Dac7TaxInfoRetention(Dac7ResidencyPolicy residency, Dac7ReportReadModel readModel,
-                                Dac7Properties properties, Clock clock, PlatformTransactionManager transactionManager) {
-        this(residency, readModel, properties, clock, requiresNewReadOnly(transactionManager));
+                                Dac7Properties properties, Dac7Switches switches, Clock clock,
+                                PlatformTransactionManager transactionManager) {
+        this(residency, readModel, properties, switches, clock, requiresNewReadOnly(transactionManager));
     }
 
-    /** Tests : transaction fournie (ou {@link TransactionOperations#withoutTransaction()}). */
+    /** Tests d'intégration : gestionnaire réel, collecte dérivée des propriétés (sans le back-office). */
+    Dac7TaxInfoRetention(Dac7ResidencyPolicy residency, Dac7ReportReadModel readModel, Dac7Properties properties,
+                         Clock clock, PlatformTransactionManager transactionManager) {
+        this(residency, readModel, properties, Dac7Switches.fixed(properties.enabledOrDefault(), false), clock,
+                transactionManager);
+    }
+
+    /** Tests : transaction fournie (ou {@link TransactionOperations#withoutTransaction()}), collecte dérivée. */
     Dac7TaxInfoRetention(Dac7ResidencyPolicy residency, Dac7ReportReadModel readModel, Dac7Properties properties,
                          Clock clock, TransactionOperations ownTransaction) {
+        this(residency, readModel, properties, Dac7Switches.fixed(properties.enabledOrDefault(), false), clock,
+                ownTransaction);
+    }
+
+    Dac7TaxInfoRetention(Dac7ResidencyPolicy residency, Dac7ReportReadModel readModel, Dac7Properties properties,
+                         Dac7Switches switches, Clock clock, TransactionOperations ownTransaction) {
         this.residency = residency;
         this.readModel = readModel;
         this.properties = properties;
+        this.switches = switches;
         this.clock = clock;
         this.ownTransaction = ownTransaction;
     }
@@ -68,7 +84,7 @@ public class Dac7TaxInfoRetention implements TaxInfoRetentionPort {
 
     @Override
     public Optional<Retention> retention(UserEntity user) {
-        if (!properties.enabledOrDefault() || user.getTaxIdentificationNumber() == null) {
+        if (!switches.collectionEnabled() || user.getTaxIdentificationNumber() == null) {
             return Optional.empty();
         }
         String residenceCountry = Dac7ResidencyPolicy.residenceCountryOf(user);

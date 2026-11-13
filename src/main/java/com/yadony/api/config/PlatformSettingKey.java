@@ -116,7 +116,20 @@ public enum PlatformSettingKey {
     PAYMENTS_APPLE_PAY_ENABLED("payments_apple_pay_enabled", PlatformSettingType.BOOLEAN),
     PAYMENTS_GOOGLE_PAY_ENABLED("payments_google_pay_enabled", PlatformSettingType.BOOLEAN),
     REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER),
-    INDIVIDUAL_TRIPS_ALERT_THRESHOLD("individual_trips_alert_threshold", PlatformSettingType.INTEGER);
+    INDIVIDUAL_TRIPS_ALERT_THRESHOLD("individual_trips_alert_threshold", PlatformSettingType.INTEGER),
+    DAC7_ENABLED("dac7_enabled", PlatformSettingType.BOOLEAN),
+    DAC7_REMINDERS_ENABLED("dac7_reminders_enabled", PlatformSettingType.BOOLEAN);
+
+    /**
+     * DAC7 : {@code DAC7_ENABLED} ouvre la collecte (écran « Informations fiscales » et ses endpoints, pages admin,
+     * export) ; {@code DAC7_REMINDERS_ENABLED} y ajoute les messages (invite à l'acceptation d'une réservation,
+     * rappels à 14 et 30 jours). Les messages exigent la collecte : les allumer seuls est refusé (422), et éteindre
+     * la collecte les coupe aussi. Faux par défaut, amorcés UNE fois depuis {@code YADONY_DAC7_ENABLED} et
+     * {@code YADONY_DAC7_REMINDERS_ENABLED}, puis pilotés depuis le back-office sans redéploiement (changer la
+     * variable ensuite ne fait plus rien) ; chaque changement est audité (ancienne et nouvelle valeur, auteur).
+     * À n'allumer en production qu'après la mise à jour de la politique de confidentialité et des CGU (préavis de
+     * 30 jours) et la validation des textes par l'avocat. Ligne absente : éteint, la position sûre.
+     */
 
     /**
      * Lot 4 : un particulier est signalé à l'équipe (et reçoit la question « Confirmez votre statut ») au-delà de ce
