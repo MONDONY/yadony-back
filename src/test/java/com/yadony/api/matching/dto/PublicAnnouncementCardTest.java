@@ -94,7 +94,7 @@ class PublicAnnouncementCardTest {
         JsonNode root = json.readTree(raw);
 
         assertThat(fieldNames(root)).containsExactlyInAnyOrder(
-                "id", "departureCity", "arrivalCity", "departureDate", "availableKg",
+                "id", "departureCity", "arrivalCity", "departureDate", "arrivalDate", "availableKg",
                 "capacityUnit", "pricePerKgDisplay", "currency", "pricingMode", "transportMode",
                 "urgent", "acceptedContentTypes", "traveler");
         assertThat(fieldNames(root.get("traveler"))).containsExactlyInAnyOrder(
@@ -104,6 +104,7 @@ class PublicAnnouncementCardTest {
         assertThat(root.get("departureCity").asText()).isEqualTo("Paris");
         assertThat(root.get("arrivalCity").asText()).isEqualTo("Dakar");
         assertThat(root.get("departureDate").asText()).isEqualTo("2026-12-20");
+        assertThat(root.get("arrivalDate").asText()).isEqualTo("2026-12-21");
         assertThat(root.get("currency").asText()).isEqualTo("EUR");
         assertThat(root.get("transportMode").asText()).isEqualTo("PLANE");
         assertThat(root.get("capacityUnit").asText()).isEqualTo("KG_EXACT");
@@ -266,5 +267,66 @@ class PublicAnnouncementCardTest {
                 r.maxItemSize(), r.maxParcelWeightKg());
 
         assertThat(PublicAnnouncementCard.from(sansVoyageur).traveler()).isNull();
+    }
+
+    /** Trajet bateau au m³ : fourchette d'arrivée, volumes et prix au m³ ; aucun kilo ni prix au kilo. */
+    private static AnnouncementSearchResponse boatSource() {
+        AnnouncementSearchResponse r = source(null);
+        return new AnnouncementSearchResponse(
+                r.id(), r.travelerId(), "Marseille", "Dakar", r.departureDate(),
+                r.departureTime(), r.arrivalTime(), LocalDate.of(2027, 1, 12), r.pickupAddress(),
+                r.deliveryAddress(), null, null, null, null,
+                TransportMode.BOAT, null, r.status(), r.bidsCount(),
+                r.traveler(), r.description(), r.acceptedContentTypes(), r.refusedTypes(),
+                r.acceptedPaymentMethods(), CapacityUnit.KG_EXACT, r.createdAt(), r.updatedAt(),
+                PricingMode.KG, r.priceGridItems(), r.handoverDeadline(), r.isFavorite(),
+                r.urgent(), r.currency(), r.negotiable(), r.availablePaymentMethods(),
+                null, r.convertedCurrency(), null,
+                r.uniqueViewerCount(), r.departureTimezone(),
+                null, new BigDecimal("1500"),
+                LocalDate.of(2027, 1, 25), new BigDecimal("3.000"), new BigDecimal("2.400"),
+                new BigDecimal("500.00"), new BigDecimal("560.00"));
+    }
+
+    @Test
+    void trajetBateauAuM3_exposeFourchetteVolumeEtPrixBrutAuM3SansLeNet() throws Exception {
+        PublicAnnouncementCard card = PublicAnnouncementCard.from(boatSource());
+
+        String raw = json.writeValueAsString(card);
+        JsonNode root = json.readTree(raw);
+
+        assertThat(fieldNames(root)).containsExactlyInAnyOrder(
+                "id", "departureCity", "arrivalCity", "departureDate", "arrivalDate", "arrivalDateMax",
+                "capacityUnit", "availableVolumeM3", "pricePerM3Display", "currency", "pricingMode",
+                "transportMode", "urgent", "acceptedContentTypes", "traveler");
+        assertThat(root.get("transportMode").asText()).isEqualTo("BOAT");
+        assertThat(root.get("arrivalDate").asText()).isEqualTo("2027-01-12");
+        assertThat(root.get("arrivalDateMax").asText()).isEqualTo("2027-01-25");
+        assertThat(root.get("availableVolumeM3").decimalValue()).isEqualByComparingTo("2.400");
+        // Brut payé par l'expéditeur, jamais le net du voyageur (500) ni la capacité initiale (3).
+        assertThat(root.get("pricePerM3Display").decimalValue()).isEqualByComparingTo("560.00");
+        assertThat(raw).doesNotContain("\"pricePerM3\"").doesNotContain("volumeCapacityM3")
+                .doesNotContain("500.00").doesNotContain("3.000");
+        assertThat(root.has("availableKg")).isFalse();
+        assertThat(root.has("pricePerKgDisplay")).isFalse();
+    }
+
+    @Test
+    void prixAuM3Nul_traiteCommeAbsent() throws Exception {
+        AnnouncementSearchResponse b = boatSource();
+        AnnouncementSearchResponse sansPrix = new AnnouncementSearchResponse(
+                b.id(), b.travelerId(), b.departureCity(), b.arrivalCity(), b.departureDate(),
+                b.departureTime(), b.arrivalTime(), b.arrivalDate(), b.pickupAddress(),
+                b.deliveryAddress(), null, null, null, null,
+                b.transportMode(), null, b.status(), b.bidsCount(),
+                b.traveler(), b.description(), b.acceptedContentTypes(), b.refusedTypes(),
+                b.acceptedPaymentMethods(), b.capacityUnit(), b.createdAt(), b.updatedAt(),
+                b.pricingMode(), b.priceGridItems(), b.handoverDeadline(), b.isFavorite(),
+                b.urgent(), b.currency(), b.negotiable(), b.availablePaymentMethods(),
+                null, b.convertedCurrency(), null, b.uniqueViewerCount(), b.departureTimezone(),
+                null, b.maxParcelWeightKg(), b.arrivalDateMax(), b.volumeCapacityM3(), b.availableVolumeM3(),
+                null, BigDecimal.ZERO);
+
+        assertThat(PublicAnnouncementCard.from(sansPrix).pricePerM3Display()).isNull();
     }
 }

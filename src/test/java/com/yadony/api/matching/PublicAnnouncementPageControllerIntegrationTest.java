@@ -78,6 +78,103 @@ class PublicAnnouncementPageControllerIntegrationTest {
         return announcementRepository.saveAndFlush(a);
     }
 
+    private AnnouncementEntity persistBoatM3Announcement() {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setTransportMode(TransportMode.BOAT);
+        a.setDepartureCity("Marseille");
+        a.setArrivalDate(LocalDate.now().plusDays(35));
+        a.setArrivalDateMax(LocalDate.now().plusDays(45));
+        a.setAvailableKg(null);
+        a.setTotalKg(null);
+        a.setPricePerKg(null);
+        a.setVolumeCapacityM3(new BigDecimal("3.000"));
+        a.setAvailableVolumeM3(new BigDecimal("2.400"));
+        a.setPricePerM3(new BigDecimal("500.00"));
+        return announcementRepository.saveAndFlush(a);
+    }
+
+    // Généricité : un trajet bateau au m³ montre son mode, sa fourchette d'arrivée, son volume et son prix
+    // au m³ (le prix payé par l'expéditeur, jamais le net), sans kilo, sans avion, sans la phrase de versement.
+    @Test
+    void boatM3Announcement_showsModeRangeVolumeAndGrossPricePerM3() throws Exception {
+        AnnouncementEntity a = persistBoatM3Announcement();
+
+        var result = mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("modeLabel", "Bateau"))
+                .andExpect(model().attribute("modeSymbol", "🚢"))
+                .andExpect(model().attribute("capacity", "2.4 m³"))
+                .andExpect(model().attributeExists("arrivalRange", "pricePerM3"))
+                .andExpect(model().attribute("showEscrowNote", false))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Arrivée estimée")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("par m³")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("2.4 m³")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Bateau")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("✈"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Avion"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("<span class=\"unit\">par kilo</span>"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("conservé par Yadony et"))))
+                .andReturn();
+
+        // Prix payé par l'expéditeur (net 500 + frais de service), pas le net.
+        BigDecimal shown = new BigDecimal((String) result.getModelAndView().getModel().get("pricePerM3"));
+        assertThat(shown).isGreaterThan(new BigDecimal("500"));
+        assertThat((String) result.getModelAndView().getModel().get("ogDescription")).contains("mètre cube")
+                .doesNotContain("kilos");
+    }
+
+    @Test
+    void planeAnnouncement_showsPlaneSymbolAndKiloWording_noRangeNoM3() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("modeLabel", "Avion"))
+                .andExpect(model().attribute("modeSymbol", "✈"))
+                .andExpect(model().attribute("capacity", "12 kg"))
+                .andExpect(model().attribute("arrivalRange", org.hamcrest.Matchers.nullValue()))
+                .andExpect(model().attribute("pricePerM3", org.hamcrest.Matchers.nullValue()))
+                .andExpect(model().attribute("showEscrowNote", true))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("par kilo")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("conservé par Yadony")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("m³"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Arrivée estimée"))));
+    }
+
+    @Test
+    void roadAnnouncement_showsCarSymbolNeverPlane() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setTransportMode(TransportMode.CAR);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("modeLabel", "Voiture"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("🚗")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("✈"))));
+    }
+
+    @Test
+    void arrivalRangeLabel_sameYearSameDayOrOpenEnded() {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setArrivalDate(LocalDate.of(2027, 1, 12));
+        a.setArrivalDateMax(LocalDate.of(2027, 1, 25));
+        assertThat(PublicAnnouncementPageController.arrivalRangeLabel(a)).isEqualTo("du 12 janvier au 25 janvier 2027");
+
+        a.setArrivalDate(LocalDate.of(2026, 12, 28));
+        assertThat(PublicAnnouncementPageController.arrivalRangeLabel(a))
+                .isEqualTo("du 28 décembre 2026 au 25 janvier 2027");
+
+        a.setArrivalDate(LocalDate.of(2027, 1, 25));
+        assertThat(PublicAnnouncementPageController.arrivalRangeLabel(a)).isEqualTo("le 25 janvier 2027");
+
+        a.setArrivalDate(null);
+        assertThat(PublicAnnouncementPageController.arrivalRangeLabel(a)).isEqualTo("avant le 25 janvier 2027");
+
+        a.setArrivalDateMax(null);
+        assertThat(PublicAnnouncementPageController.arrivalRangeLabel(a)).isNull();
+    }
+
     @Test
     void activeAnnouncement_isServedWithoutAuthentication() throws Exception {
         AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);

@@ -244,6 +244,9 @@ class GuestDataExposureIT {
             // ne sont plus servis. « label » reste : libelle d'un reseau mobile money accepte.
             "label",
             // TravelerProfileDto
+            // identityVerified : PublicTravelerCard de la recherche publique (/public/announcements),
+            // booléen dérivé de kycVerified déjà servi ci-dessous ; ni identité ni document.
+            "identityVerified",
             "displayName", "averageRating", "totalTrips", "kiloPro", "gpPro", "isProAccount",
             "kycVerified", "avatarUrl", "acceptsUnverified",
             // Statut legal declare et raison sociale : l'expediteur doit les voir avant de
@@ -653,6 +656,21 @@ class GuestDataExposureIT {
         assertThat(carte).as("le trajet bateau doit ressortir, sinon ce cas ne prouve rien").isNotNull();
         assertThat(carte.get("pricePerM3").isNull()).isTrue();
         assertThat(carte.path("pricePerM3Display").decimalValue()).isGreaterThan(BigDecimal.ZERO);
+
+        // Recherche publique (PublicAnnouncementCard) : fourchette d'arrivée, volume restant et brut au m³
+        // sont servis, jamais le net au m³, la capacité initiale ni l'adresse.
+        JsonNode publique = lire(get("/public/announcements").param("departureCity", "Marseille"),
+                "bateau-recherche-publique");
+        auditer(publique, "GET /public/announcements (bateau au m³)");
+        JsonNode cartePublique = null;
+        for (JsonNode n : publique.path("content")) {
+            if (bateauId.toString().equals(n.path("id").asText())) cartePublique = n;
+        }
+        assertThat(cartePublique).as("le trajet bateau doit ressortir de la recherche publique").isNotNull();
+        assertThat(cartePublique.path("pricePerM3Display").decimalValue()).isGreaterThan(BigDecimal.ZERO);
+        assertThat(cartePublique.path("availableVolumeM3").decimalValue()).isEqualByComparingTo("2.500");
+        assertThat(cartePublique.has("arrivalDateMax")).isTrue();
+        assertThat(cartePublique.has("pricePerM3")).as("jamais le net au m³").isFalse();
 
         var inscrit = new UsernamePasswordAuthenticationToken(
                 "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
