@@ -22,8 +22,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Prix d'une modification : le net vaut {@code kilos × prix au kilo publié du trajet} (jamais le net négocié)
- * plus les articles de grille de CE trajet. L'expéditeur ne paie que la différence de commission
+ * Prix d'une modification : le net vaut {@code kilos × prix au kilo publié du trajet} (jamais le net négocié), ou
+ * {@code m³ × prix au m³ publié du trajet} sur un trajet bateau vendu au volume, plus les articles de grille de CE
+ * trajet. L'expéditeur ne paie que la différence de commission
  * ({@link IncrementalCommission}, grille figée du colis) sur le net déjà dû : {@link BidExtrasNet#dueNet} (principal
  * plus ajouts déjà acquis). Lecture pure : rien n'est consommé.
  */
@@ -52,7 +53,25 @@ public class BidAmendmentPricing {
      */
     public BidAmendmentQuote quote(BidEntity bid, AnnouncementEntity announcement, BigDecimal addedKg,
                                    List<AmendmentLineRequest> items) {
+        return quote(bid, announcement, addedKg, null, items);
+    }
+
+    /**
+     * Même devis, avec du volume ajouté : net = {@code addedVolumeM3 × prix au m³ publié du trajet} (net voyageur,
+     * jamais le prix affiché), seulement sur un trajet vendu au m³. Même commission différentielle que les kilos
+     * ({@link IncrementalCommission}), payée par l'expéditeur ; arrondi unique du net total à l'unité mineure.
+     *
+     * @param addedVolumeM3 m³ ajoutés, nul ou 0 sans volume.
+     * @throws YadonyBusinessException 422 {@code amendment-not-eligible} si du volume est demandé sur un trajet qui
+     *         n'est pas vendu au m³, 400 {@code validation} pour un volume négatif ; les refus de la variante sans
+     *         volume sinon.
+     */
+    public BidAmendmentQuote quote(BidEntity bid, AnnouncementEntity announcement, BigDecimal addedKg,
+                                   BigDecimal addedVolumeM3, List<AmendmentLineRequest> items) {
         requireWellFormed(addedKg, items);
+        if (addedVolumeM3 != null && addedVolumeM3.signum() < 0) {
+            throw invalid("problem.validation.le-volume-ajoute-ne-peut-pas");
+        }
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(bid.getCurrency());
         BigDecimal net = BigDecimal.ZERO;
 
@@ -61,6 +80,12 @@ public class BidAmendmentPricing {
                 throw unprocessable("amendment-not-eligible", "problem.amendment-not-eligible");
             }
             net = net.add(addedKg.multiply(announcement.getPricePerKg()));
+        }
+        if (addedVolumeM3 != null && addedVolumeM3.signum() > 0) {
+            if (!announcement.isPricedPerM3()) {
+                throw unprocessable("amendment-not-eligible", "problem.amendment-volume-not-sold");
+            }
+            net = net.add(addedVolumeM3.multiply(announcement.getPricePerM3()));
         }
 
         List<BidAmendmentQuote.Line> lines = new ArrayList<>();

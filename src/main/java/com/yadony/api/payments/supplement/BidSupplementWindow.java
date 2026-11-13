@@ -4,6 +4,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.PayoutTrigger;
 import com.yadony.api.matching.TripTimezones;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -12,16 +13,26 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.EnumSet;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Fenêtre d'une demande de supplément : colis accepté, ou remis avant le départ (même fenêtre que
  * le refus du colis), et assez de temps pour répondre. L'échéance vaut
  * {@code min(maintenant + expiry, départ − departure-margin)} : la fenêtre de refus du colis reste
  * ainsi ouverte après l'expiration.
+ *
+ * <p>Colis payé au dépôt ({@link PayoutTrigger#DEPOSIT}) : fermée dès le dépôt (scan DEPART). Le transporteur a été
+ * payé à cet instant ; un supplément ne serait plus versé avec le principal, et son prix ne change plus (décision du
+ * propriétaire du 11/11).
  */
 @Component
 public class BidSupplementWindow {
+
+    /** Statuts d'un colis déposé (seul le scan DEPART fait passer un colis accepté à HANDED_OVER). */
+    private static final Set<BidStatus> DEPOSITED =
+            EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
 
     private final BidSupplementProperties properties;
     private final Clock clock;
@@ -49,10 +60,15 @@ public class BidSupplementWindow {
     /**
      * Échéance d'une demande créée maintenant.
      *
-     * @throws YadonyBusinessException 422 {@code invalid-bid-status} hors ACCEPTED / HANDED_OVER,
+     * @throws YadonyBusinessException 422 {@code supplement-after-deposit} pour un colis payé au dépôt déjà déposé,
+     *         422 {@code invalid-bid-status} hors ACCEPTED / HANDED_OVER,
      *         409 {@code supplement-locked} si le départ est passé ou trop proche.
      */
     public LocalDateTime requireOpen(BidEntity bid, AnnouncementEntity announcement) {
+        if (depositedAndPaidAtDeposit(bid)) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "supplement-after-deposit",
+                    "problem.supplement-after-deposit");
+        }
         if (bid.getStatus() != BidStatus.ACCEPTED && bid.getStatus() != BidStatus.HANDED_OVER) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-bid-status", "problem.invalid-bid-status.supplement-demande-que-sur");
         }
@@ -62,7 +78,13 @@ public class BidSupplementWindow {
     /** Même règle que {@link #requireOpen}, sans exception : pour {@code supplementRequestAllowed}. */
     public boolean isOpen(BidEntity bid, AnnouncementEntity announcement) {
         return (bid.getStatus() == BidStatus.ACCEPTED || bid.getStatus() == BidStatus.HANDED_OVER)
+                && !depositedAndPaidAtDeposit(bid)
                 && expiresAt(announcement).isPresent();
+    }
+
+    /** Colis payé au dépôt et déjà déposé : aucun supplément. */
+    static boolean depositedAndPaidAtDeposit(BidEntity bid) {
+        return bid.getPayoutTrigger() == PayoutTrigger.DEPOSIT && DEPOSITED.contains(bid.getStatus());
     }
 
     private Optional<LocalDateTime> expiresAt(AnnouncementEntity announcement) {

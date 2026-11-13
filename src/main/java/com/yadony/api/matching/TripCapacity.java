@@ -82,19 +82,33 @@ public final class TripCapacity {
         if (!trip.isPricedPerM3()) {
             return trip.reserveCapacity(bid.getWeightKg());
         }
-        BigDecimal volume = bid.getVolumeM3();
-        BigDecimal available = trip.getAvailableVolumeM3();
-        if (volume == null || available == null) {
+        return reserveVolume(trip, bid.getVolumeM3(), "colis " + bid.getId());
+    }
+
+    /**
+     * Retire {@code volumeM3} du volume restant d'un trajet vendu au m³ (colis, ou volume ajouté par une
+     * modification de colis) et bascule le trajet {@code FULL} à zéro (jamais un trajet hors marché). Sans effet
+     * hors trajet au m³, sans volume ou sans volume restant connu.
+     *
+     * @param owner ce qui prend la place, pour le journal ({@code "colis <id>"}, {@code "modification <id>"})
+     * @return {@code true} si le trajet a changé (l'appelant le sauvegarde alors)
+     */
+    public static boolean reserveVolume(AnnouncementEntity trip, BigDecimal volumeM3, String owner) {
+        if (trip == null || !trip.isPricedPerM3() || volumeM3 == null || volumeM3.signum() <= 0) {
             return false;
         }
-        BigDecimal left = available.subtract(volume);
+        BigDecimal available = trip.getAvailableVolumeM3();
+        if (available == null) {
+            return false;
+        }
+        BigDecimal left = available.subtract(volumeM3);
         if (left.signum() < 0) {
             // Inatteignable par les acceptations (assertAcceptable sous verrou) ; possible pour un fil déjà payé
-            // dont le trajet lié s'est rempli entre la liaison et le paiement (même surréservation préexistante
-            // qu'au kilo). Jamais sous zéro : chk_announcements_volume ferait échouer la matérialisation du colis
-            // payé, l'argent étant déjà pris.
-            log.error("Trajet {} : colis {} de {} m³ pour {} m³ restants, volume ramené à 0 (surréservation)",
-                    trip.getId(), bid.getId(), volume, available);
+            // dont le trajet lié s'est rempli entre le contrôle d'avant paiement et la matérialisation (même
+            // surréservation préexistante qu'au kilo). Jamais sous zéro : chk_announcements_volume ferait échouer la
+            // matérialisation du colis payé, l'argent étant déjà pris.
+            log.error("Trajet {} : {} de {} m³ pour {} m³ restants, volume ramené à 0 (surréservation)",
+                    trip.getId(), owner, volumeM3, available);
             left = BigDecimal.ZERO;
         }
         trip.setAvailableVolumeM3(left);
@@ -116,18 +130,29 @@ public final class TripCapacity {
         if (!trip.isPricedPerM3()) {
             return trip.releaseCapacity(bid.getWeightKg());
         }
-        BigDecimal volume = bid.getVolumeM3();
-        BigDecimal available = trip.getAvailableVolumeM3();
-        if (volume == null || available == null) {
+        return releaseVolume(trip, bid.getVolumeM3(), "colis " + bid.getId());
+    }
+
+    /**
+     * Rend {@code volumeM3} au volume restant d'un trajet vendu au m³, plafonné au volume proposé, et rouvre un
+     * trajet {@code FULL}. Inverse exact de {@link #reserveVolume}.
+     *
+     * @return {@code true} si le trajet a changé (l'appelant le sauvegarde alors)
+     */
+    public static boolean releaseVolume(AnnouncementEntity trip, BigDecimal volumeM3, String owner) {
+        if (trip == null || !trip.isPricedPerM3() || volumeM3 == null || volumeM3.signum() <= 0) {
             return false;
         }
-        BigDecimal restored = available.add(volume);
+        BigDecimal available = trip.getAvailableVolumeM3();
+        if (available == null) {
+            return false;
+        }
+        BigDecimal restored = available.add(volumeM3);
         BigDecimal capacity = trip.getVolumeCapacityM3();
         if (capacity != null && restored.compareTo(capacity) > 0) {
             // Jamais au-delà du volume proposé (chk_announcements_volume) : un trajet dédié garde tout le volume de
             // sa demande (rien n'est pris à la matérialisation de son colis), le lui rendre le ferait déborder.
-            log.info("Trajet {} : rendu du colis {} plafonné au volume proposé ({} m³)",
-                    trip.getId(), bid.getId(), capacity);
+            log.info("Trajet {} : rendu de {} plafonné au volume proposé ({} m³)", trip.getId(), owner, capacity);
             restored = capacity;
         }
         trip.setAvailableVolumeM3(restored);
