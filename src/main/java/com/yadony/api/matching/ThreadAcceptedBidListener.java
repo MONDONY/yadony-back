@@ -46,6 +46,7 @@ public class ThreadAcceptedBidListener {
     private final BidPhotoService bidPhotoService;
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
+    private final PayoutTriggerPolicy payoutTriggerPolicy;
 
     public ThreadAcceptedBidListener(BidRepository bidRepository,
                                      AnnouncementRepository announcementRepository,
@@ -54,7 +55,8 @@ public class ThreadAcceptedBidListener {
                                      StorageService storageService,
                                      BidPhotoService bidPhotoService,
                                      PromoService promoService,
-                                     CommissionVoucherService voucherService) {
+                                     CommissionVoucherService voucherService,
+                                     PayoutTriggerPolicy payoutTriggerPolicy) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.auditService = auditService;
@@ -63,6 +65,7 @@ public class ThreadAcceptedBidListener {
         this.bidPhotoService = bidPhotoService;
         this.promoService = promoService;
         this.voucherService = voucherService;
+        this.payoutTriggerPolicy = payoutTriggerPolicy;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -87,6 +90,10 @@ public class ThreadAcceptedBidListener {
         bid.setItemSize(e.itemSize());
         bid.setDescription(e.description() != null ? e.description() : e.contentCategory());
         bid.setContentCategory(e.contentCategory());
+        // Le trajet est lu avant le passage à ACCEPTED : la règle de versement se fige sur lui, à
+        // cet instant (le colis d'un fil naît accepté). Trajet introuvable : à la livraison.
+        java.util.Optional<AnnouncementEntity> trip = announcementRepository.findById(e.travelerAnnouncementId());
+        payoutTriggerPolicy.freeze(bid, trip.orElse(null));
         bid.setStatus(BidStatus.ACCEPTED);
         bid.setPaymentIntentId(e.paymentIntentId());
         bid.setLinkedNegotiationThreadId(e.threadId());
@@ -140,7 +147,7 @@ public class ThreadAcceptedBidListener {
             }
         }
 
-        announcementRepository.findById(e.travelerAnnouncementId()).ifPresent(announcement -> {
+        trip.ifPresent(announcement -> {
             // Même règle que BidService/BidNegotiationService : le bid hérite
             // toujours la devise de l'annonce (trajet), jamais celle de la
             // demande/du thread — cf. spec 2026-08-20-devise-par-annonce.
@@ -207,7 +214,8 @@ public class ThreadAcceptedBidListener {
             Map.of(
                 "threadId", e.threadId().toString(),
                 "packageRequestId", e.packageRequestId().toString(),
-                "agreedPrice", e.agreedPriceEur().toString()
+                "agreedPrice", e.agreedPriceEur().toString(),
+                "payoutTrigger", saved.getPayoutTrigger().name()
             ));
         log.info("Bid {} created from thread {} (announcement {})",
             saved.getId(), e.threadId(), e.travelerAnnouncementId());

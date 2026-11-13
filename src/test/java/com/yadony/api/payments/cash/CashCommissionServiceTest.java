@@ -89,6 +89,7 @@ class CashCommissionServiceTest {
     @Mock private com.yadony.api.payments.currency.ActiveCurrencyResolver activeCurrencyResolver;
     @Mock private com.yadony.api.payments.currency.ExchangeRateService exchangeRateService;
     @Mock private com.yadony.api.promo.PromoService promoService;
+    @Mock private com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy;
 
     private final CommissionProperties props =
             new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24);
@@ -114,7 +115,7 @@ class CashCommissionServiceTest {
                 negotiationThreadRepository, new StripeCashGatewayImpl(), bidGridItemRepository,
                 stubbedContacts(), voucherService, activeCurrencyResolver,
                 new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), TestMessages.resolver(),
-                promoService);
+                promoService, payoutTriggerPolicy);
         service.setClock(Clock.fixed(Instant.parse("2026-06-01T00:00:00Z"), ZoneOffset.UTC));
     }
 
@@ -844,6 +845,33 @@ class CashCommissionServiceTest {
                 assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
                 pi.verifyNoInteractions();
             }
+        }
+
+        @Test
+        void finalize_freezesPayoutTriggerOnTheTrip_beforeTheBidTurnsAccepted() {
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
+            org.mockito.Mockito.doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+                    .when(payoutTriggerPolicy).freeze(bid, announcement);
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                service.confirmCommissionAcceptance(bid.getId(), travelerId);
+            }
+
+            assertThat(statusAtFreeze).containsExactly(BidStatus.PENDING);
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        }
+
+        @Test
+        void finalize_alreadyAccepted_neverFreezesAgain() {
+            bid.setCommissionStatus(CommissionStatus.CHARGED);
+            bid.setStatus(BidStatus.ACCEPTED);
+
+            try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
+                service.confirmCommissionAcceptance(bid.getId(), travelerId);
+            }
+
+            org.mockito.Mockito.verifyNoInteractions(payoutTriggerPolicy);
         }
 
         @Test

@@ -178,7 +178,10 @@ class GuestDataExposureIT {
             // utilisateurs avec compte (statut et raison sociale restent servis aux invites).
             "businessRegistrationNumber", "businessCountry",
             // Reserve au proprietaire
-            "promoCode");
+            "promoCode",
+            // Regle de versement d'un colis accepte (BidResponse, V383) : moment ou l'argent part vers le
+            // transporteur. Servie aux seules parties du colis, jamais sur une surface invite.
+            "payoutTrigger");
 
     /**
      * Toute cle JSON servie a un invite, a n'importe quelle profondeur.

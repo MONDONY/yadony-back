@@ -124,6 +124,8 @@ public class CashCommissionService {
     private final WalletCommissionCollector commissionCollector;
     private final MessagesResolver messagesResolver;
     private final PromoService promoService;
+    /** Règle de versement figée à l'acceptation ({@link #finalizeBidAcceptance}). */
+    private final com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy;
     /**
      * Grilles de commission figées sur les bids et les fils ; injectée par champ pour ne pas
      * toucher aux constructeurs des tests unitaires (comme {@code PaymentService}).
@@ -155,7 +157,8 @@ public class CashCommissionService {
                                  ActiveCurrencyResolver activeCurrencyResolver,
                                  WalletCommissionCollector commissionCollector,
                                  MessagesResolver messagesResolver,
-                                 PromoService promoService) {
+                                 PromoService promoService,
+                                 com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy) {
         this.props = props;
         this.userRepo = userRepo;
         this.bidRepo = bidRepo;
@@ -174,6 +177,7 @@ public class CashCommissionService {
         this.commissionCollector = commissionCollector;
         this.messagesResolver = messagesResolver;
         this.promoService = promoService;
+        this.payoutTriggerPolicy = payoutTriggerPolicy;
     }
 
     /** Normalise un code devise (comparaison insensible à la casse, jamais null). */
@@ -1727,6 +1731,8 @@ public class CashCommissionService {
 
         redeemAppliedPromo(bid);
 
+        // Règle de versement figée à cet instant, transporteur relu en base (même règle que les autres rails).
+        payoutTriggerPolicy.freeze(bid, announcement);
         bid.setStatus(BidStatus.ACCEPTED);
         if (bid.getQrToken() == null) bid.setQrToken(UUID.randomUUID().toString());
         if (bid.getTrackingToken() == null) bid.setTrackingToken(UUID.randomUUID().toString());
@@ -1759,7 +1765,8 @@ public class CashCommissionService {
         events.publishEvent(new BidAcceptedEvent(
                 bid.getId(), bid.getSenderId(), travelerId, bid.getAnnouncementId(),
                 bid.getPaymentMethod() != null && bid.getPaymentMethod().isMobileMoney()));
-        log.info("Cash bid {} finalized as ACCEPTED for traveler {}", bid.getId(), travelerId);
+        log.info("Cash bid {} finalized as ACCEPTED for traveler {} (payout {})", bid.getId(), travelerId,
+                bid.getPayoutTrigger());
     }
 
     private String generateTrackingNumber() {

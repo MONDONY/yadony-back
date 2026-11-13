@@ -92,7 +92,7 @@ class CashCommissionDuplicateCardChargeTest {
                 voucherService, activeCurrencyResolver,
                 new WalletCommissionCollector(walletService, exchangeRateService,
                         mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), null,
-                mock(com.yadony.api.promo.PromoService.class));
+                mock(com.yadony.api.promo.PromoService.class), org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
         ReflectionTestUtils.setField(service, "alertEscalator", alertEscalator);
 
         thread = new NegotiationThreadEntity();

@@ -130,7 +130,7 @@ class CashCommissionServiceGridTest {
                 negotiationThreadRepository, stripeCashGateway, bidGridItemRepository, contacts,
                 voucherService, activeCurrencyResolver,
                 new WalletCommissionCollector(walletService, exchangeRateService, org.mockito.Mockito.mock(com.yadony.api.payments.currency.ExchangeRateFreshness.class)), TestMessages.resolver(),
-                promoService);
+                promoService, org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
         ReflectionTestUtils.setField(service, "commissionGridService", commissionGridService);
         ReflectionTestUtils.setField(service, "threadCommissionPricing", threadCommissionPricing);
     }

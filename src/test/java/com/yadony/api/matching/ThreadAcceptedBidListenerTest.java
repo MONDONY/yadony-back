@@ -41,6 +41,7 @@ class ThreadAcceptedBidListenerTest {
     @Mock BidPhotoService bidPhotoService;
     @Mock PromoService promoService;
     @Mock CommissionVoucherService voucherService;
+    @Mock PayoutTriggerPolicy payoutTriggerPolicy;
     @InjectMocks ThreadAcceptedBidListener listener;
 
     private static final UUID THREAD_ID = UUID.randomUUID();
@@ -111,6 +112,36 @@ class ThreadAcceptedBidListenerTest {
             // Net négocié figé depuis agreedPriceEur (= 50) de l'événement.
             assertThat(saved.getNegotiatedNetEur()).isEqualByComparingTo(BigDecimal.valueOf(50));
             verify(auditService).log(eq("BID"), any(), eq("CREATED_FROM_THREAD"), eq(SENDER_ID), any());
+        }
+
+        @Test
+        @DisplayName("règle de versement figée sur le trajet du fil, avant que le colis ne naisse accepté")
+        void threadAccepted_freezesPayoutTriggerOnTripBeforeAccepted() {
+            AnnouncementEntity trip = new AnnouncementEntity();
+            trip.setTravelerId(TRAVELER_ID);
+            trip.setTransportMode(TransportMode.BOAT);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+            java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
+            doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+                    .when(payoutTriggerPolicy).freeze(any(BidEntity.class), eq(trip));
+
+            listener.onPackageRequestAccepted(buildEvent());
+
+            assertThat(statusAtFreeze).containsExactly(BidStatus.PENDING);
+            // Le trajet n'est lu qu'une fois : la même lecture sert la règle et la capacité.
+            verify(announcementRepository, times(1)).findById(ANNOUNCEMENT_ID);
+            ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
+            verify(auditService).log(eq("BID"), any(), eq("CREATED_FROM_THREAD"), eq(SENDER_ID), payload.capture());
+            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DELIVERY");
+        }
+
+        @Test
+        @DisplayName("trajet introuvable : règle figée sans trajet (à la livraison), colis tout de même créé")
+        void threadAccepted_tripMissing_freezesWithoutTrip() {
+            listener.onPackageRequestAccepted(buildEvent());
+
+            verify(payoutTriggerPolicy).freeze(any(BidEntity.class), isNull());
+            verify(bidRepository).save(any(BidEntity.class));
         }
 
         @Test

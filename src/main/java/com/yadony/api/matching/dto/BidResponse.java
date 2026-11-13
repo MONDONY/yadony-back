@@ -178,5 +178,11 @@ public record BidResponse(
         /** Fin de la fourchette d'arrivée estimée du trajet ({@code arrivalDate} = début), bateau seulement ;
          * null sinon. Toujours sérialisé (null explicite), champ ajouté : les anciennes apps l'ignorent. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        java.time.LocalDate arrivalDateMax
+        java.time.LocalDate arrivalDateMax,
+        /** Moment où l'argent part vers le transporteur : {@code DELIVERY} (livraison confirmée) ou {@code DEPOSIT}
+         * (dépôt du colis chez le transporteur). Figé à l'acceptation, jamais recalculé ; {@code DELIVERY} tant que le
+         * colis n'est pas accepté. Servi aux deux parties. Toujours sérialisé, champ ajouté : les anciennes apps
+         * l'ignorent, une valeur absente ou inconnue se lit {@code DELIVERY}. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        String payoutTrigger
 ) {}

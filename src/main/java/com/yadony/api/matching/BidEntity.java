@@ -337,6 +337,31 @@ public class BidEntity extends BaseEntity {
     @Column(name = "pending_reschedule_id")
     private UUID pendingRescheduleId;
 
+    /**
+     * Moment où l'argent du colis part vers le transporteur (V383) : à la livraison tant que rien
+     * n'est décidé, figé à l'acceptation par {@link PayoutTriggerPolicy#freeze}, jamais recalculé.
+     * Aucun setter public : seule la règle l'écrit.
+     */
+    @Enumerated(EnumType.STRING)
+    @org.hibernate.annotations.ColumnDefault("'DELIVERY'")
+    @Column(name = "payout_trigger", nullable = false, length = 16)
+    private PayoutTrigger payoutTrigger = PayoutTrigger.DELIVERY;
+
+    /** Instant où {@link #payoutTrigger} a été figé (V383) ; nul tant que le colis n'a jamais été accepté. */
+    @Column(name = "payout_trigger_frozen_at")
+    private LocalDateTime payoutTriggerFrozenAt;
+
+    public PayoutTrigger getPayoutTrigger() { return payoutTrigger; }
+    public LocalDateTime getPayoutTriggerFrozenAt() { return payoutTriggerFrozenAt; }
+    /** La règle a été figée par une acceptation (ou par V383 pour un colis déjà accepté avant elle). */
+    public boolean isPayoutTriggerFrozen() { return payoutTriggerFrozenAt != null; }
+
+    /** Réservé à {@link PayoutTriggerPolicy#freeze}, qui garantit l'écriture unique. */
+    void freezePayoutTrigger(PayoutTrigger trigger, LocalDateTime at) {
+        this.payoutTrigger = trigger;
+        this.payoutTriggerFrozenAt = at;
+    }
+
     public UUID getPendingRescheduleId() { return pendingRescheduleId; }
     public void setPendingRescheduleId(UUID pendingRescheduleId) { this.pendingRescheduleId = pendingRescheduleId; }
 

@@ -110,6 +110,8 @@ public class MobileMoneyBidPaymentService {
     private final PawapayProperties props;
     private final MobileMoneyPayoutAccounts payoutAccounts;
     private final MobileMoneyOperationViews views;
+    /** Règle de versement figée au passage à ACCEPTED ({@link #confirmEscrow}). */
+    private final com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy;
 
     /**
      * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé —
@@ -147,7 +149,8 @@ public class MobileMoneyBidPaymentService {
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
                                         PlatformTransactionManager transactionManager, PawapayProperties props,
-                                        MobileMoneyPayoutAccounts payoutAccounts, MobileMoneyOperationViews views) {
+                                        MobileMoneyPayoutAccounts payoutAccounts, MobileMoneyOperationViews views,
+                                        com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -164,6 +167,7 @@ public class MobileMoneyBidPaymentService {
         this.props = props;
         this.payoutAccounts = payoutAccounts;
         this.views = views;
+        this.payoutTriggerPolicy = payoutTriggerPolicy;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -562,6 +566,9 @@ public class MobileMoneyBidPaymentService {
         // confirmEscrow après le point irréversible.
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new IllegalStateException("Annonce introuvable : " + bid.getAnnouncementId()));
+        // Le colis passe à ACCEPTED ici, pas à l'acceptation du voyageur (AWAITING_PAYMENT) : la règle de
+        // versement se fige à cet instant, transporteur relu en base. Ne lève jamais (argent déjà encaissé).
+        payoutTriggerPolicy.freeze(bid, announcement);
         bid.setStatus(BidStatus.ACCEPTED);
         bid.setAwaitingPaymentExpiresAt(null);
         if (bid.getQrToken() == null) bid.setQrToken(UUID.randomUUID().toString());
@@ -572,7 +579,8 @@ public class MobileMoneyBidPaymentService {
 
         audit.log("PAYMENT", paymentId, "MM_ESCROW", bid.getSenderId(),
                 Map.of("bidId", bid.getId().toString(), "operationId", operationId.toString(),
-                        "amount", payment.getAmount().toPlainString(), "currency", payment.getCurrency()));
+                        "amount", payment.getAmount().toPlainString(), "currency", payment.getCurrency(),
+                        "payoutTrigger", bid.getPayoutTrigger().name()));
         events.publishEvent(new MobileMoneyPaymentConfirmedEvent(
                 bid.getId(), bid.getSenderId(), announcement.getTravelerId(), payment.getAmount(), payment.getCurrency()));
         log.info("Séquestre mobile money : paiement {} ESCROW, bid {} ACCEPTED", paymentId, bid.getId());

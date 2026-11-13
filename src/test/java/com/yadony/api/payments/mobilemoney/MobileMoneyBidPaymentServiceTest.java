@@ -120,7 +120,8 @@ class MobileMoneyBidPaymentServiceTest {
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, enabledProps(), payoutAccounts, views());
+                promoService, voucherService, transactionManager, enabledProps(), payoutAccounts, views(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
         traveler = new UserEntity();
         ReflectionTestUtils.setField(traveler, "id", UUID.randomUUID());
         traveler.setFirebaseUid("t-uid");
@@ -564,7 +565,8 @@ class MobileMoneyBidPaymentServiceTest {
     void acceptBid_railDisabled_is422_beforeAnyRepositoryAccess() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views());
+                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
 
         assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -588,7 +590,8 @@ class MobileMoneyBidPaymentServiceTest {
     void initiateDeposit_railDisabled_blocksOnlyANewSubmission() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views());
+                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -612,7 +615,8 @@ class MobileMoneyBidPaymentServiceTest {
     void initiateDeposit_railDisabled_stillReturnsAnAlreadyLiveDeposit() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views());
+                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
         bid.setAwaitingPaymentExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(20));
         PaymentEntity payment = pendingPayment();
@@ -711,7 +715,8 @@ class MobileMoneyBidPaymentServiceTest {
         return new MobileMoneyBidPaymentService(bidRepository, announcementRepository,
                 userRepository, paymentRepository, operations, submission, new PawapayProviderResolver(client),
                 new MobileMoneyBidPricing(gridItems, rates, gridService), firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, enabledProps(), payoutAccounts, views());
+                promoService, voucherService, transactionManager, enabledProps(), payoutAccounts, views(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
     }
 
     /**
@@ -1289,7 +1294,8 @@ class MobileMoneyBidPaymentServiceTest {
     void providersForPayer_railDisabled_is422_afterTheGates() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, userRepository, paymentRepository,
                 operations, submission, new PawapayProviderResolver(client), pricing, firebaseContact, audit, events,
-                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views());
+                promoService, voucherService, transactionManager, disabledProps(), payoutAccounts, views(),
+                org.mockito.Mockito.mock(com.yadony.api.matching.PayoutTriggerPolicy.class));
         awaitingPayment();
 
         assertThatThrownBy(() -> service.providersForPayer(bid.getId(), sender.getId(), null))

@@ -74,6 +74,7 @@ class BidServiceTest {
     @Mock private TripRescheduleRepository rescheduleRepository;
     @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     @Mock private com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery;
+    @Mock private PayoutTriggerPolicy payoutTriggerPolicy;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -1665,6 +1666,49 @@ class BidServiceTest {
             ArgumentCaptor<BidAcceptedEvent> captor = ArgumentCaptor.forClass(BidAcceptedEvent.class);
             verify(eventPublisher).publishEvent(captor.capture());
             assertThat(captor.getValue().getBidId()).isEqualTo(BID_ID);
+        }
+
+        @Test
+        @DisplayName("règle de versement figée sur le trajet et le voyageur, avant le passage à ACCEPTED, et auditée")
+        void acceptBid_freezesPayoutTriggerBeforeAccepting() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenReturn(announcement);
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
+            org.mockito.Mockito.doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+                    .when(payoutTriggerPolicy).freeze(bid, announcement, traveler);
+
+            BidResponse result = bidService.acceptBid(BID_ID, TRAVELER_UID);
+
+            assertThat(statusAtFreeze).containsExactly(BidStatus.PAYMENT_ESCROWED);
+            assertThat(result.payoutTrigger()).isEqualTo("DELIVERY");
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
+            verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_ACCEPTED"), eq(traveler.getId()), payload.capture());
+            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DELIVERY");
+        }
+
+        @Test
+        @DisplayName("refus avant le passage à ACCEPTED (capacité) : la règle n'est jamais figée")
+        void acceptBid_refused_neverFreezes() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setAvailableKg(BigDecimal.valueOf(3));
+            BidEntity bid = buildBid();
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.acceptBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class);
+            org.mockito.Mockito.verifyNoInteractions(payoutTriggerPolicy);
         }
 
         @Test

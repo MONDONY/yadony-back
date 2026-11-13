@@ -110,6 +110,8 @@ public class BidService {
     private final com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
     private final CommissionGridService commissionGridService;
     private final com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery;
+    /** Règle de versement figée à l'acceptation ({@link #doAcceptBid}). */
+    private final PayoutTriggerPolicy payoutTriggerPolicy;
 
     /** Colis pris en charge (ou livré) : le suivi approximatif du voyageur a un sens pour l'expéditeur. */
     private static final java.util.Set<BidStatus> TRAVELER_TRACKING_STATUSES =
@@ -162,7 +164,8 @@ public class BidService {
                       TripRescheduleRepository rescheduleRepository,
                       com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository,
                       CommissionGridService commissionGridService,
-                      com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery) {
+                      com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery,
+                      PayoutTriggerPolicy payoutTriggerPolicy) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -186,6 +189,7 @@ public class BidService {
         this.recipientLinkRepository = recipientLinkRepository;
         this.commissionGridService = commissionGridService;
         this.travelerTrackingQuery = travelerTrackingQuery;
+        this.payoutTriggerPolicy = payoutTriggerPolicy;
     }
 
     /**
@@ -998,6 +1002,8 @@ public class BidService {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
         }
 
+        // Règle de versement figée à cet instant (bateau, interrupteur, transporteur vérifié).
+        payoutTriggerPolicy.freeze(bid, announcement, traveler);
         bid.setStatus(BidStatus.ACCEPTED);
         if (bid.getQrToken() == null) {
             bid.setQrToken(UUID.randomUUID().toString());
@@ -1020,7 +1026,8 @@ public class BidService {
 
         auditService.log("BID", bid.getId(), "BID_ACCEPTED", traveler.getId(),
                 Map.<String, Object>of("announcementId", announcement.getId().toString(),
-                       "weightKg", bid.getWeightKg() != null ? bid.getWeightKg().toString() : "null"));
+                       "weightKg", bid.getWeightKg() != null ? bid.getWeightKg().toString() : "null",
+                       "payoutTrigger", bid.getPayoutTrigger().name()));
 
         eventPublisher.publishEvent(new BidAcceptedEvent(
                 bid.getId(), bid.getSenderId(), traveler.getId(), announcement.getId(),
@@ -1883,7 +1890,8 @@ public class BidService {
                 travelerTracking,
                 bid.getItemSize() != null ? bid.getItemSize().name() : null,
                 latestTripDelay(announcement, bid, prefetch),
-                announcement != null ? announcement.getArrivalDateMax() : null
+                announcement != null ? announcement.getArrivalDateMax() : null,
+                (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name()
         );
     }
 
