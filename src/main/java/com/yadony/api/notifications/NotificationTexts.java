@@ -1160,6 +1160,22 @@ public final class NotificationTexts {
                         : "notification.trip-rescheduled-info.body", date));
     }
 
+    /**
+     * Retard annoncé par le voyageur, vu par l'expéditeur d'un colis en route : la nouvelle fourchette
+     * d'arrivée estimée. Une fourchette d'un seul jour se dit « le {0} ». Le motif et le message du voyageur
+     * n'entrent pas dans le corps : ils sont dans la conversation et l'app.
+     */
+    public static NotificationText tripDelayed(Messages m, java.time.LocalDate arrivalDate,
+                                               java.time.LocalDate arrivalDateMax) {
+        var pattern = java.time.format.DateTimeFormatter.ofPattern(
+                m.get("notification.trip-delayed.date-pattern"), m.locale());
+        String from = arrivalDate.format(pattern);
+        String body = arrivalDate.equals(arrivalDateMax)
+                ? m.get("notification.trip-delayed-single.body", from)
+                : m.get("notification.trip-delayed.body", from, arrivalDateMax.format(pattern));
+        return new NotificationText(m.get("notification.trip-delayed.title"), body);
+    }
+
     /** Report accepté par l'expéditeur, vu par le voyageur. Prénom seul, générique s'il manque. */
     public static NotificationText tripRescheduleKept(Messages m, String senderFirstName) {
         String who = senderFirstName == null || senderFirstName.isBlank()

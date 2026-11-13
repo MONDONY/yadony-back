@@ -115,6 +115,14 @@ public class BidService {
     private static final java.util.Set<BidStatus> TRAVELER_TRACKING_STATUSES =
             java.util.EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
 
+    /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
+    private TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     /** Supplément de prix à la remise (payments/supplement) ; aucun tant que Spring ne l'a pas injecté. */
     private BidSupplementSummaryPort supplementSummary = BidSupplementSummaryPort.NONE;
 
@@ -1534,9 +1542,24 @@ public class BidService {
         Map<UUID, List<BidGridItemEntity>> gridItems =
                 BidResponsePrefetch.loadInChunks(bidIds, bidGridItemRepository::findByBidIdIn).stream()
                         .collect(Collectors.groupingBy(BidGridItemEntity::getBidId));
-        return new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
+        BidResponsePrefetch prefetch = new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
                 bidPhotoService.activePhotosByBid(bidIds), supplementSummary.prefetch(bidIds),
                 amendmentSummary.prefetch(bids));
+        prefetch.setLatestDelays(TripDelays.latestByAnnouncement(tripDelayRepository,
+                announcements.stream().map(AnnouncementEntity::getId).toList()));
+        return prefetch;
+    }
+
+    /** Dernier retard annoncé du trajet du colis, null sans retard. Une requête par liste via le prefetch. */
+    private com.yadony.api.matching.dto.TripDelayInfo latestTripDelay(AnnouncementEntity announcement,
+                                                                      BidResponsePrefetch prefetch) {
+        if (announcement == null) {
+            return null;
+        }
+        return prefetch != null
+                ? prefetch.latestDelay(announcement.getId(),
+                        () -> TripDelays.latest(tripDelayRepository, announcement.getId()))
+                : TripDelays.latest(tripDelayRepository, announcement.getId());
     }
 
     /**
@@ -1849,7 +1872,8 @@ public class BidService {
                 totalWeightKg,
                 moneyBreakdown,
                 travelerTracking,
-                bid.getItemSize() != null ? bid.getItemSize().name() : null
+                bid.getItemSize() != null ? bid.getItemSize().name() : null,
+                latestTripDelay(announcement, prefetch)
         );
     }
 

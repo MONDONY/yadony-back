@@ -314,6 +314,14 @@ public class AnnouncementService {
     /** Interrupteurs des modes de transport (bateau fermé tant qu'il n'est pas ouvert depuis l'admin). */
     private final TransportModeGuard transportModeGuard;
 
+    /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
+    private TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
 
@@ -2667,14 +2675,15 @@ public class AnnouncementService {
     /** Compteurs des cartes d'une page, lus par lot (cf. {@link #loadCardCounts}). */
     private record CardCounts(Map<UUID, Long> pending, Map<UUID, Long> confirmed,
                               Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs,
-                              java.util.Set<UUID> carried) {}
+                              java.util.Set<UUID> carried,
+                              Map<UUID, com.yadony.api.matching.dto.TripDelayInfo> latestDelays) {}
 
     private static final List<BidStatus> CONFIRMED_STATUSES =
             List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
 
     private CardCounts loadCardCounts(List<AnnouncementEntity> announcements) {
         if (announcements.isEmpty()) {
-            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of(), java.util.Set.of());
+            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of(), java.util.Set.of(), Map.of());
         }
         List<UUID> ids = announcements.stream().map(AnnouncementEntity::getId).toList();
         List<UUID> groupIds = announcements.stream().map(AnnouncementEntity::getTripGroupId)
@@ -2686,7 +2695,8 @@ public class AnnouncementService {
                         ids, CONFIRMED_STATUSES.stream().map(Enum::name).toList())),
                 groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)),
                 new java.util.HashSet<>(bidRepository.findAnnouncementIdsWithStatusIn(
-                        ids, com.yadony.api.tracking.TripPositionService.carriedStatuses())));
+                        ids, com.yadony.api.tracking.TripPositionService.carriedStatuses())),
+                TripDelays.latestByAnnouncement(tripDelayRepository, ids));
     }
 
     private static Map<UUID, Long> countsById(List<Object[]> rows) {
@@ -2822,7 +2832,10 @@ public class AnnouncementService {
                 entity.getVolumeCapacityM3(),
                 entity.getAvailableVolumeM3(),
                 entity.getPricePerM3(),
-                pricePerM3Display(entity)
+                pricePerM3Display(entity),
+                counts != null
+                        ? counts.latestDelays().get(entity.getId())
+                        : TripDelays.latest(tripDelayRepository, entity.getId())
         );
     }
 

@@ -95,5 +95,8 @@ public record AnnouncementResponse(
         /** Bateau au m³ : prix net voyageur au m³ (les kilos et le prix au kilo sont alors nuls). */
         @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3,
         /** Prix au m³ payé par l'expéditeur (brut, même règle que {@code pricePerKgDisplay}). */
-        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display,
+        /** Dernier retard annoncé par le voyageur (nouvelle fourchette d'arrivée estimée, motif, message) ; null
+         *  si le trajet n'en a jamais annoncé. Toujours sérialisé (null explicite). */
+        @JsonInclude(JsonInclude.Include.ALWAYS) TripDelayInfo latestTripDelay
 ) {}

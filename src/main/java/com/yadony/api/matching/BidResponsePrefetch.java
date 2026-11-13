@@ -48,6 +48,8 @@ final class BidResponsePrefetch {
     private final BidSupplementSummaryPort.Prefetch supplements;
     /** Modifications de la liste ({@link BidAmendmentSummaryPort#prefetch}), null hors port. */
     private final BidAmendmentSummaryPort.Prefetch amendments;
+    /** Dernier retard annoncé de chaque trajet de la liste ({@link TripDelays}), null tant que non chargé. */
+    private Map<UUID, com.yadony.api.matching.dto.TripDelayInfo> latestDelays;
     /** Taux de commission résolus pendant la conversion, par couple voyageur/expéditeur. */
     private final Map<String, BigDecimal> commissionRates = new HashMap<>();
 
@@ -89,6 +91,16 @@ final class BidResponsePrefetch {
 
     List<BidGridItemEntity> gridItems(UUID bidId) {
         return gridItems.getOrDefault(bidId, List.of());
+    }
+
+    void setLatestDelays(Map<UUID, com.yadony.api.matching.dto.TripDelayInfo> latestDelays) {
+        this.latestDelays = latestDelays;
+    }
+
+    /** Dernier retard du trajet : lu dans la table chargée avec la liste, sinon par {@code fallback}. */
+    com.yadony.api.matching.dto.TripDelayInfo latestDelay(UUID announcementId,
+                                                          Supplier<com.yadony.api.matching.dto.TripDelayInfo> fallback) {
+        return latestDelays != null ? latestDelays.get(announcementId) : fallback.get();
     }
 
     BidSupplementSummaryPort.Prefetch supplements() {

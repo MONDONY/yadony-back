@@ -170,5 +170,9 @@ public record BidResponse(
         /** Taille du colis (S, M, L, XL) ; null = non indiquée (réservation d'avant ou sans taille).
          * Toujours sérialisée (null explicite), champ ajouté : les anciennes apps l'ignorent. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        String itemSize
+        String itemSize,
+        /** Dernier retard annoncé par le voyageur (nouvelle fourchette d'arrivée estimée, motif, message) ; null
+         * si le trajet n'en a jamais annoncé. Toujours sérialisé (null explicite), champ ajouté. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        TripDelayInfo latestTripDelay
 ) {}
