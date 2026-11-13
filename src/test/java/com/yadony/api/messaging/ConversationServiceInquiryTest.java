@@ -155,15 +155,21 @@ class ConversationServiceInquiryTest {
     }
 
     @Test
-    void concurrentDoubleCallReturnsTheWinningThread() {
-        ConversationEntity winner = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_w");
-        when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
-                .thenReturn(Optional.empty(), Optional.of(winner));
+    void uniqueViolationPropagatesWithoutFirestoreNorAudit() {
         when(conversationRepository.saveAndFlush(any(ConversationEntity.class)))
                 .thenThrow(new org.springframework.dao.DataIntegrityViolationException("conversations_inquiry_active_idx"));
 
-        assertThat(service.getOrCreateInquiry(askerId, announcementId)).isSameAs(winner);
+        assertThatThrownBy(() -> service.getOrCreateInquiry(askerId, announcementId))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         verify(firestoreService, never()).createConversation(anyString(), anyMap());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void cancelledAnnouncementIsClosed() {
+        when(announcement.getStatus()).thenReturn(AnnouncementStatus.CANCELLED);
+
+        assertError(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed");
     }
 
     @Test

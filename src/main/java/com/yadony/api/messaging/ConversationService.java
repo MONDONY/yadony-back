@@ -11,10 +11,10 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
-import com.yadony.api.matching.DepartureRules;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.DepartureRules;
 import com.yadony.api.messaging.dto.ConversationResponse;
 import com.yadony.api.messaging.dto.ParticipantDTO;
 import org.slf4j.Logger;
@@ -201,14 +201,10 @@ public class ConversationService {
             .orElseThrow(ConversationService::counterpartDeleted);
 
         // Identifiant provisoire : l'UUID de la conversation n'existe qu'après l'insertion.
-        ConversationEntity saved;
-        try {
-            saved = conversationRepository.saveAndFlush(ConversationEntity.forInquiry(
-                askerId, announcementId, ownerId, "conv_inq_pending_" + UUID.randomUUID()));
-        } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            // Double appel concurrent : l'index unique des fils actifs a joué, on renvoie le gagnant.
-            return conversationRepository.findByAskerAndAnnouncement(askerId, announcementId).orElseThrow(() -> e);
-        }
+        // Une violation de conversations_inquiry_active_idx (double premier appel concurrent)
+        // remonte telle quelle : la transaction est avortée, l'appelant la reprend hors transaction.
+        ConversationEntity saved = conversationRepository.saveAndFlush(ConversationEntity.forInquiry(
+            askerId, announcementId, ownerId, "conv_inq_pending_" + UUID.randomUUID()));
         String firestoreId = "conv_inq_" + saved.getId();
         saved.assignFirestoreConversationId(firestoreId);
 
