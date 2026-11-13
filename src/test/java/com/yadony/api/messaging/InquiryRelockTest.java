@@ -71,15 +71,27 @@ class InquiryRelockTest {
         ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
         conv.promoteToBid(bidId, LocalDateTime.now());
         lenient().when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.of(conv));
+        stubGuardedRelock();
         lenient().when(bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
                 eq(announcementId), eq(askerId), anyCollection())).thenReturn(false);
+    }
+
+    /** Le dépôt applique l'UPDATE gardé : la ligne ne bascule que si elle est encore promue. */
+    private void stubGuardedRelock() {
+        lenient().when(conversationRepository.relockInquiryGuarded(eq(conv.getId()), any())).thenAnswer(inv -> {
+            if (conv.getKind() != ConversationKind.SENDER_TRAVELER) {
+                return 0;
+            }
+            conv.relockToInquiry(inv.getArgument(1));
+            return 1;
+        });
     }
 
     private void assertRelocked() {
         assertThat(conv.getKind()).isEqualTo(ConversationKind.INQUIRY);
         assertThat(conv.getBidId()).isNull();
         assertThat(conv.isQuotaLifted()).isFalse();
-        verify(conversationRepository).save(conv);
+        verify(conversationRepository).relockInquiryGuarded(eq(conv.getId()), any());
         verify(firestoreService).updateConversation("conv_inq_abc",
                 Map.of("kind", "INQUIRY", "quotaLifted", false, "bidId", FieldValue.delete()));
         verify(auditService).log(eq("conversation"), eq(conv.getId()), eq("INQUIRY_RELOCKED"), isNull(), anyMap());
@@ -91,7 +103,7 @@ class InquiryRelockTest {
         assertThat(conv.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
         assertThat(conv.getBidId()).isEqualTo(bidId);
         assertThat(conv.isQuotaLifted()).isTrue();
-        verify(conversationRepository, never()).save(any());
+        verify(conversationRepository, never()).relockInquiryGuarded(any(), any());
         verifyNoInteractions(firestoreService, auditService);
     }
 
@@ -135,6 +147,7 @@ class InquiryRelockTest {
                 conv.promoteToBid(bidId, LocalDateTime.now());
             }
             when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.of(conv));
+            stubGuardedRelock();
             listener.onBidCancelledByParticipant(new BidCancelledByParticipantEvent(
                     bidId, announcementId, askerId, false, before, PaymentMethod.STRIPE));
             assertThat(conv.getKind()).as("avant " + before).isEqualTo(ConversationKind.INQUIRY);
@@ -245,7 +258,7 @@ class InquiryRelockTest {
         assertThat(service.relockInquiry(bidId)).isFalse();
 
         assertThat(booking.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
-        verify(conversationRepository, never()).save(any());
+        verify(conversationRepository, never()).relockInquiryGuarded(any(), any());
     }
 
     @Test
@@ -255,7 +268,16 @@ class InquiryRelockTest {
 
         assertThat(service.relockInquiry(bidId)).isFalse();
 
-        verify(conversationRepository, never()).save(any());
+        verify(conversationRepository, never()).relockInquiryGuarded(any(), any());
+    }
+
+    @Test
+    void rowReservedOrDeletedMeanwhile_guardedUpdateReturnsZero_noFirestoreNoAudit() {
+        when(conversationRepository.relockInquiryGuarded(eq(conv.getId()), any())).thenReturn(0);
+
+        assertThat(service.relockInquiry(bidId)).isFalse();
+
+        verifyNoInteractions(firestoreService, auditService);
     }
 
     @Test
@@ -271,7 +293,7 @@ class InquiryRelockTest {
 
         assertThat(service.relockInquiry(bidId)).isFalse();
 
-        verify(conversationRepository, times(1)).save(conv);
+        verify(conversationRepository, times(1)).relockInquiryGuarded(eq(conv.getId()), any());
     }
 
     @Test
@@ -281,7 +303,7 @@ class InquiryRelockTest {
         assertThat(service.relockInquiry(bidId)).isTrue();
 
         assertThat(conv.getKind()).isEqualTo(ConversationKind.INQUIRY);
-        verify(conversationRepository).save(conv);
+        verify(conversationRepository).relockInquiryGuarded(eq(conv.getId()), any());
     }
 
     @Test

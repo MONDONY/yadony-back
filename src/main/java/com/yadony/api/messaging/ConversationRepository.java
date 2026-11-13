@@ -213,12 +213,42 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     int reserveStaleInquiry(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now,
                             @Param("cutoff") java.time.LocalDateTime cutoff);
 
-    /** Annule {@link #reserveStaleInquiry} quand l'effacement Firestore a échoué. */
+    /**
+     * Annule {@link #reserveStaleInquiry} quand l'effacement Firestore a échoué ou que la
+     * conversation est à garder : n'annule que SA réservation ({@code deleted_at} = date posée).
+     */
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying
     @Query("UPDATE ConversationEntity c SET c.deletedAt = NULL " +
-           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY")
-    int releaseInquiryReservation(@Param("id") UUID id);
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
+           "AND c.deletedAt = :reservedAt")
+    int releaseInquiryReservation(@Param("id") UUID id, @Param("reservedAt") java.time.LocalDateTime reservedAt);
+
+    /**
+     * Promotion gardée d'une INQUIRY ouverte en conversation de réservation : UPDATE ciblé (jamais
+     * l'écriture complète d'une entité lue plus tôt, qui pourrait défaire une réservation de purge
+     * posée entre-temps). 0 ligne : plus INQUIRY, fermée ou supprimée.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.bidId = :bidId, " +
+           "c.kind = com.yadony.api.messaging.ConversationKind.SENDER_TRAVELER, " +
+           "c.quotaLiftedAt = :at, c.lastActivityAt = :at " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
+           "AND c.deletedAt IS NULL AND c.closedAt IS NULL")
+    int promoteInquiryGuarded(@Param("id") UUID id, @Param("bidId") UUID bidId,
+                              @Param("at") java.time.LocalDateTime at);
+
+    /** Re-verrouillage gardé d'une conversation promue ouverte en INQUIRY (même logique que la promotion). */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.bidId = NULL, " +
+           "c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY, " +
+           "c.quotaLiftedAt = NULL, c.lastActivityAt = :at " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.SENDER_TRAVELER " +
+           "AND c.deletedAt IS NULL AND c.closedAt IS NULL " +
+           "AND c.askerId IS NOT NULL AND c.announcementId IS NOT NULL")
+    int relockInquiryGuarded(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
 
     /**
      * Conversations de la modération, filtrables : seulement celles qui ont un signalement ouvert sur

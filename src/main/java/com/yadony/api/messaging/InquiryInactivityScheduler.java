@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +30,7 @@ import java.util.Map;
  *   <li>réservation par UPDATE gardé ({@code kind = INQUIRY}, non supprimée, toujours inactive) :
  *       0 ligne = promue, supprimée ou réveillée entre-temps, rien n'est touché, Firestore
  *       compris ; aucune entité périmée n'est réécrite ;</li>
+ *   <li>nouvelle vérification (gel, activité) une fois réservée, avant tout effacement ;</li>
  *   <li>effacement Firestore ; en cas d'échec la réservation est annulée et la passe suivante
  *       réessaie (si l'annulation échoue, la ligne reste supprimée : l'effacement Firestore
  *       rejoué ou la conversation fantôme restent sans conséquence pour les utilisateurs).</li>
@@ -75,7 +77,8 @@ public class InquiryInactivityScheduler {
 
     /** Rend le nombre de conversations supprimées. */
     public int purgeStaleInquiries() {
-        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+        // Micros : précision de la colonne, pour que l'annulation retrouve sa propre réservation.
+        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).truncatedTo(ChronoUnit.MICROS);
         LocalDateTime cutoff = now.minusDays(InquiryPolicy.INACTIVITY_DAYS);
         int purged = 0;
         for (ConversationEntity conv : conversationRepository.findStaleInquiries(cutoff)) {
@@ -94,26 +97,28 @@ public class InquiryInactivityScheduler {
     }
 
     private Outcome purge(ConversationEntity conv, LocalDateTime now, LocalDateTime cutoff) {
-        if (isHeld(conv)) {
+        if (isHeld(conv) || keepBecauseActive(conv, cutoff)) {
             return Outcome.SKIPPED;
-        }
-        String firestoreId = conv.getFirestoreConversationId();
-        boolean hasFirestore = firestoreId != null && !firestoreId.isBlank();
-        if (hasFirestore) {
-            Instant lastMessage = firestoreService.lastMessageInstant(firestoreId).orElse(null);
-            if (lastMessage != null) {
-                LocalDateTime last = LocalDateTime.ofInstant(lastMessage, ZoneOffset.UTC);
-                if (last.isAfter(cutoff)) {
-                    conversationRepository.markInquiryActivity(conv.getId(), last);
-                    return Outcome.SKIPPED;
-                }
-            }
         }
         if (conversationRepository.reserveStaleInquiry(conv.getId(), now, cutoff) == 0) {
             return Outcome.SKIPPED;
         }
-        if (hasFirestore && !firestoreService.purgeInquiryConversation(firestoreId)) {
-            release(conv);
+        // Réservée : un gel ou un message apparu depuis les premiers contrôles annule la purge,
+        // avant tout effacement Firestore.
+        try {
+            if (isHeld(conv) || keepBecauseActive(conv, cutoff)) {
+                release(conv, now);
+                return Outcome.SKIPPED;
+            }
+            String firestoreId = conv.getFirestoreConversationId();
+            if (firestoreId != null && !firestoreId.isBlank()
+                    && !firestoreService.purgeInquiryConversation(firestoreId)) {
+                release(conv, now);
+                return Outcome.FAILED;
+            }
+        } catch (Exception e) {
+            release(conv, now);
+            log.warn("InquiryInactivity: purge de {} annulée : {}", conv.getId(), e.toString());
             return Outcome.FAILED;
         }
         auditService.log("conversation", conv.getId(), "INQUIRY_PURGED", null,
@@ -121,6 +126,33 @@ public class InquiryInactivityScheduler {
                         "reason", "INACTIVITY",
                         "days", InquiryPolicy.INACTIVITY_DAYS));
         return Outcome.PURGED;
+    }
+
+    /**
+     * Firestore montre un message plus récent que la limite (le notify qui date l'activité est au
+     * mieux-effort) : à garder, {@code last_activity_at} rafraîchi. Une date illisible vaut « à
+     * garder » (jamais « inactive »).
+     */
+    private boolean keepBecauseActive(ConversationEntity conv, LocalDateTime cutoff) {
+        String firestoreId = conv.getFirestoreConversationId();
+        if (firestoreId == null || firestoreId.isBlank()) {
+            return false;
+        }
+        try {
+            Instant lastMessage = firestoreService.lastMessageInstant(firestoreId).orElse(null);
+            if (lastMessage == null) {
+                return false;
+            }
+            LocalDateTime last = LocalDateTime.ofInstant(lastMessage, ZoneOffset.UTC);
+            if (!last.isAfter(cutoff)) {
+                return false;
+            }
+            conversationRepository.markInquiryActivity(conv.getId(), last);
+            return true;
+        } catch (FirestoreService.UnreadableTimestampException e) {
+            log.warn("InquiryInactivity: {} conservée, {}", conv.getId(), e.getMessage());
+            return true;
+        }
     }
 
     private boolean isHeld(ConversationEntity conv) {
@@ -132,9 +164,9 @@ public class InquiryInactivityScheduler {
         return false;
     }
 
-    private void release(ConversationEntity conv) {
+    private void release(ConversationEntity conv, LocalDateTime reservedAt) {
         try {
-            conversationRepository.releaseInquiryReservation(conv.getId());
+            conversationRepository.releaseInquiryReservation(conv.getId(), reservedAt);
         } catch (Exception e) {
             log.warn("InquiryInactivity: annulation de la réservation de {} en échec, la ligne reste "
                     + "supprimée : {}", conv.getId(), e.toString());

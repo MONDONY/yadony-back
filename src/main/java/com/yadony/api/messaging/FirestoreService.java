@@ -459,11 +459,25 @@ public class FirestoreService {
         }
     }
 
+    /** Date de message présente mais illisible : l'appelant ne doit JAMAIS en conclure « inactive ». */
+    public static class UnreadableTimestampException extends RuntimeException {
+        public UnreadableTimestampException(String message) {
+            super(message);
+        }
+    }
+
     /**
      * Date du dernier message d'une conversation : {@code lastMessageAt} du document parent, à
-     * défaut le message le plus récent. Lecture seule. Vide si Firestore est désactivé, si la
-     * conversation n'a aucun message ou si la date est illisible. Lève en cas d'échec Firestore :
-     * l'appelant ne doit alors PAS purger.
+     * défaut le message le plus récent ({@code sentAt}). Lecture seule.
+     *
+     * <ul>
+     *   <li>vide : Firestore désactivé, ou vraiment aucun message (champ absent ou nul ET aucun
+     *       message) ;</li>
+     *   <li>{@link UnreadableTimestampException} : valeur présente de type inattendu ou mal formée
+     *       (parent comme repli) ;</li>
+     *   <li>{@link RuntimeException} : échec Firestore.</li>
+     * </ul>
+     * Dans les deux derniers cas l'appelant ne doit PAS purger.
      */
     public java.util.Optional<Instant> lastMessageInstant(String conversationId) {
         if (firestore == null) {
@@ -472,33 +486,42 @@ public class FirestoreService {
         try {
             var convRef = firestore.collection("conversations").document(conversationId);
             var snap = convRef.get().get();
-            java.util.Optional<Instant> fromParent = snap.exists()
-                    ? toInstant(snap.get("lastMessageAt")) : java.util.Optional.empty();
-            if (fromParent.isPresent()) {
-                return fromParent;
+            Object parent = snap.exists() ? snap.get("lastMessageAt") : null;
+            if (parent != null) {
+                return java.util.Optional.of(toInstant(parent, conversationId, "lastMessageAt"));
             }
             var last = convRef.collection("messages")
                     .orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)
                     .limit(1).get().get();
-            return last.isEmpty() ? java.util.Optional.empty()
-                    : toInstant(last.getDocuments().get(0).get("sentAt"));
+            if (last.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            Object sentAt = last.getDocuments().get(0).get("sentAt");
+            if (sentAt == null) {
+                throw new UnreadableTimestampException(
+                        "message sans sentAt dans la conversation " + conversationId);
+            }
+            return java.util.Optional.of(toInstant(sentAt, conversationId, "sentAt"));
+        } catch (UnreadableTimestampException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Firestore lastMessageInstant failed", e);
         }
     }
 
-    private static java.util.Optional<Instant> toInstant(Object value) {
+    private static Instant toInstant(Object value, String conversationId, String field) {
         try {
             if (value instanceof String s && !s.isBlank()) {
-                return java.util.Optional.of(Instant.parse(s));
+                return Instant.parse(s);
             }
             if (value instanceof com.google.cloud.Timestamp t) {
-                return java.util.Optional.of(t.toDate().toInstant());
+                return t.toDate().toInstant();
             }
         } catch (Exception ignored) {
-            // date illisible : traitée comme absente
+            // tombe dans l'exception ci-dessous
         }
-        return java.util.Optional.empty();
+        throw new UnreadableTimestampException("conversation " + conversationId + " : " + field
+                + " illisible (" + value.getClass().getSimpleName() + ")");
     }
 
     /**

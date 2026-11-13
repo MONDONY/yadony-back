@@ -83,7 +83,7 @@ class InquiryInactivitySchedulerTest {
         order.verify(conversationRepository).reserveStaleInquiry(conv.getId(), NOW_LDT, CUTOFF);
         order.verify(firestoreService).purgeInquiryConversation("conv_stale");
         verify(conversationRepository, never()).save(any());
-        verify(conversationRepository, never()).releaseInquiryReservation(any());
+        verify(conversationRepository, never()).releaseInquiryReservation(any(), any());
         verify(auditService).log(eq("conversation"), eq(conv.getId()), eq("INQUIRY_PURGED"), isNull(), anyMap());
     }
 
@@ -109,7 +109,7 @@ class InquiryInactivitySchedulerTest {
 
         assertThat(scheduler.purgeStaleInquiries()).isZero();
 
-        verify(conversationRepository).releaseInquiryReservation(conv.getId());
+        verify(conversationRepository).releaseInquiryReservation(conv.getId(), NOW_LDT);
         verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
     }
 
@@ -122,7 +122,7 @@ class InquiryInactivitySchedulerTest {
         reserved(ok, 1);
         when(firestoreService.purgeInquiryConversation("conv_undelete_fail")).thenReturn(false);
         when(firestoreService.purgeInquiryConversation("conv_ok")).thenReturn(true);
-        when(conversationRepository.releaseInquiryReservation(broken.getId()))
+        when(conversationRepository.releaseInquiryReservation(broken.getId(), NOW_LDT))
                 .thenThrow(new IllegalStateException("unique index"));
 
         assertThat(scheduler.purgeStaleInquiries()).isEqualTo(1);
@@ -219,6 +219,75 @@ class InquiryInactivitySchedulerTest {
     }
 
     @Test
+    void holdAppearingAfterTheFirstCheck_releasesTheReservation_andNeverDeletesInFirestore() {
+        ConversationEntity conv = inquiry("conv_late_hold");
+        stale(conv);
+        reserved(conv, 1);
+        when(hold.holds(isNull(), anyCollection())).thenReturn(false, true);
+
+        assertThat(scheduler.purgeStaleInquiries()).isZero();
+
+        verify(conversationRepository).releaseInquiryReservation(conv.getId(), NOW_LDT);
+        verify(firestoreService, never()).purgeInquiryConversation(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), anyMap());
+    }
+
+    @Test
+    void recentMessageAppearingAfterTheReservation_releasesIt_andNeverDeletesInFirestore() {
+        ConversationEntity conv = inquiry("conv_late_msg");
+        stale(conv);
+        reserved(conv, 1);
+        when(firestoreService.lastMessageInstant("conv_late_msg")).thenReturn(
+                java.util.Optional.empty(), java.util.Optional.of(Instant.parse("2026-11-12T08:00:00Z")));
+
+        assertThat(scheduler.purgeStaleInquiries()).isZero();
+
+        verify(conversationRepository).releaseInquiryReservation(conv.getId(), NOW_LDT);
+        verify(conversationRepository).markInquiryActivity(conv.getId(), LocalDateTime.of(2026, 11, 12, 8, 0));
+        verify(firestoreService, never()).purgeInquiryConversation(any());
+    }
+
+    @Test
+    void unreadableDateOnTheFirstCheck_keepsTheConversation_withoutUpdateNorFirestore() {
+        ConversationEntity conv = inquiry("conv_unreadable");
+        stale(conv);
+        when(firestoreService.lastMessageInstant("conv_unreadable"))
+                .thenThrow(new FirestoreService.UnreadableTimestampException("bad"));
+
+        assertThat(scheduler.purgeStaleInquiries()).isZero();
+
+        verify(conversationRepository, never()).reserveStaleInquiry(any(), any(), any());
+        verify(firestoreService, never()).purgeInquiryConversation(any());
+    }
+
+    @Test
+    void unreadableDateOnTheSecondCheck_releasesTheReservation() {
+        ConversationEntity conv = inquiry("conv_unreadable2");
+        stale(conv);
+        reserved(conv, 1);
+        when(firestoreService.lastMessageInstant("conv_unreadable2"))
+                .thenReturn(java.util.Optional.empty())
+                .thenThrow(new FirestoreService.UnreadableTimestampException("bad"));
+
+        assertThat(scheduler.purgeStaleInquiries()).isZero();
+
+        verify(conversationRepository).releaseInquiryReservation(conv.getId(), NOW_LDT);
+        verify(firestoreService, never()).purgeInquiryConversation(any());
+    }
+
+    @Test
+    void firestoreException_afterTheReservation_releasesIt() {
+        ConversationEntity conv = inquiry("conv_throws");
+        stale(conv);
+        reserved(conv, 1);
+        when(firestoreService.purgeInquiryConversation("conv_throws")).thenThrow(new IllegalStateException("boom"));
+
+        assertThat(scheduler.purgeStaleInquiries()).isZero();
+
+        verify(conversationRepository).releaseInquiryReservation(conv.getId(), NOW_LDT);
+    }
+
+    @Test
     void scheduledEntryPoint_runsThePass() {
         when(conversationRepository.findStaleInquiries(any())).thenReturn(List.of());
         scheduler.scheduledPurge();
@@ -246,6 +315,84 @@ class InquiryInactivitySchedulerTest {
 
         assertThat(new FirestoreService(firestore).lastMessageInstant("conv_x"))
                 .contains(Instant.parse("2026-11-10T08:00:00Z"));
+    }
+
+    private FirestoreService unreadableParent(Object value) throws Exception {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        DocumentReference convRef = mock(DocumentReference.class);
+        DocumentSnapshot snap = mock(DocumentSnapshot.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_x")).thenReturn(convRef);
+        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
+        when(snap.exists()).thenReturn(true);
+        when(snap.get("lastMessageAt")).thenReturn(value);
+        return new FirestoreService(firestore);
+    }
+
+    @Test
+    void lastMessageInstant_unexpectedType_isUnreadable_notEmpty() throws Exception {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> unreadableParent(1731484800000L).lastMessageInstant("conv_x"))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+    }
+
+    @Test
+    void lastMessageInstant_malformedString_isUnreadable() throws Exception {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> unreadableParent("hier soir").lastMessageInstant("conv_x"))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+    }
+
+    @Test
+    void lastMessageInstant_readsAFirestoreTimestamp() throws Exception {
+        Instant at = Instant.parse("2026-11-10T08:00:00Z");
+        assertThat(unreadableParent(com.google.cloud.Timestamp.ofTimeSecondsAndNanos(at.getEpochSecond(), 0))
+                .lastMessageInstant("conv_x")).contains(at);
+    }
+
+    private FirestoreService withFallback(Object sentAt, boolean noMessage) throws Exception {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference conversations = mock(CollectionReference.class);
+        CollectionReference messages = mock(CollectionReference.class);
+        com.google.cloud.firestore.Query ordered = mock(com.google.cloud.firestore.Query.class);
+        com.google.cloud.firestore.Query limited = mock(com.google.cloud.firestore.Query.class);
+        com.google.cloud.firestore.QuerySnapshot result = mock(com.google.cloud.firestore.QuerySnapshot.class);
+        DocumentReference convRef = mock(DocumentReference.class);
+        DocumentSnapshot snap = mock(DocumentSnapshot.class);
+        when(firestore.collection("conversations")).thenReturn(conversations);
+        when(conversations.document("conv_x")).thenReturn(convRef);
+        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
+        when(snap.exists()).thenReturn(true);
+        when(snap.get("lastMessageAt")).thenReturn(null);
+        when(convRef.collection("messages")).thenReturn(messages);
+        when(messages.orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)).thenReturn(ordered);
+        when(ordered.limit(1)).thenReturn(limited);
+        when(limited.get()).thenReturn(ApiFutures.immediateFuture(result));
+        when(result.isEmpty()).thenReturn(noMessage);
+        if (!noMessage) {
+            com.google.cloud.firestore.QueryDocumentSnapshot doc = mock(com.google.cloud.firestore.QueryDocumentSnapshot.class);
+            when(doc.get("sentAt")).thenReturn(sentAt);
+            when(result.getDocuments()).thenReturn(java.util.List.of(doc));
+        }
+        return new FirestoreService(firestore);
+    }
+
+    @Test
+    void lastMessageInstant_absentField_andNoMessage_isEmpty() throws Exception {
+        assertThat(withFallback(null, true).lastMessageInstant("conv_x")).isEmpty();
+    }
+
+    @Test
+    void lastMessageInstant_fallsBackOnTheLatestMessage() throws Exception {
+        assertThat(withFallback("2026-11-09T08:00:00Z", false).lastMessageInstant("conv_x"))
+                .contains(Instant.parse("2026-11-09T08:00:00Z"));
+    }
+
+    @Test
+    void lastMessageInstant_unreadableFallback_isUnreadable() throws Exception {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> withFallback(42, false).lastMessageInstant("conv_x"))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> withFallback(null, false).lastMessageInstant("conv_x"))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
     }
 
     @Test

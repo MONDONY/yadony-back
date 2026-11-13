@@ -90,12 +90,41 @@ class ConversationStaleInquiryRepositoryTest {
         assertThat(deletedAt(stale)).isNotNull();
         assertThat(deletedAt(promoted)).isNull();
 
-        assertThat(repo.releaseInquiryReservation(stale.getId())).isEqualTo(1);
+        assertThat(repo.releaseInquiryReservation(stale.getId(), now.plusSeconds(1))).isZero(); // pas SA réservation
+        assertThat(deletedAt(stale)).isNotNull();
+        assertThat(repo.releaseInquiryReservation(stale.getId(), now)).isEqualTo(1);
         assertThat(deletedAt(stale)).isNull();
-        assertThat(repo.releaseInquiryReservation(promoted.getId())).isZero();
+        assertThat(repo.releaseInquiryReservation(promoted.getId(), now)).isZero();
     }
 
     private Object deletedAt(ConversationEntity c) {
         return jdbc.queryForObject("SELECT deleted_at FROM conversations WHERE id = ?", Object.class, c.getId());
+    }
+
+    @Test
+    void guardedPromotion_andRelock_neverTouchAReservedOrClosedRow() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        UUID bid = UUID.randomUUID();
+        ConversationEntity open = inquiry(now, now);
+        ConversationEntity reserved = inquiry(now.minusDays(40), now.minusDays(40));
+        ConversationEntity closed = inquiry(now, now);
+        jdbc.update("UPDATE conversations SET closed_at = ? WHERE id = ?", now, closed.getId());
+        assertThat(repo.reserveStaleInquiry(reserved.getId(), now, now.minusDays(30))).isEqualTo(1);
+
+        assertThat(repo.promoteInquiryGuarded(reserved.getId(), bid, now)).isZero();
+        assertThat(repo.promoteInquiryGuarded(closed.getId(), bid, now)).isZero();
+        assertThat(deletedAt(reserved)).isNotNull();
+
+        assertThat(repo.promoteInquiryGuarded(open.getId(), bid, now)).isEqualTo(1);
+        assertThat(repo.promoteInquiryGuarded(open.getId(), bid, now)).isZero();
+        assertThat(jdbc.queryForObject("SELECT kind FROM conversations WHERE id = ?", String.class, open.getId()))
+                .isEqualTo("SENDER_TRAVELER");
+
+        assertThat(repo.relockInquiryGuarded(open.getId(), now)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT kind FROM conversations WHERE id = ?", String.class, open.getId()))
+                .isEqualTo("INQUIRY");
+        assertThat(jdbc.queryForObject("SELECT bid_id FROM conversations WHERE id = ?", Object.class, open.getId()))
+                .isNull();
+        assertThat(repo.relockInquiryGuarded(open.getId(), now)).isZero();
     }
 }

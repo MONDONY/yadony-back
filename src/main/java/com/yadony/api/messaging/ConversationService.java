@@ -255,8 +255,12 @@ public class ConversationService {
             return false;
         }
         ConversationEntity conv = found.get();
-        conv.promoteToBid(bidId, LocalDateTime.now(ZoneOffset.UTC));
-        conversationRepository.save(conv);
+        // UPDATE gardé, pas save() d'une entité lue plus tôt : une réservation de purge posée entre la
+        // lecture et le flush ne doit pas être défaite (0 ligne : purgée, fermée ou déjà promue).
+        if (conversationRepository.promoteInquiryGuarded(conv.getId(), bidId,
+                LocalDateTime.now(ZoneOffset.UTC)) == 0) {
+            return false;
+        }
 
         auditService.log("conversation", conv.getId(), "INQUIRY_PROMOTED", askerId,
             Map.of("bidId", bidId.toString(), "announcementId", announcementId.toString()));
@@ -305,8 +309,9 @@ public class ConversationService {
                 conv.getAnnouncementId(), conv.getAskerId(), NEVER_BOOKED_TERMINAL_STATUSES)) {
             return false;
         }
-        conv.relockToInquiry(LocalDateTime.now(ZoneOffset.UTC));
-        conversationRepository.save(conv);
+        if (conversationRepository.relockInquiryGuarded(conv.getId(), LocalDateTime.now(ZoneOffset.UTC)) == 0) {
+            return false;
+        }
 
         // Acteur null : action système, comme les expirations qui la déclenchent.
         auditService.log("conversation", conv.getId(), "INQUIRY_RELOCKED", null,

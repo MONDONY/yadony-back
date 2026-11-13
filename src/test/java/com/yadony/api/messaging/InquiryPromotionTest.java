@@ -76,6 +76,8 @@ class InquiryPromotionTest {
         lenient().when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
                 .thenReturn(Optional.of(inquiry));
         lenient().when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        lenient().when(conversationRepository.promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any()))
+                .thenReturn(1);
 
         logs = new ListAppender<>();
         logs.start();
@@ -92,14 +94,22 @@ class InquiryPromotionTest {
         boolean promoted = service.promoteInquiryToBid(askerId, announcementId, bidId);
 
         assertThat(promoted).isTrue();
-        assertThat(inquiry.getBidId()).isEqualTo(bidId);
-        assertThat(inquiry.getKind()).isEqualTo(ConversationKind.SENDER_TRAVELER);
-        assertThat(inquiry.isQuotaLifted()).isTrue();
         assertThat(inquiry.getFirestoreConversationId()).isEqualTo("conv_inq_abc");
-        verify(conversationRepository).save(inquiry);
+        verify(conversationRepository).promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any());
+        verify(conversationRepository, never()).save(any());
         verify(firestoreService).updateConversation("conv_inq_abc",
                 Map.of("kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", bidId.toString()));
         verify(auditService).log(eq("conversation"), eq(inquiry.getId()), eq("INQUIRY_PROMOTED"), eq(askerId), anyMap());
+    }
+
+    @Test
+    void rowReservedOrDeletedMeanwhile_guardedUpdateReturnsZero_noFirestoreNoAudit() {
+        when(conversationRepository.promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any())).thenReturn(0);
+
+        assertThat(service.promoteInquiryToBid(askerId, announcementId, bidId)).isFalse();
+
+        verifyNoInteractions(firestoreService, auditService);
+        verify(conversationRepository, never()).save(any());
     }
 
     @Test
@@ -140,8 +150,7 @@ class InquiryPromotionTest {
 
         assertThat(service.promoteInquiryToBid(askerId, announcementId, bidId)).isTrue();
 
-        assertThat(inquiry.getBidId()).isEqualTo(bidId);
-        verify(conversationRepository).save(inquiry);
+        verify(conversationRepository).promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any());
         assertThat(logs.list).anySatisfy(e -> {
             assertThat(e.getLevel()).isEqualTo(Level.ERROR);
             assertThat(e.getFormattedMessage()).contains("conv_inq_abc").contains("firestore down");
@@ -176,7 +185,8 @@ class InquiryPromotionTest {
         listener.onBidCreated(new BidCreatedEvent(bidId, announcementId, ownerId, askerId, "Fatou",
                 BigDecimal.ONE, "Paris → Dakar"));
 
-        assertThat(inquiry.getBidId()).isEqualTo(bidId);
+        verify(conversationRepository, org.mockito.Mockito.atLeastOnce())
+                .promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any());
     }
 
     @Test
@@ -184,7 +194,8 @@ class InquiryPromotionTest {
         listener.onCashBidCreated(new CashBidCreatedEvent(bidId, announcementId, ownerId, askerId, "Fatou",
                 BigDecimal.ONE, "Paris → Dakar"));
 
-        assertThat(inquiry.getBidId()).isEqualTo(bidId);
+        verify(conversationRepository, org.mockito.Mockito.atLeastOnce())
+                .promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any());
     }
 
     @Test
@@ -196,7 +207,8 @@ class InquiryPromotionTest {
 
         listener.onBidMaterialized(new BidMaterializedEvent(UUID.randomUUID(), bidId));
 
-        assertThat(inquiry.getBidId()).isEqualTo(bidId);
+        verify(conversationRepository, org.mockito.Mockito.atLeastOnce())
+                .promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any());
     }
 
     @Test
@@ -219,11 +231,12 @@ class InquiryPromotionTest {
                 BidNegotiationMessageKind.COUNTER, BigDecimal.TEN, 2));
         listener.onNegotiationMessage(new BidNegotiationMessagePostedEvent(bidId, announcementId, askerId, ownerId,
                 BidNegotiationMessageKind.PROPOSAL, BigDecimal.TEN, 2));
-        assertThat(inquiry.isInquiry()).isTrue();
+        verify(conversationRepository, never()).promoteInquiryGuarded(any(), any(), any());
 
         listener.onNegotiationMessage(new BidNegotiationMessagePostedEvent(bidId, announcementId, askerId, ownerId,
                 BidNegotiationMessageKind.PROPOSAL, BigDecimal.TEN, 1));
-        assertThat(inquiry.getBidId()).isEqualTo(bidId);
+        verify(conversationRepository, org.mockito.Mockito.times(1))
+                .promoteInquiryGuarded(eq(inquiry.getId()), eq(bidId), any());
     }
 
     @Test
