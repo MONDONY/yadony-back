@@ -204,7 +204,8 @@ class AdminBidsControllerIT {
         boat.setPricePerM3(new BigDecimal("140.00"));
         boat.setArrivalDateMax(LocalDate.of(2027, 1, 30));
         when(announcementRepo.findAll(any(org.springframework.data.domain.Pageable.class)))
-                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(boat)));
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(boat),
+                        org.springframework.data.domain.PageRequest.of(0, 20), 1));
 
         mockMvc.perform(get("/admin/announcements").with(authentication(as(AdminRole.SUPPORT))))
                 .andExpect(status().isOk())
@@ -220,7 +221,8 @@ class AdminBidsControllerIT {
         when(announcementRepo.findAll(org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<AnnouncementEntity>>any(),
                 any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(
-                        annonce(TransportMode.CAR, "Bamako"), annonce(TransportMode.BUS, "Dakar"))));
+                        annonce(TransportMode.CAR, "Bamako"), annonce(TransportMode.BUS, "Dakar")),
+                        org.springframework.data.domain.PageRequest.of(0, 20), 2));
 
         mockMvc.perform(get("/admin/announcements").param("transportMode", "CAR")
                         .with(authentication(as(AdminRole.SUPPORT))))
