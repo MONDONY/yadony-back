@@ -94,6 +94,7 @@ class TrackingDepositIT {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.yadony.api.common.media.MediaUploadRepository mediaUploads;
     @Autowired com.yadony.api.common.i18n.MessagesResolver messagesResolver;
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
@@ -110,7 +111,7 @@ class TrackingDepositIT {
     void twoDepartScansInParallel_oneDeposit() throws Exception {
         UserEntity traveler = persistUser(Role.TRAVELER);
         BidEntity bid = persistAcceptedBid(traveler, PayoutTrigger.DEPOSIT);
-        QrScanRequest depart = depart(bid, photoOf(bid));
+        QrScanRequest depart = depart(bid, uploadedPhoto(bid, traveler), bid.getQrToken());
 
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService pool = Executors.newFixedThreadPool(2);
@@ -136,7 +137,7 @@ class TrackingDepositIT {
         assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.HANDED_OVER);
 
         // Rejeu tardif (file hors ligne) : l'étape existante, aucun nouveau dépôt.
-        assertThat(trackingService.recordScan(depart(bid, null), traveler.getFirebaseUid()).created()).isFalse();
+        assertThat(trackingService.recordScan(depart(bid, null, null), traveler.getFirebaseUid()).created()).isFalse();
         assertThat(count("SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = 'PARCEL_DEPOSITED'", bid.getId()))
                 .isEqualTo(1);
         assertThat(bidRepository.findDepartScannedAt(bid.getId())).isNotNull();
@@ -148,7 +149,8 @@ class TrackingDepositIT {
         UserEntity traveler = persistUser(Role.TRAVELER);
         BidEntity bid = persistAcceptedBid(traveler, PayoutTrigger.DEPOSIT);
 
-        Throwable thrown = catchThrowable(() -> trackingService.recordScan(depart(bid, null), traveler.getFirebaseUid()));
+        Throwable thrown = catchThrowable(() -> trackingService.recordScan(depart(bid, null, bid.getQrToken()),
+                traveler.getFirebaseUid()));
 
         assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
         assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("boat-deposit-photo-required");
@@ -160,12 +162,51 @@ class TrackingDepositIT {
     }
 
     @Test
+    @DisplayName("transporteur seul (identifiant et numéro de suivi, sans le jeton du QR) : 422, ni DEPART ni dépôt")
+    void depositWithoutQrToken_refused_nothingWritten() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        BidEntity bid = persistAcceptedBid(traveler, PayoutTrigger.DEPOSIT);
+        String photo = uploadedPhoto(bid, traveler);
+        // Ce que le transporteur peut obtenir seul : l'identifiant (sa fiche colis) et le numéro (page publique).
+        QrScanRequest manual = new QrScanRequest(bid.getId(), TrackingEventType.DEPART, null, null, null, photo, null,
+                ScanMethod.MANUAL, bid.getTrackingNumber(), null);
+        QrScanRequest guessed = depart(bid, photo, UUID.randomUUID().toString());
+
+        for (QrScanRequest attempt : List.of(manual, guessed)) {
+            Throwable thrown = catchThrowable(() -> trackingService.recordScan(attempt, traveler.getFirebaseUid()));
+            assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+            assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("boat-deposit-qr-required");
+        }
+        assertThat(count("SELECT COUNT(*) FROM tracking_events WHERE bid_id = ?", bid.getId())).isZero();
+        assertThat(count("SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = 'PARCEL_DEPOSITED'", bid.getId()))
+                .isZero();
+        assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.ACCEPTED);
+    }
+
+    @Test
+    @DisplayName("photo non téléversée par le transporteur (clé fabriquée, ou envoyée par un autre compte) : 422")
+    void depositWithPhotoNotUploadedByCarrier_refused() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        BidEntity bid = persistAcceptedBid(traveler, PayoutTrigger.DEPOSIT);
+        String byAnother = uploadedPhoto(bid, persistUser(Role.SENDER));
+        String forged = "tracking/" + bid.getId() + "/1731400001_forged.jpg";
+
+        for (String photo : List.of(byAnother, forged)) {
+            Throwable thrown = catchThrowable(() -> trackingService.recordScan(depart(bid, photo, bid.getQrToken()),
+                    traveler.getFirebaseUid()));
+            assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("boat-deposit-photo-required");
+        }
+        assertThat(count("SELECT COUNT(*) FROM tracking_events WHERE bid_id = ?", bid.getId())).isZero();
+        assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.ACCEPTED);
+    }
+
+    @Test
     @DisplayName("colis payé à la livraison : DEPART sans photo accepté, aucun dépôt publié")
     void deliveryBid_departWithoutPhoto_noDeposit() {
         UserEntity traveler = persistUser(Role.TRAVELER);
         BidEntity bid = persistAcceptedBid(traveler, PayoutTrigger.DELIVERY);
 
-        assertThat(trackingService.recordScan(depart(bid, null), traveler.getFirebaseUid()).created()).isTrue();
+        assertThat(trackingService.recordScan(depart(bid, null, null), traveler.getFirebaseUid()).created()).isTrue();
 
         assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.HANDED_OVER);
         assertThat(count("SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = 'PARCEL_DEPOSITED'", bid.getId()))
@@ -174,13 +215,21 @@ class TrackingDepositIT {
 
     // ── Gabarits ─────────────────────────────────────────────────────────────
 
-    private static QrScanRequest depart(BidEntity bid, String photo) {
+    private static QrScanRequest depart(BidEntity bid, String photo, String qrToken) {
         return new QrScanRequest(bid.getId(), TrackingEventType.DEPART, null, null, null, photo, null,
-                ScanMethod.QR, null);
+                ScanMethod.QR, null, qrToken);
     }
 
     private static String photoOf(BidEntity bid) {
         return "tracking/" + bid.getId() + "/1731400000_DEPART.jpg";
+    }
+
+    /** Photo inscrite au registre comme par {@code POST /storage/upload/tracking} du transporteur. */
+    private String uploadedPhoto(BidEntity bid, UserEntity uploader) {
+        String key = photoOf(bid);
+        mediaUploads.saveAndFlush(new com.yadony.api.common.media.MediaUploadEntity(key, uploader.getId(),
+                com.yadony.api.common.media.MediaPurpose.TRACKING, bid.getId(), 48_213L));
+        return key;
     }
 
     private int count(String sql, UUID id) {

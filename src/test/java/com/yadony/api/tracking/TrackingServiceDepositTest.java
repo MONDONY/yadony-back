@@ -69,6 +69,7 @@ class TrackingServiceDepositTest {
     @Mock StorageService storageService;
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository;
+    @Mock com.yadony.api.common.media.MediaUploadRepository mediaUploads;
 
     private TrackingService service;
 
@@ -83,8 +84,15 @@ class TrackingServiceDepositTest {
                 trackingEventRepository, auditService, eventPublisher, storageService, notificationDispatcher,
                 TestMessages.resolver(), recipientLinkRepository);
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://yadony.app");
+        service.setMediaUploadRepository(mediaUploads);
         lenient().when(notificationDispatcher.messagesFor(any())).thenReturn(TestMessages.fr());
+        // Photo du dépôt réellement téléversée par le transporteur pour ce colis.
+        lenient().when(mediaUploads.existsByObjectKeyAndOwnerIdAndBidIdAndPurposeAndSizeBytesGreaterThan(
+                photo(), travelerId, bidId, com.yadony.api.common.media.MediaPurpose.TRACKING, 0L)).thenReturn(true);
     }
+
+    /** Jeton secret du colis, porté par son QR. */
+    private static final String QR_TOKEN = "7f1c2e0a-5b7d-4f43-9a51-2c8e4d6b9a10";
 
     @AfterEach
     void clearRequest() {
@@ -100,7 +108,7 @@ class TrackingServiceDepositTest {
         b.setSenderId(senderId);
         b.setWeightKg(BigDecimal.valueOf(5));
         b.setStatus(status);
-        b.setQrToken("qt");
+        b.setQrToken(QR_TOKEN);
         b.setTrackingNumber("DON-AB23CD45");
         ReflectionTestUtils.setField(b, "payoutTrigger", trigger);
         return b;
@@ -136,7 +144,12 @@ class TrackingServiceDepositTest {
     }
 
     private QrScanRequest depart(String photo) {
-        return new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, photo, null, ScanMethod.QR, null);
+        return depart(photo, QR_TOKEN);
+    }
+
+    private QrScanRequest depart(String photo, String qrToken) {
+        return new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, photo, null, ScanMethod.QR, null,
+                qrToken);
     }
 
     private void verifyNoDeposit() {
@@ -181,8 +194,8 @@ class TrackingServiceDepositTest {
                 .thenReturn(Optional.empty(), Optional.of(recorded));
 
         assertThat(service.recordScan(depart(photo()), "uid-traveler").created()).isTrue();
-        // Le rejeu arrive sans photo : il renvoie l'étape existante, sans 422 ni second versement.
-        assertThat(service.recordScan(depart(null), "uid-traveler").created()).isFalse();
+        // Le rejeu (même jeton, ou sans photo ni jeton) renvoie l'étape existante, sans 422 ni second versement.
+        assertThat(service.recordScan(depart(null, null), "uid-traveler").created()).isFalse();
 
         verify(eventPublisher, times(1)).publishEvent(any(ParcelDepositedEvent.class));
         verify(trackingEventRepository, times(1)).save(any());
@@ -194,7 +207,7 @@ class TrackingServiceDepositTest {
         BidEntity bid = bid(BidStatus.ACCEPTED, PayoutTrigger.DEPOSIT);
         stubScan(bid);
         QrScanRequest offline = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, photo(),
-                LocalDateTime.now(ZoneOffset.UTC).minusHours(3), ScanMethod.QR, null);
+                LocalDateTime.now(ZoneOffset.UTC).minusHours(3), ScanMethod.QR, null, QR_TOKEN);
 
         service.recordScan(offline, "uid-traveler");
 
@@ -299,6 +312,101 @@ class TrackingServiceDepositTest {
         assertThat(((YadonyBusinessException) thrown).getStatus()).isEqualTo(HttpStatus.CONFLICT);
         verify(trackingEventRepository, never()).save(any());
         verifyNoDeposit();
+    }
+
+    @Test
+    @DisplayName("dépôt sans jeton du QR (saisie manuelle, identifiant seul, file hors ligne) : 422, rien d'écrit")
+    void depositWithoutQrToken_422_noEvent() {
+        BidEntity bid = bid(BidStatus.ACCEPTED, PayoutTrigger.DEPOSIT);
+        stubScan(bid);
+
+        for (String missing : new String[] {null, "", "  "}) {
+            Throwable thrown = catchThrowable(() -> service.recordScan(depart(photo(), missing), "uid-traveler"));
+            assertThat(errorCode(thrown)).isEqualTo("boat-deposit-qr-required");
+            assertThat(((YadonyBusinessException) thrown).getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+        // Le numéro de suivi n'est pas une preuve (lisible sur la page publique du colis).
+        QrScanRequest manual = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, photo(), null,
+                ScanMethod.MANUAL, "DON-AB23CD45", null);
+        assertThat(errorCode(catchThrowable(() -> service.recordScan(manual, "uid-traveler"))))
+                .isEqualTo("boat-deposit-qr-required");
+
+        verify(trackingEventRepository, never()).save(any());
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        verifyNoDeposit();
+    }
+
+    @Test
+    @DisplayName("jeton du QR faux (celui d'un autre colis, ou deviné) : 422, rien d'écrit")
+    void depositWithWrongQrToken_422_noEvent() {
+        BidEntity bid = bid(BidStatus.ACCEPTED, PayoutTrigger.DEPOSIT);
+        stubScan(bid);
+
+        Throwable thrown = catchThrowable(() -> service.recordScan(depart(photo(), UUID.randomUUID().toString()),
+                "uid-traveler"));
+
+        assertThat(errorCode(thrown)).isEqualTo("boat-deposit-qr-required");
+        verify(trackingEventRepository, never()).save(any());
+        verifyNoDeposit();
+    }
+
+    @Test
+    @DisplayName("photo du colis jamais téléversée (clé fabriquée) ou téléversée par un autre : 422, rien d'écrit")
+    void depositWithPhotoNotUploadedByCarrier_422_noEvent() {
+        BidEntity bid = bid(BidStatus.ACCEPTED, PayoutTrigger.DEPOSIT);
+        stubScan(bid);
+        String forged = "tracking/" + bidId + "/1731400000_forged.jpg";
+
+        Throwable thrown = catchThrowable(() -> service.recordScan(depart(forged), "uid-traveler"));
+
+        assertThat(errorCode(thrown)).isEqualTo("boat-deposit-photo-required");
+        verify(mediaUploads).existsByObjectKeyAndOwnerIdAndBidIdAndPurposeAndSizeBytesGreaterThan(forged, travelerId,
+                bidId, com.yadony.api.common.media.MediaPurpose.TRACKING, 0L);
+        verify(trackingEventRepository, never()).save(any());
+        verifyNoDeposit();
+    }
+
+    @Test
+    @DisplayName("registre des photos absent (hors Spring) : dépôt refusé, jamais accepté par défaut")
+    void depositWithoutUploadRegistry_refused() {
+        BidEntity bid = bid(BidStatus.ACCEPTED, PayoutTrigger.DEPOSIT);
+        stubScan(bid);
+        service.setMediaUploadRepository(null);
+
+        assertThat(errorCode(catchThrowable(() -> service.recordScan(depart(photo()), "uid-traveler"))))
+                .isEqualTo("boat-deposit-photo-required");
+        verifyNoDeposit();
+    }
+
+    @Test
+    @DisplayName("colis payé à la livraison : ni jeton ni photo exigés (comportement inchangé)")
+    void deliveryBid_noTokenNoPhoto_accepted() {
+        BidEntity bid = bid(BidStatus.ACCEPTED, PayoutTrigger.DELIVERY);
+        stubScan(bid);
+
+        assertThat(service.recordScan(depart(null, null), "uid-traveler").created()).isTrue();
+        verify(mediaUploads, never()).existsByObjectKeyAndOwnerIdAndBidIdAndPurposeAndSizeBytesGreaterThan(any(), any(),
+                any(), any(), org.mockito.ArgumentMatchers.anyLong());
+        verifyNoDeposit();
+    }
+
+    // ── QR du colis ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("QR d'un colis payé au dépôt : porte le jeton secret (k) ; QR d'un colis payé à la livraison : inchangé")
+    void qrCode_depositBidCarriesSecretToken() {
+        UserEntity sender = new UserEntity();
+        setId(sender, senderId);
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        BidEntity deposit = bid(BidStatus.ACCEPTED, PayoutTrigger.DEPOSIT);
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(deposit));
+
+        assertThat(service.getQrCode(bidId, "uid-sender").scanUrl())
+                .isEqualTo("https://yadony.app/api/v1/tracking/" + bidId + "/scan?k=" + QR_TOKEN);
+
+        ReflectionTestUtils.setField(deposit, "payoutTrigger", PayoutTrigger.DELIVERY);
+        assertThat(service.getQrCode(bidId, "uid-sender").scanUrl())
+                .isEqualTo("https://yadony.app/api/v1/tracking/" + bidId + "/scan");
     }
 
     // ── Lecture par numéro de suivi ──────────────────────────────────────────

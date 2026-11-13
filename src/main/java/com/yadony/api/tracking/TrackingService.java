@@ -132,6 +132,20 @@ public class TrackingService {
         this.tripDelayRepository = tripDelayRepository;
     }
 
+    /** Paramètre du QR d'un colis payé au dépôt qui porte son jeton secret ({@code bids.qr_token}). */
+    static final String DEPOSIT_QR_TOKEN_PARAM = "k";
+
+    /**
+     * Registre des photos réellement téléversées (colis, auteur) ; absent hors Spring : un dépôt payé est alors
+     * refusé faute de preuve (jamais l'inverse).
+     */
+    private com.yadony.api.common.media.MediaUploadRepository mediaUploads;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setMediaUploadRepository(com.yadony.api.common.media.MediaUploadRepository mediaUploads) {
+        this.mediaUploads = mediaUploads;
+    }
+
     /** Mode recette (FLUTTER-FA) ; fermé tant que Spring ne l'a pas injecté. */
     private com.yadony.api.common.RecetteMode recetteMode = com.yadony.api.common.RecetteMode.disabled();
 
@@ -161,6 +175,13 @@ public class TrackingService {
         }
 
         String scanUrl = appBaseUrl + "/api/v1/tracking/" + bidId + "/scan";
+        // Colis payé au dépôt : le QR porte aussi le jeton secret du colis (paramètre « k », jamais servi ailleurs).
+        // Le transporteur ne l'obtient qu'en scannant le QR du colis qu'on lui remet : c'est la preuve exigée au
+        // dépôt, qui déclenche son paiement. La page publique ignore ce paramètre ; l'app lit toujours le colis dans
+        // le chemin de l'URL.
+        if (bid.getPayoutTrigger() == PayoutTrigger.DEPOSIT) {
+            scanUrl += "?" + DEPOSIT_QR_TOKEN_PARAM + "=" + bid.getQrToken();
+        }
         String qrBase64 = generateQrBase64(scanUrl);
 
         return new QrCodeResponse(bidId, scanUrl, qrBase64);
@@ -340,12 +361,13 @@ public class TrackingService {
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
 
-        // Colis payé au dépôt : le transporteur est payé à ce scan, sans retour possible. La photo du
-        // colis déposé en est la preuve : obligatoire, contrôlée avant toute écriture.
+        // Colis payé au dépôt : le transporteur est payé à ce scan, sans retour possible. Il ne peut pas le
+        // déclencher seul : il prouve qu'il a le colis en main (jeton secret du QR du colis) et le photographie
+        // (photo réellement téléversée par lui pour ce colis). Contrôlé avant toute écriture.
         if (request.eventType() == TrackingEventType.DEPART && bid.getStatus() == BidStatus.ACCEPTED
-                && bid.getPayoutTrigger() == PayoutTrigger.DEPOSIT && photoKey == null) {
-            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "boat-deposit-photo-required", "problem.boat-deposit-photo-required");
+                && bid.getPayoutTrigger() == PayoutTrigger.DEPOSIT) {
+            assertDepositProof(bid, request.qrToken());
+            assertDepositPhoto(bid, traveler, photoKey);
         }
 
         // Le scan TRANSIT est facultatif, le DEPART ne l'est pas : c'est lui qui
@@ -631,6 +653,43 @@ public class TrackingService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-photo-url", "problem.invalid-photo-url.l-url-de-la-photo-doit-etre-une");
         }
         return photoKey;
+    }
+
+    /**
+     * Preuve que le transporteur a le colis en main : le jeton secret du colis ({@code bids.qr_token}), porté par le
+     * QR que l'expéditeur colle ou présente (paramètre {@value #DEPOSIT_QR_TOKEN_PARAM}) et jamais servi par l'API au
+     * transporteur. Le numéro de suivi n'en est pas une (lisible sur la page publique du colis, que le transporteur
+     * ouvre avec l'identifiant qu'il connaît), ni l'identifiant du colis. Absent ou faux : 422
+     * {@code boat-deposit-qr-required}, sans dire lequel. Comparaison en temps constant.
+     */
+    private void assertDepositProof(BidEntity bid, String providedToken) {
+        String expected = bid.getQrToken();
+        boolean valid = expected != null && providedToken != null && java.security.MessageDigest.isEqual(
+                expected.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                providedToken.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (!valid) {
+            log.warn("Dépôt du colis {} refusé : jeton du QR {}", bid.getId(),
+                    providedToken == null || providedToken.isBlank() ? "absent" : "faux");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "boat-deposit-qr-required", "problem.boat-deposit-qr-required");
+        }
+    }
+
+    /**
+     * Photo du colis déposé : une clé du colis ({@link #validatedPhotoKey}) ne suffit pas, l'objet doit avoir été
+     * réellement téléversé pour CE colis par CE transporteur ({@code media_uploads}, inscrit par
+     * {@code StorageService.storeImage} via {@code POST /storage/upload/tracking}, taille écrite après l'envoi).
+     * Sinon 422 {@code boat-deposit-photo-required}.
+     */
+    private void assertDepositPhoto(BidEntity bid, UserEntity traveler, String photoKey) {
+        boolean uploaded = photoKey != null && mediaUploads != null
+                && mediaUploads.existsByObjectKeyAndOwnerIdAndBidIdAndPurposeAndSizeBytesGreaterThan(photoKey,
+                        traveler.getId(), bid.getId(), com.yadony.api.common.media.MediaPurpose.TRACKING, 0L);
+        if (!uploaded) {
+            log.warn("Dépôt du colis {} refusé : photo {}", bid.getId(), photoKey == null ? "absente" : "non téléversée");
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "boat-deposit-photo-required", "problem.boat-deposit-photo-required");
+        }
     }
 
     private String cleanGpsLabel(String label) {
