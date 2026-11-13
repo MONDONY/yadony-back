@@ -53,6 +53,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class ConversationInquiryControllerIntegrationTest {
 
+    static final String CAP = "X-Dony-Capabilities";
+
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired UserRepository userRepository;
@@ -137,17 +139,17 @@ class ConversationInquiryControllerIntegrationTest {
     void creatorSeesTheThreadOnlyAfterTheAskersFirstMessage() throws Exception {
         UUID id = open();
 
-        mockMvc.perform(get("/conversations").with(authentication(as(asker))))
+        mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(asker))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[*].id", hasItem(id.toString())));
-        mockMvc.perform(get("/conversations").with(authentication(as(owner))))
+        mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(owner))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[*].id", not(hasItem(id.toString()))));
 
         ConversationEntity conv = conversationRepository.findById(id).orElseThrow();
         // Un message du créateur ne suffit pas : seul le premier message du demandeur ouvre le fil.
         notifyMessage(conv, owner);
-        mockMvc.perform(get("/conversations").with(authentication(as(owner))))
+        mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(owner))))
                 .andExpect(jsonPath("$.content[*].id", not(hasItem(id.toString()))));
         assertThat(conversationRepository.findById(id).orElseThrow().getLastActivityAt()).isNotNull();
         assertThat(conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt()).isNull();
@@ -155,7 +157,7 @@ class ConversationInquiryControllerIntegrationTest {
         notifyMessage(conv, asker);
         var first = conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt();
         assertThat(first).isNotNull();
-        mockMvc.perform(get("/conversations").with(authentication(as(owner))))
+        mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(owner))))
                 .andExpect(jsonPath("$.content[*].id", hasItem(id.toString())));
 
         notifyMessage(conv, asker); // idempotent : la date du premier message ne bouge pas
@@ -166,12 +168,12 @@ class ConversationInquiryControllerIntegrationTest {
     void getById_worksWithoutBid_forBothParticipants() throws Exception {
         UUID id = open();
 
-        mockMvc.perform(get("/conversations/{id}", id).with(authentication(as(asker))))
+        mockMvc.perform(get("/conversations/{id}", id).header(CAP, "inquiry").with(authentication(as(asker))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kind").value("INQUIRY"))
                 .andExpect(jsonPath("$.bidId").doesNotExist())
                 .andExpect(jsonPath("$.tripOrigin").value("Paris"));
-        mockMvc.perform(get("/conversations/{id}", id).with(authentication(as(owner))))
+        mockMvc.perform(get("/conversations/{id}", id).header(CAP, "inquiry").with(authentication(as(owner))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.inquiryMessageLimit").value(10));
     }
@@ -208,6 +210,68 @@ class ConversationInquiryControllerIntegrationTest {
                         .with(authentication(as(asker))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.type", containsString("media-not-allowed")));
+    }
+
+    @Test
+    void withoutTheCapabilityHeader_theInquiryIsInvisibleEverywhere() throws Exception {
+        UUID id = open();
+        conversationRepository.markInquiryFirstMessage(id, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+
+        for (String header : new String[] {null, "other", "inquiry2"}) {
+            var list = get("/conversations").with(authentication(as(owner)));
+            var one = get("/conversations/{id}", id).with(authentication(as(owner)));
+            var archived = get("/conversations/archived").with(authentication(as(owner)));
+            var archive = post("/conversations/{id}/archive", id).with(authentication(as(owner)));
+            var mute = post("/conversations/{id}/mute", id).with(authentication(as(owner)));
+            if (header != null) {
+                list.header(CAP, header);
+                one.header(CAP, header);
+                archived.header(CAP, header);
+                archive.header(CAP, header);
+                mute.header(CAP, header);
+            }
+            mockMvc.perform(list).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[*].id", not(hasItem(id.toString()))));
+            mockMvc.perform(one).andExpect(status().isForbidden());
+            mockMvc.perform(archive).andExpect(status().isForbidden());
+            mockMvc.perform(mute).andExpect(status().isForbidden());
+            mockMvc.perform(archived).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[*].id", not(hasItem(id.toString()))));
+        }
+        assertThat(conversationRepository.findById(id).orElseThrow().isArchivedByUser(owner.getId())).isFalse();
+
+        // Avec l'activation, le même fil existe pour le créateur.
+        mockMvc.perform(get("/conversations/{id}", id).header(CAP, "foo, inquiry").with(authentication(as(owner))))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/conversations/{id}/archive", id).header(CAP, "inquiry").with(authentication(as(owner))))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/conversations/archived").header(CAP, "inquiry").with(authentication(as(owner))))
+                .andExpect(jsonPath("$.content[*].id", hasItem(id.toString())));
+    }
+
+    @Test
+    void open_requiresAnAuthenticatedUserWithARole() throws Exception {
+        mockMvc.perform(post("/conversations/inquiry")
+                        .contentType(MediaType.APPLICATION_JSON).content(body(announcement.getId())))
+                .andExpect(status().isUnauthorized());
+
+        var noRole = new UsernamePasswordAuthenticationToken(asker.getFirebaseUid(), null, List.of());
+        mockMvc.perform(post("/conversations/inquiry").with(authentication(noRole))
+                        .contentType(MediaType.APPLICATION_JSON).content(body(announcement.getId())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void firstMessageDate_isNeverRewrittenByAnEntitySave() throws Exception {
+        UUID id = open();
+        ConversationEntity stale = conversationRepository.findById(id).orElseThrow();
+        assertThat(stale.getInquiryFirstMessageAt()).isNull();
+
+        conversationRepository.markInquiryFirstMessage(id, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        stale.archiveForUser(asker.getId());
+        conversationRepository.saveAndFlush(stale);
+
+        assertThat(conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt()).isNotNull();
     }
 
     private void notifyMessage(ConversationEntity conv, UserEntity from) throws Exception {

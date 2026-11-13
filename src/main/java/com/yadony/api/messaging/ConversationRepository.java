@@ -137,7 +137,8 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     @Query("SELECT c FROM ConversationEntity c WHERE " +
            "c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderArchivedAt IS NOT NULL AND c.senderDeletedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerArchivedAt IS NOT NULL AND c.travelerDeletedAt IS NULL))")
+           "(c.travelerId = :userId AND c.travelerArchivedAt IS NOT NULL AND c.travelerDeletedAt IS NULL))" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     Page<ConversationEntity> findArchivedByParticipant(@Param("userId") UUID userId, Pageable pageable);
 
     @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND (" +

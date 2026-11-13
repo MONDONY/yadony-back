@@ -102,6 +102,17 @@ class CallEligibilityServiceTest {
     }
 
     @Test
+    void conversationDeQuestionsSansBidEstHorsFenetre_sansRequeteSurLeBid() {
+        // JPA refuse findById(null) : sans garde, l'appel de la conversation INQUIRY serait un 500.
+        lenient().when(bids.findById(null)).thenThrow(new IllegalArgumentException("id must not be null"));
+        ConversationEntity inquiry = ConversationEntity.forInquiry(sender, UUID.randomUUID(), traveler, "conv_inq_1");
+        ReflectionTestUtils.setField(inquiry, "id", UUID.randomUUID());
+        lenient().when(conversations.findById(inquiry.getId())).thenReturn(Optional.of(inquiry));
+
+        assertThat(service.check(sender, inquiry.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    }
+
+    @Test
     void bidIntrouvableEstHorsFenetre() {
         lenient().when(bids.findById(bidId)).thenReturn(Optional.empty());
         assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);

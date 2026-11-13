@@ -51,6 +51,9 @@ class ConversationControllerTest {
     @Mock
     private com.yadony.api.common.BlockVisibility blockVisibility;
 
+    @Mock
+    private InquiryCapability inquiryCapability;
+
     @InjectMocks
     private ConversationController controller;
 

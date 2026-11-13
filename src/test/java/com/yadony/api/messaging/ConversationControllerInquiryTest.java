@@ -12,7 +12,11 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import com.yadony.api.common.PageResponse;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -34,6 +38,7 @@ class ConversationControllerInquiryTest {
     @Mock ConversationService conversationService;
     @Mock UserRepository userRepository;
     @Mock com.yadony.api.common.BlockVisibility blockVisibility;
+    @Mock InquiryCapability inquiryCapability;
     @InjectMocks ConversationController controller;
 
     final UUID askerId = UUID.randomUUID();
@@ -47,7 +52,7 @@ class ConversationControllerInquiryTest {
         ReflectionTestUtils.setField(asker, "id", askerId);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("uid-asker", null, List.of()));
-        when(userRepository.findByFirebaseUid("uid-asker")).thenReturn(Optional.of(asker));
+        lenient().when(userRepository.findByFirebaseUid("uid-asker")).thenReturn(Optional.of(asker));
         conv = ConversationEntity.forInquiry(askerId, announcementId, UUID.randomUUID(), "conv_inq_x");
         response = mock(ConversationResponse.class);
         lenient().when(conversationService.toResponse(conv, askerId)).thenReturn(response);
@@ -89,5 +94,82 @@ class ConversationControllerInquiryTest {
         assertThatThrownBy(() -> controller.openInquiry(new InquiryRequest(announcementId)))
                 .isInstanceOf(DataIntegrityViolationException.class);
         verify(conversationService, times(2)).getOrCreateInquiry(askerId, announcementId);
+    }
+
+    // ── Activation explicite : une app qui n'annonce pas `inquiry` ne voit jamais une INQUIRY ──
+
+    private ConversationEntity inquiryWithId() {
+        ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
+        return conv;
+    }
+
+    @Test
+    void list_withoutCapability_dropsInquiryThreads() {
+        ConversationEntity inquiry = inquiryWithId();
+        ConversationEntity plain = new ConversationEntity(UUID.randomUUID(), askerId, UUID.randomUUID(), "conv_plain");
+        when(inquiryCapability.enabled()).thenReturn(false);
+        when(blockVisibility.hiddenUserIdsFor(askerId)).thenReturn(java.util.Set.of());
+        when(conversationRepository.findByParticipant(askerId, Pageable.unpaged()))
+                .thenReturn(new PageImpl<>(List.of(inquiry, plain)));
+        when(conversationService.fetchConversationMeta(org.mockito.ArgumentMatchers.anyList())).thenReturn(java.util.Map.of());
+        when(conversationService.toResponses(org.mockito.ArgumentMatchers.anyList(), eq(askerId),
+                org.mockito.ArgumentMatchers.anyMap())).thenReturn(List.of());
+
+        controller.listConversations(Pageable.ofSize(20));
+
+        verify(conversationService).toResponses(eq(List.of(plain)), eq(askerId), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    void list_withCapability_keepsInquiryThreads() {
+        ConversationEntity inquiry = inquiryWithId();
+        when(inquiryCapability.enabled()).thenReturn(true);
+        when(blockVisibility.hiddenUserIdsFor(askerId)).thenReturn(java.util.Set.of());
+        when(conversationRepository.findByParticipant(askerId, Pageable.unpaged()))
+                .thenReturn(new PageImpl<>(List.of(inquiry)));
+        when(conversationService.fetchConversationMeta(org.mockito.ArgumentMatchers.anyList())).thenReturn(java.util.Map.of());
+        when(conversationService.toResponses(org.mockito.ArgumentMatchers.anyList(), eq(askerId),
+                org.mockito.ArgumentMatchers.anyMap())).thenReturn(List.of());
+
+        controller.listConversations(Pageable.ofSize(20));
+
+        verify(conversationService).toResponses(eq(List.of(inquiry)), eq(askerId), org.mockito.ArgumentMatchers.anyMap());
+    }
+
+    @Test
+    void archivedList_withoutCapability_dropsInquiryResponses() {
+        ConversationResponse inq = mock(ConversationResponse.class);
+        when(inq.kind()).thenReturn("INQUIRY");
+        ConversationResponse plain = mock(ConversationResponse.class);
+        when(plain.kind()).thenReturn("SENDER_TRAVELER");
+        when(inquiryCapability.enabled()).thenReturn(false);
+        when(conversationService.getArchivedConversations(askerId)).thenReturn(List.of(inq, plain));
+
+        PageResponse<ConversationResponse> body = controller.listArchivedConversations().getBody();
+
+        assertThat(body.content()).containsExactly(plain);
+    }
+
+    @Test
+    void byIdEndpoints_withoutCapability_answerLikeAnUnknownConversation() {
+        ConversationEntity inquiry = inquiryWithId();
+        UUID id = inquiry.getId();
+        when(inquiryCapability.enabled()).thenReturn(false);
+        when(conversationRepository.findById(id)).thenReturn(Optional.of(inquiry));
+
+        List<org.junit.jupiter.api.function.Executable> calls = List.of(
+                () -> controller.getConversation(id),
+                () -> controller.updateLastMessage(id, new com.yadony.api.messaging.dto.LastMessageRequest("x")),
+                () -> controller.deleteConversation(id),
+                () -> controller.archiveConversation(id),
+                () -> controller.unarchiveConversation(id),
+                () -> controller.muteConversation(id),
+                () -> controller.unmuteConversation(id),
+                () -> controller.restoreConversation(id));
+        for (var call : calls) {
+            ResponseStatusException e = org.junit.jupiter.api.Assertions.assertThrows(ResponseStatusException.class, call);
+            assertThat(e.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        }
+        verifyNoInteractions(conversationService);
     }
 }

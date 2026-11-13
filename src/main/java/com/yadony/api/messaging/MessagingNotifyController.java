@@ -91,15 +91,21 @@ public class MessagingNotifyController {
             }
         }
 
-        // Messagerie avant réservation : dernière activité à chaque message, et le premier message
-        // du demandeur rend le fil visible du créateur. Best-effort comme la preuve de contact.
+        // Messagerie avant réservation : le premier message du demandeur rend le fil visible du
+        // créateur ; chaque message date la dernière activité. Deux écritures indépendantes et
+        // best-effort : la notification du message ne dépend d'aucune des deux.
         if (conv.isInquiry()) {
-            try {
-                java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
-                conversationRepository.markInquiryActivity(conv.getId(), now);
-                if (sender != null && sender.getId() != null && sender.getId().equals(conv.getAskerId())) {
+            java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+            if (sender != null && sender.getId() != null && sender.getId().equals(conv.getAskerId())) {
+                try {
                     conversationRepository.markInquiryFirstMessage(conv.getId(), now);
+                } catch (RuntimeException e) {
+                    org.slf4j.LoggerFactory.getLogger(MessagingNotifyController.class)
+                            .warn("markInquiryFirstMessage a échoué pour la conversation {} : {}", conv.getId(), e.toString());
                 }
+            }
+            try {
+                conversationRepository.markInquiryActivity(conv.getId(), now);
             } catch (RuntimeException e) {
                 org.slf4j.LoggerFactory.getLogger(MessagingNotifyController.class)
                         .warn("markInquiryActivity a échoué pour la conversation {} : {}", conv.getId(), e.toString());

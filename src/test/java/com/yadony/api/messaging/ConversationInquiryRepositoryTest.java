@@ -178,4 +178,50 @@ class ConversationInquiryRepositoryTest {
         assertThat(InquiryPolicy.MESSAGE_LIMIT).isEqualTo(10);
         assertThat(InquiryPolicy.INACTIVITY_DAYS).isEqualTo(30);
     }
+
+    // ── Liste du créateur : une INQUIRY sans premier message du demandeur reste cachée ──
+
+    @Test
+    void creatorLists_hideAnInquiryUntilTheFirstAskerMessage() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID(), announcement = UUID.randomUUID();
+        ConversationEntity c = newInquiry(asker, announcement, owner);
+        UUID hidden = UUID.randomUUID();
+        org.springframework.data.domain.Pageable all = org.springframework.data.domain.Pageable.unpaged();
+
+        assertThat(repo.findByParticipant(owner, all).getContent()).doesNotContain(c);
+        assertThat(repo.findByParticipantExcludingHidden(owner, java.util.Set.of(hidden), all).getContent())
+                .extracting(ConversationEntity::getId).doesNotContain(c.getId());
+        assertThat(repo.countActiveByParticipant(owner)).isZero();
+        // Le demandeur, lui, voit toujours son fil.
+        assertThat(repo.findByParticipant(asker, all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+        assertThat(repo.countActiveByParticipant(asker)).isEqualTo(1);
+        assertThat(repo.findByParticipantExcludingHidden(asker, java.util.Set.of(hidden), all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+
+        repo.markInquiryFirstMessage(c.getId(), LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(repo.findByParticipant(owner, all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+        assertThat(repo.findByParticipantExcludingHidden(owner, java.util.Set.of(hidden), all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+        assertThat(repo.countActiveByParticipant(owner)).isEqualTo(1);
+    }
+
+    @Test
+    void creatorArchivedList_hidesAnInquiryWithoutFirstMessage() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        ConversationEntity c = newInquiry(asker, UUID.randomUUID(), owner);
+        c.archiveForUser(owner);
+        repo.saveAndFlush(c);
+        org.springframework.data.domain.Pageable all = org.springframework.data.domain.Pageable.unpaged();
+
+        assertThat(repo.findArchivedByParticipant(owner, all).getContent())
+                .extracting(ConversationEntity::getId).doesNotContain(c.getId());
+
+        repo.markInquiryFirstMessage(c.getId(), LocalDateTime.now(ZoneOffset.UTC));
+
+        assertThat(repo.findArchivedByParticipant(owner, all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+    }
 }

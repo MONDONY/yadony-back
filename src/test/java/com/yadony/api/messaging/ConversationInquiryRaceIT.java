@@ -65,6 +65,7 @@ class ConversationInquiryRaceIT {
     @Autowired AnnouncementRepository announcementRepository;
     @MockitoSpyBean ConversationRepository conversationRepository;
     @MockitoBean FirestoreService firestoreService;
+    @MockitoSpyBean ConversationService conversationService;
 
     @BeforeAll
     static void startPostgres() throws Exception {
@@ -106,10 +107,25 @@ class ConversationInquiryRaceIT {
         doReturn(Optional.empty(), Optional.of(winnerEntity))
                 .when(conversationRepository).findByAskerAndAnnouncement(any(), any());
 
+        java.util.concurrent.atomic.AtomicReference<org.springframework.dao.DataIntegrityViolationException> violation =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        org.mockito.Mockito.doAnswer(inv -> {
+            try {
+                return inv.callRealMethod();
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                violation.set(e);
+                throw e;
+            }
+        }).when(conversationService).getOrCreateInquiry(any(), any());
+
         mockMvc.perform(post("/conversations/inquiry").with(authentication(as(asker)))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(winnerId));
+
+        // La violation vue par le perdant est bien celle de l'index partiel, pas une autre contrainte.
+        assertThat(violation.get()).isNotNull();
+        assertThat(violation.get().getMessage()).contains("conversations_inquiry_active_idx");
 
         long open = conversationRepository.findAll().stream()
                 .filter(c -> asker.getId().equals(c.getAskerId())

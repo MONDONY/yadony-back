@@ -102,7 +102,9 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "quota_lifted_at")
     private LocalDateTime quotaLiftedAt;
 
-    @Column(name = "inquiry_first_message_at")
+    // Écrit uniquement par ConversationRepository#markInquiryFirstMessage : jamais réécrit par le
+    // flush d'une entité lue plus tôt (comme travelerLastMessageAt).
+    @Column(name = "inquiry_first_message_at", insertable = false, updatable = false)
     private LocalDateTime inquiryFirstMessageAt;
 
     @Column(name = "last_activity_at")
