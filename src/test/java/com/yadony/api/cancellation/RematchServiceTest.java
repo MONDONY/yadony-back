@@ -139,6 +139,32 @@ class RematchServiceTest {
     }
 
     @Test
+    @DisplayName("trajet bateau au m³ : jamais proposé en alternative avant BB2, même pour un colis à la grille")
+    void perM3Trip_isNeverSuggested() {
+        AnnouncementEntity cancelled = cancelledAnnouncement();
+        BidEntity bid = buildBid(UUID.randomUUID(), BigDecimal.valueOf(5));
+        CancellationEntity cancellation = buildCancellation();
+        AnnouncementEntity perKg = buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(1));
+        AnnouncementEntity perM3 = buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(2));
+        perM3.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        perM3.setAvailableKg(null);
+        perM3.setTotalKg(null);
+        perM3.setPricePerKg(null);
+        perM3.setPricePerM3(BigDecimal.valueOf(600));
+        perM3.setVolumeCapacityM3(BigDecimal.valueOf(3));
+        perM3.setAvailableVolumeM3(BigDecimal.valueOf(3));
+
+        when(announcementRepository.findAll(any(Specification.class))).thenReturn(List.of(perKg, perM3));
+        when(userRepository.findAllById(anyCollection())).thenReturn(List.of());
+
+        Map<UUID, RematchService.RematchInfo> result = rematchService.generateForCancellations(
+                cancelled, List.of(bid), List.of(cancellation));
+
+        assertThat(result.get(bid.getSenderId()).suggestionCount()).isEqualTo(1);
+        verify(rematchSuggestionRepository, times(1)).save(any(RematchSuggestionEntity.class));
+    }
+
+    @Test
     @DisplayName("tri par date de départ croissante puis note voyageur décroissante")
     void sortsByDateThenRating() {
         AnnouncementEntity cancelled = cancelledAnnouncement();
