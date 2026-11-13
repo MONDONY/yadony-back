@@ -661,8 +661,8 @@ class AnnouncementSearchRankingTest {
         assertThat(similarIds(page)).containsExactly(cheap.getId(), dear.getId());
         // Page exacte triée en SQL, puis vivier du bloc 2 en lignes légères.
         assertThat(reads).extracting(Read::rows).containsExactly(false, true);
-        assertThat(reads.get(0).pageable().getSort()).extracting(o -> o.getProperty())
-                .containsExactly("pricePerKgEur", "travelerIsGpPro", "id");
+        // Tri porté par la spécification (trajets au m³ après ceux au kilo) : Pageable non trié.
+        assertThat(reads.get(0).pageable().getSort().isUnsorted()).isTrue();
     }
 
     @Test
@@ -835,7 +835,7 @@ class AnnouncementSearchRankingTest {
     }
 
     @Test
-    @DisplayName("appel compteur size=1 avec tri par prix : le tri manuel demandé est gardé")
+    @DisplayName("appel compteur size=1 avec tri par prix : le chemin SQL trié par la spécification est gardé")
     void counterCall_keepsManualSort() {
         stubFindAll(List.of());
         Q q = new Q();
@@ -847,7 +847,8 @@ class AnnouncementSearchRankingTest {
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(announcementRepository, times(1)).findAll(
                 ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
-        assertThat(pageable.getValue().getSort().getOrderFor("pricePerKgEur")).isNotNull();
+        // Le tri par prix reste appliqué, porté par la spécification : Pageable non trié.
+        assertThat(pageable.getValue().getSort().isUnsorted()).isTrue();
     }
 
     // ─── Bloc 2 : trajets déjà partis ─────────────────────────────────────────

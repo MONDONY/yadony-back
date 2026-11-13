@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 public class AnnouncementSpecification {
@@ -53,13 +54,39 @@ public class AnnouncementSpecification {
      * la requête de comptage.
      */
     public static Specification<AnnouncementEntity> bookableFirstThen(org.springframework.data.domain.Sort sort) {
+        return ordered(sort, true, false);
+    }
+
+    /**
+     * Tri par prix : les trajets sans pivot de prix au kilo (bateau au m³, V382) passent APRÈS les
+     * trajets au kilo, dans les deux sens. Sans cela, PostgreSQL range les NULL en tête d'un tri
+     * décroissant ({@code NULLS FIRST}) et le tri « prix décroissant » s'ouvrirait sur des trajets
+     * sans prix au kilo ; Spring Data refuse de poser {@code NullHandling} sur une requête Criteria.
+     * Même règle que le tri en mémoire du bloc 2 ({@code nullsLast}). Comme {@link #bookableFirstThen},
+     * le tri est porté par la spécification : l'appelant passe un {@code Pageable} non trié.
+     * {@code bookableFirst} ajoute, devant, la règle « réservables avant les complets ».
+     */
+    public static Specification<AnnouncementEntity> unpricedLastThen(org.springframework.data.domain.Sort sort,
+                                                                    boolean bookableFirst) {
+        return ordered(sort, bookableFirst, true);
+    }
+
+    private static Specification<AnnouncementEntity> ordered(org.springframework.data.domain.Sort sort,
+                                                             boolean bookableFirst, boolean unpricedLast) {
         return (root, query, cb) -> {
             Class<?> resultType = query.getResultType();
             if (resultType != Long.class && resultType != long.class) {
                 List<jakarta.persistence.criteria.Order> orders = new ArrayList<>();
-                orders.add(cb.asc(cb.selectCase()
-                        .when(cb.equal(root.get("status"), AnnouncementStatus.FULL), 1)
-                        .otherwise(0)));
+                if (bookableFirst) {
+                    orders.add(cb.asc(cb.selectCase()
+                            .when(cb.equal(root.get("status"), AnnouncementStatus.FULL), 1)
+                            .otherwise(0)));
+                }
+                if (unpricedLast) {
+                    orders.add(cb.asc(cb.selectCase()
+                            .when(cb.isNull(root.get("pricePerKgEur")), 1)
+                            .otherwise(0)));
+                }
                 orders.addAll(org.springframework.data.jpa.repository.query.QueryUtils.toOrders(sort, root, cb));
                 query.orderBy(orders);
             }
@@ -135,6 +162,50 @@ public class AnnouncementSpecification {
      */
     public static Specification<AnnouncementEntity> maxPricePerKgEur(BigDecimal maxEur) {
         return (root, query, cb) -> cb.lessThanOrEqualTo(root.get("pricePerKgEur"), maxEur);
+    }
+
+    /**
+     * Bateau : volume restant d'au moins {@code m3}. Strict : un trajet au kilo n'a pas de volume
+     * ({@code available_volume_m3} nul, V382 chk_announcements_boat_columns) et « NULL >= x » est faux,
+     * il est donc exclu, comme un trajet au m³ l'est d'un filtre en kilos.
+     */
+    public static Specification<AnnouncementEntity> minAvailableVolume(BigDecimal m3) {
+        return (root, query, cb) -> cb.greaterThanOrEqualTo(root.get("availableVolumeM3"), m3);
+    }
+
+    /**
+     * Bateau : prix au m³ d'au plus la borne de la devise du trajet. Le prix au m³ n'a pas de pivot
+     * EUR : l'appelant convertit la borne (saisie dans la devise du lecteur) vers chaque devise
+     * connue ({@code boundByCurrency}, clés en majuscules) et le trajet est comparé à la borne de SA
+     * devise. Une devise sans borne ne passe jamais ; une map vide ne retient rien. Un trajet au
+     * kilo (prix au m³ nul) est exclu : ce filtre ne porte que sur un prix au m³.
+     */
+    public static Specification<AnnouncementEntity> maxPricePerM3(Map<String, BigDecimal> boundByCurrency) {
+        return (root, query, cb) -> {
+            if (boundByCurrency.isEmpty()) {
+                return cb.disjunction();
+            }
+            Expression<String> currency = cb.upper(root.get("currency"));
+            List<Predicate> perCurrency = new ArrayList<>();
+            boundByCurrency.forEach((code, bound) -> perCurrency.add(cb.and(
+                    cb.equal(currency, code),
+                    cb.lessThanOrEqualTo(root.get("pricePerM3"), bound))));
+            return cb.or(perCurrency.toArray(Predicate[]::new));
+        };
+    }
+
+    /**
+     * Arrivée estimée au plus tard le {@code date} : fin de la fourchette annoncée
+     * ({@code arrival_date_max}, bateau) si elle existe, sinon {@code arrival_date}. On compare la
+     * fin de la fourchette, pas son début : « arrive avant le 15 » ne doit pas promettre un trajet
+     * qui peut arriver le 20. Un trajet sans date d'arrivée est exclu (rien ne dit qu'il arrive à temps).
+     */
+    public static Specification<AnnouncementEntity> arrivalNotAfter(LocalDate date) {
+        return (root, query, cb) -> {
+            Expression<LocalDate> latest = cb.coalesce(
+                    root.<LocalDate>get("arrivalDateMax"), root.<LocalDate>get("arrivalDate"));
+            return cb.lessThanOrEqualTo(latest, date);
+        };
     }
 
     /**

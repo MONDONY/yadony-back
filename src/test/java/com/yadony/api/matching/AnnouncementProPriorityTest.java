@@ -159,13 +159,15 @@ class AnnouncementProPriorityTest {
     // ─── Tri manuel : plus de clé travelerIsPro dans le Sort SQL ─────────────
 
     /**
-     * Le tri par prix reste délégué au SQL sur le pivot EUR ; le {@link Sort} transmis au
-     * repository commence désormais par ce pivot. Remettre la priorité PRO dans
-     * {@code buildSort} ferait réapparaître {@code travelerIsPro} en tête et échouer
-     * l'assertion.
+     * Le tri par prix reste délégué au SQL sur le pivot EUR, mais il est porté par la
+     * spécification ({@code AnnouncementSpecification#unpricedLastThen}, qui range les trajets au m³
+     * après les trajets au kilo) : le {@link Pageable} transmis au repository n'est donc plus trié,
+     * sans quoi son tri écraserait celui de la spécification. L'ordre réel (pivot en tête, GP Pro
+     * seulement en départage, id) est vérifié contre la base par
+     * {@code AnnouncementBoatSpecificationTest#priceSort_pivotLeads_gpProOnlyBreaksTies}.
      */
     @Test
-    @DisplayName("tri par prix : le Sort SQL commence par le pivot EUR, sans travelerIsPro")
+    @DisplayName("tri par prix : tri porté par la spécification, Pageable non trié (sinon il l'écraserait)")
     void searchAnnouncements_sortByPrice_noLongerPutsProFirst() {
         UserEntity traveler = buildTraveler();
         AnnouncementEntity ann = buildAnnouncement(traveler);
@@ -180,10 +182,7 @@ class AnnouncementProPriorityTest {
 
         search("price", "asc");
 
-        List<Sort.Order> orders = pageableCaptor.getValue().getSort().stream().toList();
-        assertThat(orders).extracting(Sort.Order::getProperty)
-                .containsExactly("pricePerKgEur", "travelerIsGpPro", "id");
-        assertThat(orders.get(0).isAscending()).isTrue();
+        assertThat(pageableCaptor.getValue().getSort().isUnsorted()).isTrue();
     }
 
     /** Même contrat pour le tri par date : le critère choisi mène, le GP Pro ne fait que départager. */

@@ -127,6 +127,40 @@ class BoatTripPostgresIT {
     }
 
     @Test
+    @DisplayName("recherche : tri par prix décroissant sans trajet au m³ en tête (NULLS FIRST), filtres bateau")
+    void search_priceSortDescending_keepsPerM3TripsLast_andBoatFilters() {
+        UUID kg = announcementService.createAnnouncement(uid,
+                request(TransportMode.PLANE, "10", "8", DEP.plusDays(1), null, null, null)).id();
+        UUID cheap = announcementService.createAnnouncement(uid,
+                request(TransportMode.BOAT, null, null, DEP.plusDays(20), DEP.plusDays(30), "2.5", "600")).id();
+        UUID dear = announcementService.createAnnouncement(uid,
+                request(TransportMode.BOAT, null, null, DEP.plusDays(35), DEP.plusDays(45), "0.5", "900")).id();
+        Set<UUID> mine = Set.of(kg, cheap, dear);
+
+        java.util.function.BiFunction<String, AnnouncementSearchExtras, java.util.List<UUID>> search =
+                (dir, extras) -> announcementService.searchAnnouncements(
+                                null, null, null, null, null, null, null, null, null, null,
+                                null, null, null, null, null, null,
+                                "price", dir, org.springframework.data.domain.PageRequest.of(0, 200), null, null, extras)
+                        .getContent().stream().map(com.yadony.api.matching.dto.AnnouncementSearchResponse::id)
+                        .filter(mine::contains).toList();
+
+        // Le trajet au kilo (pivot non nul) vient avant les trajets au m³ (pivot nul), dans les deux sens.
+        assertThat(search.apply("desc", AnnouncementSearchExtras.NONE).get(0)).isEqualTo(kg);
+        assertThat(search.apply("asc", AnnouncementSearchExtras.NONE).get(0)).isEqualTo(kg);
+
+        AnnouncementSearchExtras volume = new AnnouncementSearchExtras(null, Set.of(), false, false, null, null,
+                new BigDecimal("1"), null, null);
+        AnnouncementSearchExtras price = new AnnouncementSearchExtras(null, Set.of(), false, false, null, null,
+                null, new BigDecimal("700"), null);
+        AnnouncementSearchExtras arrival = new AnnouncementSearchExtras(null, Set.of(), false, false, null, null,
+                null, null, DEP.plusDays(30));
+        assertThat(search.apply("desc", volume)).containsExactly(cheap);
+        assertThat(search.apply("desc", price)).containsExactly(cheap);
+        assertThat(search.apply("desc", arrival)).containsExactlyInAnyOrder(kg, cheap);
+    }
+
+    @Test
     @DisplayName("création au m³ : aucun kilo en base, volume restant = proposé, fourchette écrite")
     void createPerM3_noKgInDatabase() {
         UUID id = announcementService.createAnnouncement(uid, boatPerM3()).id();

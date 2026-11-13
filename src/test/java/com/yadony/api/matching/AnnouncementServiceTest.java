@@ -3726,18 +3726,10 @@ class AnnouncementServiceTest {
                     null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                     "price", "asc", PageRequest.of(0, 10), null, null);
 
-            org.springframework.data.domain.Sort sort = pageableCaptor.getValue().getSort();
-            java.util.List<org.springframework.data.domain.Sort.Order> orders =
-                    sort.stream().toList();
-            assertThat(orders).extracting(org.springframework.data.domain.Sort.Order::getProperty)
-                    .containsExactly("pricePerKgEur", "travelerIsGpPro", "id");
-            org.springframework.data.domain.Sort.Order pivot = orders.get(0);
-            assertThat(pivot.isAscending()).isTrue();
-            // Pas de NullHandling : refusé par Spring Data sur une requête Criteria,
-            // et le pivot est non null par construction (price_per_kg NOT NULL V3).
-            assertThat(pivot.getNullHandling())
-                    .isEqualTo(org.springframework.data.domain.Sort.NullHandling.NATIVE);
-            assertThat(sort.getOrderFor("pricePerKg")).isNull();
+            // Le tri par prix (pivot EUR, trajets au m³ en fin) est porté par la spécification :
+            // le Pageable n'est pas trié, sinon son tri écraserait celui de la spécification.
+            // L'ordre réel est vérifié contre la base (AnnouncementBoatSpecificationTest).
+            assertThat(pageableCaptor.getValue().getSort().isUnsorted()).isTrue();
         }
 
         /**

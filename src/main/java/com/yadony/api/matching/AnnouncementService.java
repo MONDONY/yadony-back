@@ -64,6 +64,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -494,6 +495,16 @@ public class AnnouncementService {
             strict = strict.and(AnnouncementSpecification.minItemSize(filters.minItemSize()));
         if (filters.viaCity() != null)
             strict = strict.and(AnnouncementSpecification.voyageStopsAt(filters.viaCity()));
+        // Filtres bateau (volume restant, prix au m³, arrivée estimée) : stricts eux aussi. Un trajet qui
+        // les rate (au kilo, sans volume ni prix au m³, trop tardif) ne correspond pas à la recherche ;
+        // il n'y a pas d'écart à expliquer au bloc 2.
+        if (filters.minVolumeM3() != null)
+            strict = strict.and(AnnouncementSpecification.minAvailableVolume(filters.minVolumeM3()));
+        if (filters.maxPricePerM3() != null)
+            strict = strict.and(AnnouncementSpecification.maxPricePerM3(
+                    maxPricePerM3ByCurrency(filters.maxPricePerM3(), viewerCurrency)));
+        if (filters.arrivalBefore() != null)
+            strict = strict.and(AnnouncementSpecification.arrivalNotAfter(filters.arrivalBefore()));
 
         // ── Critères souples : filtres SQL du bloc 1, écarts expliqués au bloc 2 ──
         Specification<AnnouncementEntity> exact = strict;
@@ -608,10 +619,15 @@ public class AnnouncementService {
             // (facteur strictement positif), donc trier sur le pivot équivaut à trier
             // sur le prix converti dans sa devise — sans charger tout le fil en mémoire.
             Sort sort = buildSort(mode, sortDir);
-            Page<AnnouncementEntity> page = filters.includeFull()
-                    // Tri porté par la spécification (réservables d'abord) : Pageable non trié.
+            // Tri par prix : les trajets au m³ (sans pivot) passent après les trajets au kilo, dans les
+            // deux sens (NULLS FIRST de PostgreSQL les mettrait en tête du tri décroissant). Un tri
+            // porté par la spécification impose un Pageable non trié.
+            boolean priceSort = "price".equals(mode);
+            Page<AnnouncementEntity> page = (filters.includeFull() || priceSort)
                     ? announcementRepository.findAll(
-                            exactSpec.and(AnnouncementSpecification.bookableFirstThen(sort)),
+                            exactSpec.and(priceSort
+                                    ? AnnouncementSpecification.unpricedLastThen(sort, filters.includeFull())
+                                    : AnnouncementSpecification.bookableFirstThen(sort)),
                             PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()))
                     : announcementRepository.findAll(exactSpec,
                             PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort));
@@ -916,6 +932,28 @@ public class AnnouncementService {
             return null;
         }
         return exchangeRateService.convert(display, announcementCurrency, viewerCurrency);
+    }
+
+    /**
+     * Borne « prix max au m³ » (saisie dans la devise du lecteur) convertie dans chaque devise connue :
+     * le prix au m³ n'a pas de pivot EUR, chaque trajet est comparé à la borne de sa propre devise.
+     * Arrondie vers le bas à la plus petite unité de la devise cible ({@link RoundingMode#DOWN}) pour ne
+     * jamais laisser passer un prix au-dessus de la borne. Une devise sans taux est omise (ses trajets
+     * ne passent pas) plutôt que de faire échouer toute la recherche en 422 {@code exchange-rate-missing}.
+     */
+    private Map<String, BigDecimal> maxPricePerM3ByCurrency(BigDecimal bound, String viewerCurrency) {
+        Map<String, BigDecimal> byCurrency = new java.util.LinkedHashMap<>();
+        for (SupportedCurrency currency : SupportedCurrency.values()) {
+            String code = currency.code().toUpperCase(java.util.Locale.ROOT);
+            try {
+                byCurrency.put(code, exchangeRateService.convert(bound, viewerCurrency, code, RoundingMode.DOWN));
+            } catch (YadonyBusinessException e) {
+                if (!ExchangeRateService.RATE_MISSING_CODE.equals(e.getErrorCode())) {
+                    throw e;
+                }
+            }
+        }
+        return byCurrency;
     }
 
     private Sort buildSort(String sortBy, String sortDir) {

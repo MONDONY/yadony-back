@@ -27,6 +27,9 @@ public record PublicAnnouncementQuery(
         String contentType,
         ItemSize minItemSize,
         String viaCity,
+        BigDecimal minVolumeM3,
+        BigDecimal maxPricePerM3,
+        LocalDate arrivalBefore,
         int page) {
 
     public static final int MAX_CITY_LENGTH = 80;
@@ -38,6 +41,12 @@ public record PublicAnnouncementQuery(
     public static final BigDecimal MAX_MIN_AVAILABLE_KG = new BigDecimal("1000");
     /** Borne haute de {@code maxPricePerKg} (couvre un prix au kilo en F CFA). */
     public static final BigDecimal MAX_PRICE_PER_KG = new BigDecimal("100000");
+    /** Borne haute de {@code minVolumeM3} (la capacité d'un trajet est plafonnée à 9999 m³). */
+    public static final BigDecimal MAX_MIN_VOLUME_M3 = new BigDecimal("9999");
+    /** Borne haute de {@code maxPricePerM3} (couvre un prix au m³ en F CFA). */
+    public static final BigDecimal MAX_PRICE_PER_M3 = new BigDecimal("10000000");
+    /** Arrivée au plus tard : départ (90 j) + traversée (120 j, {@link ArrivalRules}) ; au-delà, aucun trajet. */
+    public static final long MAX_ARRIVAL_DAYS = MAX_RANGE_DAYS + 120;
     /** Décimales admises sur les paramètres numériques ({@code 1E-999999} est donc refusé). */
     public static final int MAX_DECIMALS = 4;
 
@@ -52,12 +61,26 @@ public record PublicAnnouncementQuery(
                 urgent, transportMode, contentType, null, null, page, today);
     }
 
+    /** Sans filtre bateau (volume, prix au m³, arrivée). */
     public static PublicAnnouncementQuery of(String departureCity, String arrivalCity,
                                              LocalDate dateFrom, LocalDate dateTo,
                                              BigDecimal minAvailableKg, BigDecimal maxPricePerKg,
                                              BigDecimal minRating, Boolean urgent,
                                              String transportMode, String contentType,
                                              String minItemSize, String viaCity,
+                                             Integer page, LocalDate today) {
+        return of(departureCity, arrivalCity, dateFrom, dateTo, minAvailableKg, maxPricePerKg, minRating,
+                urgent, transportMode, contentType, minItemSize, viaCity, null, null, null, page, today);
+    }
+
+    public static PublicAnnouncementQuery of(String departureCity, String arrivalCity,
+                                             LocalDate dateFrom, LocalDate dateTo,
+                                             BigDecimal minAvailableKg, BigDecimal maxPricePerKg,
+                                             BigDecimal minRating, Boolean urgent,
+                                             String transportMode, String contentType,
+                                             String minItemSize, String viaCity,
+                                             BigDecimal minVolumeM3, BigDecimal maxPricePerM3,
+                                             LocalDate arrivalBefore,
                                              Integer page, LocalDate today) {
         // Annonces ouvertes et à venir : un dateFrom passé est ramené à aujourd'hui, et la plage
         // de 90 jours se mesure depuis cette date ramenée.
@@ -72,6 +95,8 @@ public record PublicAnnouncementQuery(
         BigDecimal kg = boundedDecimal(minAvailableKg, "minAvailableKg", MAX_MIN_AVAILABLE_KG);
         BigDecimal price = boundedDecimal(maxPricePerKg, "maxPricePerKg", MAX_PRICE_PER_KG);
         BigDecimal rating = boundedDecimal(minRating, "minRating", MAX_RATING);
+        BigDecimal volume = boundedDecimal(minVolumeM3, "minVolumeM3", MAX_MIN_VOLUME_M3);
+        BigDecimal pricePerM3 = boundedDecimal(maxPricePerM3, "maxPricePerM3", MAX_PRICE_PER_M3);
         int p = page == null ? 0 : page;
         if (p < 0 || p > MAX_PAGE) {
             throw invalid("page must be between 0 and " + MAX_PAGE);
@@ -84,7 +109,25 @@ public record PublicAnnouncementQuery(
                 normaliseContentType(contentType),
                 normaliseMinItemSize(minItemSize),
                 normaliseCity(viaCity, "viaCity"),
+                volume, pricePerM3, clampArrival(arrivalBefore, today),
                 p);
+    }
+
+    /**
+     * Ramène {@code arrivalBefore} dans [aujourd'hui, aujourd'hui + {@link #MAX_ARRIVAL_DAYS}] : un trajet
+     * ouvert part à partir d'aujourd'hui et arrive au plus tard 120 jours après un départ dans les 90 jours,
+     * donc une date hors de cette fenêtre donne les mêmes résultats que sa borne. Le clamp borne le nombre
+     * de clés de cache qu'un anonyme peut créer avec une date libre.
+     */
+    private static LocalDate clampArrival(LocalDate value, LocalDate today) {
+        if (value == null) {
+            return null;
+        }
+        LocalDate max = today.plusDays(MAX_ARRIVAL_DAYS);
+        if (value.isBefore(today)) {
+            return today;
+        }
+        return value.isAfter(max) ? max : value;
     }
 
     /** {@code strip}, insensible à la casse, puis le nom exact de {@link TransportMode} ; inconnu = 400. */
