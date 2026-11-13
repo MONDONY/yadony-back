@@ -3707,11 +3707,13 @@ class AnnouncementServiceTest {
          * contrat vérifié ici : le Pageable transmis au repository porte bien
          * le pivot (sans pro-d'abord depuis le classement par score), le départage
          * GP Pro, puis l'id — jamais le brut
-         * {@code pricePerKg} multidevise.
+         * {@code pricePerKg} multidevise. Depuis les trajets au m³, ce tri est porté par la
+         * spécification : ce test mocké ne garde donc que « Pageable non trié » ; l'ordre réel est
+         * asserté contre la base par {@code AnnouncementBoatSearchIT#priceSort_pivotLeads_gpProBreaksTies_thenId_perM3Last_inBothDirections}.
          */
         @Test
-        @DisplayName("tri par prix → délégué au SQL sur le pivot EUR, nulls last, départage id")
-        void searchAnnouncements_sortByPrice_delegatesToSqlPivotSort() {
+        @DisplayName("tri par prix → tri porté par la spécification (pivot EUR), Pageable transmis non trié")
+        void searchAnnouncements_sortByPrice_sortCarriedBySpecification() {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity ann = buildAnnouncement(traveler);
 
@@ -3728,7 +3730,7 @@ class AnnouncementServiceTest {
 
             // Le tri par prix (pivot EUR, trajets au m³ en fin) est porté par la spécification :
             // le Pageable n'est pas trié, sinon son tri écraserait celui de la spécification.
-            // L'ordre réel est vérifié contre la base (AnnouncementBoatSpecificationTest).
+            // L'ordre réel est vérifié contre la base (AnnouncementBoatSearchIT).
             assertThat(pageableCaptor.getValue().getSort().isUnsorted()).isTrue();
         }
 

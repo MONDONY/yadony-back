@@ -45,8 +45,8 @@ public record PublicAnnouncementQuery(
     public static final BigDecimal MAX_MIN_VOLUME_M3 = new BigDecimal("9999");
     /** Borne haute de {@code maxPricePerM3} (couvre un prix au m³ en F CFA). */
     public static final BigDecimal MAX_PRICE_PER_M3 = new BigDecimal("10000000");
-    /** Arrivée au plus tard : départ (90 j) + traversée (120 j, {@link ArrivalRules}) ; au-delà, aucun trajet. */
-    public static final long MAX_ARRIVAL_DAYS = MAX_RANGE_DAYS + 120;
+    /** Traversée maximale d'un trajet (120 j, bateau, {@link ArrivalRules}) : arrivée au plus tard départ + 120 j. */
+    public static final long MAX_TRANSIT_DAYS = 120;
     /** Décimales admises sur les paramètres numériques ({@code 1E-999999} est donc refusé). */
     public static final int MAX_DECIMALS = 4;
 
@@ -109,23 +109,26 @@ public record PublicAnnouncementQuery(
                 normaliseContentType(contentType),
                 normaliseMinItemSize(minItemSize),
                 normaliseCity(viaCity, "viaCity"),
-                volume, pricePerM3, clampArrival(arrivalBefore, today),
+                volume, pricePerM3, clampArrival(arrivalBefore, from, to),
                 p);
     }
 
     /**
-     * Ramène {@code arrivalBefore} dans [aujourd'hui, aujourd'hui + {@link #MAX_ARRIVAL_DAYS}] : un trajet
-     * ouvert part à partir d'aujourd'hui et arrive au plus tard 120 jours après un départ dans les 90 jours,
-     * donc une date hors de cette fenêtre donne les mêmes résultats que sa borne. Le clamp borne le nombre
-     * de clés de cache qu'un anonyme peut créer avec une date libre.
+     * Ramène {@code arrivalBefore} dans [{@code from} - 1, {@code to} + {@link #MAX_TRANSIT_DAYS}] : les trajets
+     * retenus partent entre {@code from} et {@code to} et arrivent au plus 120 jours après leur départ, donc
+     * une date au-delà de {@code to} + 120 j donne les mêmes résultats que cette borne, et une date avant
+     * {@code from} ne donne aucun résultat (un trajet n'arrive pas avant son départ) : elle est ramenée à la
+     * veille de {@code from}, qui reste vide, et non à {@code from} qui renverrait des trajets. Le clamp borne
+     * le nombre de clés de cache qu'un anonyme peut créer avec une date libre.
      */
-    private static LocalDate clampArrival(LocalDate value, LocalDate today) {
+    private static LocalDate clampArrival(LocalDate value, LocalDate from, LocalDate to) {
         if (value == null) {
             return null;
         }
-        LocalDate max = today.plusDays(MAX_ARRIVAL_DAYS);
-        if (value.isBefore(today)) {
-            return today;
+        LocalDate min = from.minusDays(1);
+        LocalDate max = to.plusDays(MAX_TRANSIT_DAYS);
+        if (value.isBefore(min)) {
+            return min;
         }
         return value.isAfter(max) ? max : value;
     }
@@ -196,7 +199,7 @@ public record PublicAnnouncementQuery(
      * La valeur rendue est sans zéros de queue, pour que {@code 1.0} et {@code 1} donnent la
      * même clé de cache.
      */
-    private static BigDecimal boundedDecimal(BigDecimal value, String field, BigDecimal max) {
+    static BigDecimal boundedDecimal(BigDecimal value, String field, BigDecimal max) {
         if (value == null) {
             return null;
         }

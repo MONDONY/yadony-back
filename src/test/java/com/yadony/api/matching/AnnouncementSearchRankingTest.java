@@ -662,6 +662,7 @@ class AnnouncementSearchRankingTest {
         // Page exacte triée en SQL, puis vivier du bloc 2 en lignes légères.
         assertThat(reads).extracting(Read::rows).containsExactly(false, true);
         // Tri porté par la spécification (trajets au m³ après ceux au kilo) : Pageable non trié.
+        // L'ordre réel est asserté contre la base par AnnouncementBoatSearchIT#priceSort_pivotLeads_gpProBreaksTies_thenId_perM3Last_inBothDirections.
         assertThat(reads.get(0).pageable().getSort().isUnsorted()).isTrue();
     }
 
@@ -836,7 +837,7 @@ class AnnouncementSearchRankingTest {
 
     @Test
     @DisplayName("appel compteur size=1 avec tri par prix : le chemin SQL trié par la spécification est gardé")
-    void counterCall_keepsManualSort() {
+    void counterCall_priceSort_keepsSqlPathWithSpecificationSort_pageableUnsorted() {
         stubFindAll(List.of());
         Q q = new Q();
         q.sortBy = "price";
@@ -847,7 +848,8 @@ class AnnouncementSearchRankingTest {
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(announcementRepository, times(1)).findAll(
                 ArgumentMatchers.<Specification<AnnouncementEntity>>any(), pageable.capture());
-        // Le tri par prix reste appliqué, porté par la spécification : Pageable non trié.
+        // Le tri par prix reste appliqué, porté par la spécification : Pageable non trié
+        // (l'ordre réel est asserté par AnnouncementBoatSearchIT#priceSort_pivotLeads_gpProBreaksTies_thenId_perM3Last_inBothDirections).
         assertThat(pageable.getValue().getSort().isUnsorted()).isTrue();
     }
 

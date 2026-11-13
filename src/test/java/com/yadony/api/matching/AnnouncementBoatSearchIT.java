@@ -140,6 +140,49 @@ class AnnouncementBoatSearchIT {
         assertThat(desc.subList(2, 5)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
     }
 
+    /**
+     * Ordre réel de {@code buildSort} contre la base : le prix (pivot EUR) mène, un trajet Pro non GP Pro
+     * n'est jamais mis en tête, le GP Pro ne fait que départager les prix égaux, puis l'id, et les trajets
+     * au m³ (sans pivot) ferment la liste dans les deux sens.
+     */
+    @Test
+    void priceSort_pivotLeads_gpProBreaksTies_thenId_perM3Last_inBothDirections() {
+        UUID cheap = saveKilo("4", false, false);
+        UUID gpTie = saveKilo("5", true, false);
+        UUID proTie = saveKilo("5", false, true);
+        UUID plainTie = saveKilo("5", false, false);
+        List<UUID> plainTies = new java.util.ArrayList<>(List.of(plane, proTie, plainTie));
+        plainTies.sort(java.util.Comparator.comparing(UUID::toString));
+
+        List<UUID> asc = ids(search("price", "asc", AnnouncementSearchExtras.NONE));
+        List<UUID> desc = ids(search("price", "desc", AnnouncementSearchExtras.NONE));
+
+        // Croissant : 4 € (même non GP Pro) d'abord ; à 5 € le GP Pro, puis les autres par id ; 8 € ; m³ en fin.
+        assertThat(asc.subList(0, 6)).containsExactly(cheap, gpTie, plainTies.get(0), plainTies.get(1),
+                plainTies.get(2), boatPerKg);
+        assertThat(asc.subList(6, 9)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
+        // Décroissant : 8 € d'abord ; à 5 € le GP Pro reste devant (le départage ne s'inverse pas), puis l'id ;
+        // 4 € ; m³ toujours en fin.
+        assertThat(desc.subList(0, 6)).containsExactly(boatPerKg, gpTie, plainTies.get(0), plainTies.get(1),
+                plainTies.get(2), cheap);
+        assertThat(desc.subList(6, 9)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
+    }
+
+    @Test
+    void dateSort_gpProBreaksTies_thenId() {
+        UUID gp = saveKilo("5", true, false);
+        List<UUID> others = new java.util.ArrayList<>(List.of(plane, boatPerKg, bigEur, smallEur, xof));
+        others.sort(java.util.Comparator.comparing(UUID::toString));
+
+        // Même date de départ pour tous : le GP Pro mène, les autres suivent par id.
+        List<UUID> asc = ids(search("date", "asc", AnnouncementSearchExtras.NONE));
+        assertThat(asc.get(0)).isEqualTo(gp);
+        assertThat(asc.subList(1, 6)).containsExactlyElementsOf(others);
+        List<UUID> desc = ids(search("date", "desc", AnnouncementSearchExtras.NONE));
+        assertThat(desc.get(0)).isEqualTo(gp);
+        assertThat(desc.subList(1, 6)).containsExactlyElementsOf(others);
+    }
+
     @Test
     void kgFilters_andKgPriceBound_excludePerM3Trips_withoutError() {
         var perKgOnly = ids(announcementService.searchAnnouncements(
@@ -177,6 +220,13 @@ class AnnouncementBoatSearchIT {
 
     private static BigDecimal bd(String value) {
         return new BigDecimal(value);
+    }
+
+    private UUID saveKilo(String pricePerKg, boolean gpPro, boolean pro) {
+        AnnouncementEntity a = kilo(TransportMode.PLANE, pricePerKg, DEPARTURE.plusDays(1), null);
+        a.setTravelerIsGpPro(gpPro);
+        a.setTravelerIsPro(pro);
+        return save(a);
     }
 
     private UUID save(AnnouncementEntity a) {

@@ -246,7 +246,8 @@ class PublicAnnouncementSearchControllerIT {
                         .param("arrivalBefore", LocalDate.now(ZoneOffset.UTC).plusDays(60).toString()))
                 .andExpect(status().isOk());
         for (String[] bad : new String[][] {{"minVolumeM3", "-1"}, {"maxPricePerM3", "-0.01"},
-                {"minVolumeM3", "10000"}, {"maxPricePerM3", "10000001"}, {"minVolumeM3", "1.23456"}}) {
+                {"minVolumeM3", "10000"}, {"maxPricePerM3", "10000001"}, {"minVolumeM3", "1.23456"},
+                {"minVolumeM3", "1E999999999"}, {"maxPricePerM3", "1E999999999"}, {"maxPricePerM3", "1E-999999999"}}) {
             mockMvc.perform(get(PUBLIC_PATH).param(bad[0], bad[1]))
                     .andExpect(status().isBadRequest())
                     .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))

@@ -162,13 +162,14 @@ class AnnouncementProPriorityTest {
      * Le tri par prix reste délégué au SQL sur le pivot EUR, mais il est porté par la
      * spécification ({@code AnnouncementSpecification#unpricedLastThen}, qui range les trajets au m³
      * après les trajets au kilo) : le {@link Pageable} transmis au repository n'est donc plus trié,
-     * sans quoi son tri écraserait celui de la spécification. L'ordre réel (pivot en tête, GP Pro
-     * seulement en départage, id) est vérifié contre la base par
-     * {@code AnnouncementBoatSpecificationTest#priceSort_pivotLeads_gpProOnlyBreaksTies}.
+     * sans quoi son tri écraserait celui de la spécification. Ce test mocké ne garde que cette
+     * propriété ; l'ordre réel produit par {@code buildSort} (pivot en tête, trajet Pro non GP Pro jamais
+     * devant, GP Pro seulement en départage, id, trajets au m³ en fin, dans les deux sens) est asserté
+     * contre la base par {@code AnnouncementBoatSearchIT#priceSort_pivotLeads_gpProBreaksTies_thenId_perM3Last_inBothDirections}.
      */
     @Test
     @DisplayName("tri par prix : tri porté par la spécification, Pageable non trié (sinon il l'écraserait)")
-    void searchAnnouncements_sortByPrice_noLongerPutsProFirst() {
+    void searchAnnouncements_sortByPrice_sortCarriedBySpecification_pageableUnsorted() {
         UserEntity traveler = buildTraveler();
         AnnouncementEntity ann = buildAnnouncement(traveler);
         setId(ann, UUID.randomUUID());
@@ -188,7 +189,7 @@ class AnnouncementProPriorityTest {
     /** Même contrat pour le tri par date : le critère choisi mène, le GP Pro ne fait que départager. */
     @Test
     @DisplayName("tri par date : le Sort SQL commence par departureDate, sans travelerIsPro")
-    void searchAnnouncements_sortByDate_noLongerPutsProFirst() {
+    void searchAnnouncements_sortByDate_leadsWithDeparture_gpProOnlyTiebreak() {
         UserEntity traveler = buildTraveler();
         AnnouncementEntity ann = buildAnnouncement(traveler);
         setId(ann, UUID.randomUUID());

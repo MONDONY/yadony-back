@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Clé de cache et constructeurs de compatibilité d'{@link AnnouncementSearchExtras}. */
 class AnnouncementSearchExtrasTest {
@@ -88,5 +89,32 @@ class AnnouncementSearchExtrasTest {
         assertThat(extras.maxPricePerM3()).isNull();
         assertThat(extras.arrivalBefore()).isNull();
         assertThat(AnnouncementSearchExtras.NONE.cacheKey()).contains("_vol=null_m3=null_arr=null");
+    }
+
+    @Test
+    void filtresBateau_refusesNegatifsHorsBornesEtDecimalesEnTrop() {
+        var big = new java.math.BigDecimal("1E999999999");
+        assertInvalid(() -> boat(big, null, null));
+        assertInvalid(() -> boat(null, big, null));
+        assertInvalid(() -> boat(new java.math.BigDecimal("-1"), null, null));
+        assertInvalid(() -> boat(null, new java.math.BigDecimal("-0.0001"), null));
+        assertInvalid(() -> boat(new java.math.BigDecimal("1.12345"), null, null));
+        assertInvalid(() -> boat(null, new java.math.BigDecimal("1E-999999999"), null));
+        assertInvalid(() -> boat(PublicAnnouncementQuery.MAX_MIN_VOLUME_M3.add(java.math.BigDecimal.ONE), null, null));
+        assertInvalid(() -> boat(null, PublicAnnouncementQuery.MAX_PRICE_PER_M3.add(java.math.BigDecimal.ONE), null));
+    }
+
+    @Test
+    void filtresBateau_bornesAcceptees_etCleDeCacheCourte() {
+        var extras = boat(PublicAnnouncementQuery.MAX_MIN_VOLUME_M3, PublicAnnouncementQuery.MAX_PRICE_PER_M3, null);
+
+        assertThat(extras.cacheKey().length()).isLessThan(200);
+        assertThat(boat(java.math.BigDecimal.ZERO, null, null).minVolumeM3()).isEqualByComparingTo("0");
+        assertThat(boat(new java.math.BigDecimal("1.2345"), null, null).minVolumeM3()).isEqualByComparingTo("1.2345");
+    }
+
+    private static void assertInvalid(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class,
+                e -> assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST));
     }
 }

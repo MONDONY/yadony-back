@@ -285,11 +285,48 @@ class PublicAnnouncementQueryTest {
 
     @Test
     void arrivalBefore_ramenee_dansLaFenetreUtile_pourBornerLeCache() {
-        LocalDate max = TODAY.plusDays(PublicAnnouncementQuery.MAX_ARRIVAL_DAYS);
-        assertThat(boat(null, null, TODAY.minusDays(30)).arrivalBefore()).isEqualTo(TODAY);
+        // Sans dateFrom ni dateTo : from = aujourd'hui, to = aujourd'hui + 90 j.
+        LocalDate max = TODAY.plusDays(PublicAnnouncementQuery.MAX_RANGE_DAYS + PublicAnnouncementQuery.MAX_TRANSIT_DAYS);
         assertThat(boat(null, null, TODAY.plusDays(40)).arrivalBefore()).isEqualTo(TODAY.plusDays(40));
         assertThat(boat(null, null, max.plusDays(500)).arrivalBefore()).isEqualTo(max);
         assertThat(boat(null, null, max.plusDays(1))).isEqualTo(boat(null, null, max.plusDays(900)));
+        assertThat(boat(null, null, max).arrivalBefore()).isEqualTo(max);
         assertThat(boat(null, null, null).arrivalBefore()).isNull();
     }
+
+    @Test
+    void arrivalBefore_passee_resteVide_sansEtreRamenee_aAujourdhui() {
+        // Un trajet n'arrive pas avant son départ (>= from) : la veille de from ne renvoie rien, alors que
+        // aujourd'hui renverrait les trajets qui arrivent aujourd'hui.
+        assertThat(boat(null, null, TODAY.minusDays(30)).arrivalBefore()).isEqualTo(TODAY.minusDays(1));
+        assertThat(boat(null, null, TODAY.minusDays(1)).arrivalBefore()).isEqualTo(TODAY.minusDays(1));
+        assertThat(boat(null, null, TODAY).arrivalBefore()).isEqualTo(TODAY);
+        assertThat(boat(null, null, TODAY.minusDays(30))).isEqualTo(boat(null, null, TODAY.minusDays(900)));
+    }
+
+    @Test
+    void arrivalBefore_borneSurLaPlageDeDeparts_pasSurAujourdhui() {
+        // dateFrom lointain : un bateau part à from + 90 j au plus tard et arrive 120 j après.
+        LocalDate from = TODAY.plusDays(300);
+        LocalDate to = from.plusDays(30);
+        LocalDate distant = to.plusDays(MAX_TRANSIT);
+        PublicAnnouncementQuery q = PublicAnnouncementQuery.of(null, null, from, to, null, null, null,
+                null, null, null, null, null, null, null, distant, 0, TODAY);
+        assertThat(q.arrivalBefore()).isEqualTo(distant);
+        PublicAnnouncementQuery over = PublicAnnouncementQuery.of(null, null, from, to, null, null, null,
+                null, null, null, null, null, null, null, distant.plusDays(400), 0, TODAY);
+        assertThat(over.arrivalBefore()).isEqualTo(distant);
+        PublicAnnouncementQuery before = PublicAnnouncementQuery.of(null, null, from, to, null, null, null,
+                null, null, null, null, null, null, null, from.minusDays(50), 0, TODAY);
+        assertThat(before.arrivalBefore()).isEqualTo(from.minusDays(1));
+    }
+
+    @Test
+    void filtresBateau_refusentUnExposantGeant() {
+        assertInvalid(() -> boat(new BigDecimal("1E999999999"), null, null));
+        assertInvalid(() -> boat(null, new BigDecimal("1E999999999"), null));
+        assertInvalid(() -> boat(new BigDecimal("1E-999999999"), null, null));
+    }
+
+    private static final long MAX_TRANSIT = PublicAnnouncementQuery.MAX_TRANSIT_DAYS;
 }
