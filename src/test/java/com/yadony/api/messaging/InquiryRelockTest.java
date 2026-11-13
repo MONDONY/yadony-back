@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 /**
@@ -81,7 +82,7 @@ class InquiryRelockTest {
         verify(conversationRepository).save(conv);
         verify(firestoreService).updateConversation("conv_inq_abc",
                 Map.of("kind", "INQUIRY", "quotaLifted", false, "bidId", FieldValue.delete()));
-        verify(auditService).log(eq("conversation"), eq(conv.getId()), eq("INQUIRY_RELOCKED"), eq(askerId), anyMap());
+        verify(auditService).log(eq("conversation"), eq(conv.getId()), eq("INQUIRY_RELOCKED"), isNull(), anyMap());
         // Le compteur de messages (inquiryQuota) n'est jamais remis à zéro.
         verifyNoMoreInteractions(firestoreService);
     }
@@ -145,6 +146,34 @@ class InquiryRelockTest {
         listener.onBidCancelledByParticipant(new BidCancelledByParticipantEvent(
                 bidId, announcementId, askerId, false, BidStatus.PENDING, PaymentMethod.CASH));
         assertRelocked();
+    }
+
+    @Test
+    void cancelledAwaitingPaymentOnCard_relocks() {
+        listener.onBidCancelledByParticipant(new BidCancelledByParticipantEvent(
+                bidId, announcementId, askerId, false, BidStatus.AWAITING_PAYMENT, PaymentMethod.STRIPE));
+        assertRelocked();
+    }
+
+    @Test
+    void cancelledAwaitingPaymentOnMobileMoney_doesNotRelock_theTravelerAlreadyAccepted() {
+        listener.onBidCancelledByParticipant(new BidCancelledByParticipantEvent(
+                bidId, announcementId, askerId, false, BidStatus.AWAITING_PAYMENT, PaymentMethod.MOBILE_MONEY));
+        assertStillBooking();
+    }
+
+    @Test
+    void cancelledAwaitingPaymentWithUnknownPaymentMethod_isNotGuessed() {
+        listener.onBidCancelledByParticipant(new BidCancelledByParticipantEvent(
+                bidId, announcementId, askerId, false, BidStatus.AWAITING_PAYMENT, null));
+        assertStillBooking();
+    }
+
+    @Test
+    void rejectedWhileAwaitingPayment_doesNotRelock_theEventDoesNotCarryThePaymentMethod() {
+        listener.onBidRejected(new BidRejectedEvent(bidId, askerId, "CANCELLED_BY_SENDER", announcementId, false,
+                BidStatus.AWAITING_PAYMENT));
+        assertStillBooking();
     }
 
     @Test

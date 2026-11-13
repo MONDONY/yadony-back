@@ -308,7 +308,8 @@ public class ConversationService {
         conv.relockToInquiry(LocalDateTime.now(ZoneOffset.UTC));
         conversationRepository.save(conv);
 
-        auditService.log("conversation", conv.getId(), "INQUIRY_RELOCKED", conv.getAskerId(),
+        // Acteur null : action système, comme les expirations qui la déclenchent.
+        auditService.log("conversation", conv.getId(), "INQUIRY_RELOCKED", null,
             Map.of("bidId", bidId.toString(), "announcementId", conv.getAnnouncementId().toString()));
 
         try {

@@ -43,7 +43,8 @@ import java.util.UUID;
  * <ul>
  *   <li>{@link BidRejectedEvent} et {@link BidCancelledByParticipantEvent} : seulement si le
  *       statut d'avant la transition, porté par l'événement, précède l'acceptation
- *       ({@link #NEVER_ACCEPTED_STATUSES}) ; un statut absent n'est jamais deviné ;</li>
+ *       ({@link #NEVER_ACCEPTED_STATUSES}, AWAITING_PAYMENT seulement pour un paiement carte et
+ *       seulement via {@link BidCancelledByParticipantEvent}) ; un statut absent n'est jamais deviné ;</li>
  *   <li>{@link BidNegotiationExpiredEvent} (fil de prix éteint, jamais une réservation),
  *       {@link BidExpiredOnDepartureEvent} (n'expire que PENDING, PAYMENT_ESCROWED ou
  *       NEGOTIATING), {@link BidCardAuthorizationExpiredEvent} (seulement depuis
@@ -57,9 +58,13 @@ public class InquiryPromotionListener {
 
     private static final Logger log = LoggerFactory.getLogger(InquiryPromotionListener.class);
 
-    /** Statuts d'avant la transition pour lesquels le bid n'a jamais été accepté. */
+    /**
+     * Statuts d'avant la transition pour lesquels le bid n'a jamais été accepté, quel que soit le
+     * moyen de paiement. AWAITING_PAYMENT en est EXCLU : en mobile money il vient APRÈS
+     * l'acceptation du voyageur (cf. {@link #neverAccepted}).
+     */
     static final Set<BidStatus> NEVER_ACCEPTED_STATUSES = EnumSet.of(
-            BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING);
+            BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING);
 
     private final ConversationService conversationService;
     private final BidRepository bidRepository;
@@ -98,6 +103,8 @@ public class InquiryPromotionListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onBidRejected(BidRejectedEvent event) {
+        // Pas d'AWAITING_PAYMENT ici : l'événement ne porte pas le moyen de paiement. Une
+        // annulation depuis ce statut passe aussi par BidCancelledByParticipantEvent, qui le porte.
         if (event.getPreviousStatus() != null && NEVER_ACCEPTED_STATUSES.contains(event.getPreviousStatus())) {
             relock(event.getBidId());
         }
@@ -106,9 +113,22 @@ public class InquiryPromotionListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onBidCancelledByParticipant(BidCancelledByParticipantEvent event) {
-        if (event.previousStatus() != null && NEVER_ACCEPTED_STATUSES.contains(event.previousStatus())) {
+        if (neverAccepted(event)) {
             relock(event.bidId());
         }
+    }
+
+    /**
+     * AWAITING_PAYMENT précède l'acceptation en carte (paiement à faire avant la demande) mais la
+     * SUIT en mobile money (le voyageur a accepté, l'expéditeur doit payer) : il ne compte donc
+     * comme « jamais acceptée » que pour un paiement carte connu. Moyen inconnu : jamais deviné.
+     */
+    private static boolean neverAccepted(BidCancelledByParticipantEvent event) {
+        BidStatus before = event.previousStatus();
+        if (before == BidStatus.AWAITING_PAYMENT) {
+            return event.paymentMethod() != null && event.paymentMethod().isCardEscrow();
+        }
+        return before != null && NEVER_ACCEPTED_STATUSES.contains(before);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

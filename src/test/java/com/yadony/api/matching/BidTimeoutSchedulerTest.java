@@ -64,6 +64,19 @@ class BidTimeoutSchedulerTest {
     }
 
     @Test
+    void event_carries_the_status_before_the_transition() {
+        BidEntity bid = timedOutBid(); // PENDING
+        when(bidRepository.findPendingTimedOut(any(), any(), any())).thenReturn(List.of(bid));
+
+        scheduler.autoCancelUnansweredBids();
+
+        ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(captor.getValue().getPreviousStatus()).isEqualTo(BidStatus.PENDING);
+    }
+
+    @Test
     void handles_multiple_bids() {
         BidEntity b1 = timedOutBid();
         BidEntity b2 = timedOutBid();
