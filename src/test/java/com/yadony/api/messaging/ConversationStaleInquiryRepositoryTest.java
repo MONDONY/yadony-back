@@ -97,6 +97,61 @@ class ConversationStaleInquiryRepositoryTest {
         assertThat(repo.releaseInquiryReservation(promoted.getId(), now)).isZero();
     }
 
+    @Test
+    void guardedPromotion_neverPromotesAThreadDeletedByOneSide() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        ConversationEntity deletedByAsker = inquiry(now, now);
+        ConversationEntity deletedByOwner = inquiry(now, now);
+        jdbc.update("UPDATE conversations SET sender_deleted_at = ? WHERE id = ?", now, deletedByAsker.getId());
+        jdbc.update("UPDATE conversations SET traveler_deleted_at = ? WHERE id = ?", now, deletedByOwner.getId());
+
+        assertThat(repo.promoteInquiryGuarded(deletedByAsker.getId(), UUID.randomUUID(), now)).isZero();
+        assertThat(repo.promoteInquiryGuarded(deletedByOwner.getId(), UUID.randomUUID(), now)).isZero();
+        for (ConversationEntity c : new ConversationEntity[] {deletedByAsker, deletedByOwner}) {
+            assertThat(jdbc.queryForObject("SELECT kind FROM conversations WHERE id = ?", String.class, c.getId()))
+                    .isEqualTo("INQUIRY");
+            assertThat(jdbc.queryForObject("SELECT bid_id FROM conversations WHERE id = ?", Object.class, c.getId()))
+                    .isNull();
+        }
+    }
+
+    @Test
+    void guardedPromotion_beforeAnyMessage_datesTheFirstMessage_soARelockedThreadStaysListedForTheCreator() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        ConversationEntity c = inquiry(now, now);
+        UUID owner = c.getTravelerId();
+        org.springframework.data.domain.Pageable all = org.springframework.data.domain.Pageable.unpaged();
+
+        assertThat(firstMessageAt(c)).isNull();
+        assertThat(repo.promoteInquiryGuarded(c.getId(), UUID.randomUUID(), now)).isEqualTo(1);
+        // Même paramètre :at que quota_lifted_at, dans le même UPDATE (comparé en SQL : aucun fuseau).
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM conversations WHERE id = ? "
+                + "AND inquiry_first_message_at = quota_lifted_at", Integer.class, c.getId())).isEqualTo(1);
+        assertThat(repo.relockInquiryGuarded(c.getId(), now.plusMinutes(5))).isEqualTo(1);
+
+        // Le créateur voyait le fil promu : le reverrouillage ne doit pas le lui retirer.
+        assertThat(repo.findByParticipant(owner, all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+    }
+
+    @Test
+    void guardedPromotion_keepsAnEarlierFirstMessageDate() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        ConversationEntity c = inquiry(now, now);
+        repo.markInquiryFirstMessage(c.getId(), now.minusDays(2));
+        LocalDateTime before = firstMessageAt(c);
+        assertThat(before).isNotNull();
+
+        assertThat(repo.promoteInquiryGuarded(c.getId(), UUID.randomUUID(), now)).isEqualTo(1);
+
+        assertThat(firstMessageAt(c)).isEqualTo(before);
+    }
+
+    private LocalDateTime firstMessageAt(ConversationEntity c) {
+        return jdbc.queryForObject("SELECT inquiry_first_message_at FROM conversations WHERE id = ?",
+                LocalDateTime.class, c.getId());
+    }
+
     private Object deletedAt(ConversationEntity c) {
         return jdbc.queryForObject("SELECT deleted_at FROM conversations WHERE id = ?", Object.class, c.getId());
     }

@@ -242,15 +242,23 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     /**
      * Promotion gardée d'une INQUIRY ouverte en conversation de réservation : UPDATE ciblé (jamais
      * l'écriture complète d'une entité lue plus tôt, qui pourrait défaire une réservation de purge
-     * posée entre-temps). 0 ligne : plus INQUIRY, fermée ou supprimée.
+     * posée entre-temps). 0 ligne : plus INQUIRY, fermée, supprimée, ou supprimée par l'un des deux
+     * participants (un fil qu'un utilisateur a supprimé ne devient jamais la conversation de la
+     * réservation : un fil neuf s'ouvrira à l'acceptation).
+     *
+     * <p>{@code inquiry_first_message_at} est posé s'il manque (promotion avant tout message) : sans
+     * lui, un reverrouillage ultérieur ferait disparaître le fil de la liste du créateur, qui le
+     * voyait depuis la promotion.
      */
     @org.springframework.transaction.annotation.Transactional
     @org.springframework.data.jpa.repository.Modifying
     @Query("UPDATE ConversationEntity c SET c.bidId = :bidId, " +
            "c.kind = com.yadony.api.messaging.ConversationKind.SENDER_TRAVELER, " +
-           "c.quotaLiftedAt = :at, c.lastActivityAt = :at " +
+           "c.quotaLiftedAt = :at, c.lastActivityAt = :at, " +
+           "c.inquiryFirstMessageAt = COALESCE(c.inquiryFirstMessageAt, :at) " +
            "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
-           "AND c.deletedAt IS NULL AND c.closedAt IS NULL")
+           "AND c.deletedAt IS NULL AND c.closedAt IS NULL " +
+           "AND c.senderDeletedAt IS NULL AND c.travelerDeletedAt IS NULL")
     int promoteInquiryGuarded(@Param("id") UUID id, @Param("bidId") UUID bidId,
                               @Param("at") java.time.LocalDateTime at);
 

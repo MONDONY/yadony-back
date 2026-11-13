@@ -96,6 +96,23 @@ class InquiryPromotionIntegrationTest {
     }
 
     @Test
+    void aQuestionDeletedByTheCreator_isNotPromoted_andAcceptanceOpensAFreshThread() {
+        ConversationEntity inquiry = conversationService.getOrCreateInquiry(asker.getId(), announcement.getId());
+        conversationService.deleteConversation(inquiry.getId(), owner.getId());
+
+        assertThat(conversationService.promoteInquiryToBid(asker.getId(), announcement.getId(), bid.getId())).isFalse();
+
+        ConversationEntity untouched = conversationRepository.findById(inquiry.getId()).orElseThrow();
+        assertThat(untouched.getKind()).isEqualTo(ConversationKind.INQUIRY);
+        assertThat(untouched.getBidId()).isNull();
+        ConversationEntity atAcceptance = conversationService
+                .createConversationForBid(bid.getId(), asker.getId(), owner.getId());
+        assertThat(atAcceptance.getId()).isNotEqualTo(inquiry.getId());
+        assertThat(atAcceptance.getBidId()).isEqualTo(bid.getId());
+        assertThat(atAcceptance.getTravelerDeletedAt()).isNull();
+    }
+
+    @Test
     void withoutAnInquiry_nothingHappens() {
         assertThat(conversationService.promoteInquiryToBid(asker.getId(), announcement.getId(), bid.getId())).isFalse();
         assertThat(conversationRepository.findByAskerAndAnnouncement(asker.getId(), announcement.getId())).isEmpty();

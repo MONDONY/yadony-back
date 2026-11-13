@@ -240,7 +240,8 @@ public class ConversationService {
      * Rattache la conversation de questions du couple (demandeur, annonce) à la demande qui vient
      * d'être créée : elle devient la conversation de réservation du bid (même identifiant
      * Firestore, historique conservé) et le plafond de messages est levé. Sans effet (faux) s'il
-     * n'y a pas de fil INQUIRY ouvert pour le couple, s'il est déjà promu, ou si le bid a déjà
+     * n'y a pas de fil INQUIRY ouvert pour le couple, s'il est déjà promu, si l'un des deux
+     * participants l'a supprimé (un fil neuf s'ouvrira à l'acceptation), ou si le bid a déjà
      * son propre fil. L'échec Firestore est journalisé : la base reste à jour, et le rattrapage
      * {@link #reconcileInquiryFirestore} réaligne le parent Firestore au prochain message, au
      * prochain appel de la route ou à l'acceptation.
