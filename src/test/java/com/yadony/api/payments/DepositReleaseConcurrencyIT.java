@@ -333,6 +333,54 @@ class DepositReleaseConcurrencyIT {
         assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
     }
 
+    // ── Rattrapage planifié (événement perdu) ───────────────────────────────
+
+    @Test
+    @DisplayName("événement du dépôt perdu : le rattrapage planifié verse une fois, même en course avec un dépôt tardif")
+    void depositEventLost_retryJobPaysOnce() throws Exception {
+        for (int round = 0; round < ROUNDS; round++) {
+            stripe = new FakeStripe();
+            Seed s = seed(PaymentRail.STRIPE);
+            DepositReleaseRetryJob retry = retryJob();
+
+            concurrently(List.<Callable<Object>>of(
+                    () -> stripe.onThisThread(retry::run),
+                    () -> stripe.onThisThread(() -> listener.releaseAtDeposit(s.event()))));
+            // Un nouveau passage ne trouve plus rien à verser.
+            stripe.onThisThread(retryJob()::run);
+
+            assertThat(stripe.transfersCreated()).as("round %d", round).isEqualTo(1);
+            assertThat(stripe.keys).as("round %d", round).containsOnly("transfer-" + s.paymentId + "-r1");
+            assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus())
+                    .isEqualTo(PaymentStatus.RELEASED);
+            assertThat(auditCount(s.paymentId, "ESCROW_RELEASED_DEPOSIT")).as("round %d", round).isEqualTo(1);
+        }
+    }
+
+    @Test
+    @DisplayName("mobile money : dépôt bloqué puis rattrapé par la passe planifiée, un seul payout")
+    void depositMobileMoneyRetried_onePawapayPayout() throws Exception {
+        AtomicInteger payouts = new AtomicInteger();
+        when(payoutInitiator.release(any(), any(), any(), any(), anyString())).thenAnswer(inv -> {
+            payouts.incrementAndGet();
+            return null;
+        });
+        Seed s = seed(PaymentRail.PAWAPAY);
+        DepositReleaseRetryJob retry = retryJob();
+
+        concurrently(List.<Callable<Object>>of(retry::run, () -> listener.releaseAtDeposit(s.event())));
+        retryJob().run();
+
+        assertThat(payouts.get()).isEqualTo(1);
+        assertThat(paymentRepository.findById(s.paymentId).orElseThrow().getStatus()).isEqualTo(PaymentStatus.RELEASED);
+    }
+
+    private DepositReleaseRetryJob retryJob() {
+        return new DepositReleaseRetryJob(paymentRepository, bidRepository, announcementRepository, listener,
+                alertEscalator, true, java.time.Duration.ofMinutes(1), java.time.Duration.ofDays(3),
+                java.time.Duration.ofHours(6), 50, java.time.Clock.systemUTC());
+    }
+
     // ── Gabarits ─────────────────────────────────────────────────────────────
 
     private record Seed(UUID bidId, UUID paymentId, UUID senderId, UUID travelerId) {
