@@ -142,6 +142,19 @@ public class AnnouncementSpecification {
     }
 
     /**
+     * {@link #minAvailableKg} pour un trajet au kilo ; un trajet bateau vendu au m³ (prix au m³ renseigné, aucun
+     * kilo, V382 chk_announcements_kg_or_m3) passe toujours : sa capacité est un volume, comparé en mémoire par
+     * l'appelant ({@code ParcelFitRules.fitsTripVolume}). Réservé au rematch, où un colis au m³ peut porter un
+     * poids (poids max par colis) sans que ce poids soit une capacité.
+     */
+    public static Specification<AnnouncementEntity> minAvailableKgOrPricedPerM3(BigDecimal kg) {
+        return (root, query, cb) -> cb.or(
+                cb.isNotNull(root.get("pricePerM3")),
+                cb.equal(root.get("capacityUnit"), CapacityUnit.KG_FREE),
+                cb.greaterThanOrEqualTo(root.get("availableKg"), kg));
+    }
+
+    /**
      * Capacité restante d'au plus {@code kg}. Comportement inchangé pour
      * {@link CapacityUnit#KG_FREE} : son {@code availableKg} technique (≈ 1) le laisse
      * passer, comme avant. La borne haute de la fourchette de poids de l'accueil ne doit

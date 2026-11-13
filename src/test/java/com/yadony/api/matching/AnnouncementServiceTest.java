@@ -3003,6 +3003,80 @@ class AnnouncementServiceTest {
                     .isNull();
             verify(negotiationThreadRepository, never()).existsActiveByTravelerAnnouncementId(any());
         }
+
+        // ─── Mode figé vers ou depuis le bateau (règle de versement, revue BB1 I1) ───
+
+        private AnnouncementRequest withMode(TransportMode mode) {
+            LocalDate departure = LocalDate.now().plusDays(15);
+            return new AnnouncementRequest(
+                    "Paris", "Dakar", departure,
+                    null, null,
+                    new AddressDto("CDG", 49.009, 2.547),
+                    new AddressDto("DSS", 14.693, -17.447),
+                    BigDecimal.valueOf(10), BigDecimal.valueOf(8),
+                    mode,
+                    null, null, null, null, null, null,
+                    null, null,
+                    departure.atTime(18, 0),
+                    null, null, null, null);
+        }
+
+        /** Transporteur vérifié (GP Pro) : seul le verrou peut refuser le passage au bateau. */
+        private AnnouncementEntity stubVerifiedOwnerUpdate(TransportMode currentMode) {
+            AnnouncementEntity a = stubOwnerUpdate();
+            a.setTransportMode(currentMode);
+            userRepository.findByFirebaseUid(FIREBASE_UID).orElseThrow().setGpPro(true);
+            return a;
+        }
+
+        @Test
+        @DisplayName("avion → bateau avec un colis ou une offre vivante → 409 transport-mode-locked, rien d'écrit")
+        void planeToBoat_withLiveBid_isLocked() {
+            AnnouncementEntity a = stubVerifiedOwnerUpdate(TransportMode.PLANE);
+            lockedBy(true, false);
+
+            Throwable thrown = catchThrowable(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID,
+                    FIREBASE_UID, withMode(TransportMode.BOAT)));
+
+            assertThat(thrown).isInstanceOf(YadonyBusinessException.class);
+            assertThat(((YadonyBusinessException) thrown).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+            assertThat(((YadonyBusinessException) thrown).getErrorCode()).isEqualTo("transport-mode-locked");
+            assertThat(a.getTransportMode()).isEqualTo(TransportMode.PLANE);
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("avion → bateau avec un fil de négociation vivant → 409 transport-mode-locked")
+        void planeToBoat_withLiveThread_isLocked() {
+            stubVerifiedOwnerUpdate(TransportMode.PLANE);
+            lockedBy(false, true);
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(TransportMode.BOAT)), "transport-mode-locked");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("bateau → avion avec un colis vivant → 409 transport-mode-locked")
+        void boatToPlane_withLiveBid_isLocked() {
+            stubVerifiedOwnerUpdate(TransportMode.BOAT);
+            lockedBy(true, false);
+
+            assertYadonyError(() -> announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID,
+                    withMode(TransportMode.PLANE)), "transport-mode-locked");
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("avion → voiture avec un colis vivant : le bateau n'est pas en jeu, aucun verrou de mode")
+        void planeToCar_withLiveBid_isNotModeLocked() {
+            AnnouncementEntity a = stubVerifiedOwnerUpdate(TransportMode.PLANE);
+            lockedBy(true, false);
+
+            announcementService.updateAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID, withMode(TransportMode.CAR));
+
+            assertThat(a.getTransportMode()).isEqualTo(TransportMode.CAR);
+        }
     }
 
     // ─── deleteAnnouncement ────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ package com.yadony.api.matching.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -54,17 +56,36 @@ public record BidRequest(
         /**
          * Taille du colis (S, M, L, XL), facultative : une ancienne app n'en envoie pas, la réservation
          * est alors acceptée comme avant. Contrôlée contre la taille maximale du trajet
-         * ({@code ParcelFitRules.assertFits}). Doit rester en DERNIER.
+         * ({@code ParcelFitRules.assertFits}).
          */
         @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}")
-        String itemSize
+        String itemSize,
+
+        /**
+         * Dimensions du colis (cm, 1 à 400), obligatoires sur un trajet bateau vendu au m³ : le volume est
+         * calculé par le serveur ({@code ParcelFitRules.resolveBidVolume}), jamais envoyé. Ignorées ailleurs.
+         * Doivent rester en DERNIER.
+         */
+        @Min(1) @Max(400) Integer lengthCm,
+        @Min(1) @Max(400) Integer widthCm,
+        @Min(1) @Max(400) Integer heightCm
 ) {
+    /** Constructeur de compatibilité (sans dimensions) : la forme d'avant le bateau au m³. */
+    public BidRequest(BigDecimal weightKg, String description, String contentCategory,
+                      String recipientName, String recipientPhone, Boolean disclaimerSigned,
+                      String paymentMethod, String phoneNumber, String countryCode, String promoCode,
+                      List<String> photoKeys, List<BidGridItemRequest> gridItems, String itemSize) {
+        this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
+                paymentMethod, phoneNumber, countryCode, promoCode, photoKeys, gridItems, itemSize,
+                null, null, null);
+    }
+
     /** Constructeur de compatibilité (sans taille) : la forme d'avant le contrôle de taille. */
     public BidRequest(BigDecimal weightKg, String description, String contentCategory,
                       String recipientName, String recipientPhone, Boolean disclaimerSigned,
                       String paymentMethod, String phoneNumber, String countryCode, String promoCode,
                       List<String> photoKeys, List<BidGridItemRequest> gridItems) {
         this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
-                paymentMethod, phoneNumber, countryCode, promoCode, photoKeys, gridItems, null);
+                paymentMethod, phoneNumber, countryCode, promoCode, photoKeys, gridItems, (String) null);
     }
 }

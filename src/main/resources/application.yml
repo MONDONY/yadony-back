@@ -266,6 +266,15 @@ yadony:
       max-age: P7D
       abandoned-after: PT24H
       batch-size: 20
+    # Rattrapage du versement au dépôt (colis payé au dépôt dont l'événement a été perdu ou bloqué) : même chemin
+    # que le dépôt, borné, nouvel essai espacé, alerte DEPOSIT_STALLED_<colis> au-delà de alert-after.
+    deposit-retry:
+      enabled: ${PAYMENT_DEPOSIT_RETRY_ENABLED:true}
+      interval: PT10M
+      min-age: PT10M
+      max-age: P3D
+      alert-after: PT6H
+      batch-size: 20
   # Numéro de suivi saisi par le voyageur à la remise du colis (DEPART, FLUTTER-BC). Vérifié dès
   # qu'il est envoyé ; exigé seulement si ce réglage est vrai (allumer une fois l'app à jour).
   tracking:

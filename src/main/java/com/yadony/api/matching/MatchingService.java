@@ -218,13 +218,13 @@ public class MatchingService {
     /**
      * Règle de match commune à {@link #findMatchingRequests},
      * {@link #findBestMatchByRequestId} et {@link #findTravelersMatchingPackage} : corridor
-     * déjà filtré en SQL, restent le mode de transport, le poids, la taille et la fenêtre de date.
-     * Point d'extension unique : ajouter un critère ici le propage aux trois chemins.
+     * déjà filtré en SQL, restent le volume (trajet au m³), le mode de transport, le poids, la taille et la
+     * fenêtre de date. Point d'extension unique : ajouter un critère ici le propage aux trois chemins.
      */
     private boolean matches(PackageRequestEntity request, AnnouncementEntity announcement) {
-        // Jusqu'à la réservation au m³ (tâche BB2), un trajet vendu au m³ ne se réserve pas : le
-        // proposer en notification voyageur ou en suggestion expéditeur mènerait à un 422.
-        return !announcement.isPricedPerM3()
+        // Trajet vendu au m³ : la demande doit connaître son volume et il doit tenir dans le volume restant
+        // (même prédicat que le rematch, ParcelFitRules.fitsTripVolume) ; sans effet sur un trajet au kilo.
+        return ParcelFitRules.fitsTripVolume(announcement, request.getVolumeM3())
                 && fitsMode(request, announcement)
                 && fitsWeight(request, announcement)
                 && fitsSize(request, announcement)

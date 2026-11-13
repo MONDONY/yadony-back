@@ -690,6 +690,24 @@ public final class NotificationTexts {
                 m.get("notification.mobile-money-payout-sent.body", formattedAmount));
     }
 
+    /** Transporteur d'un colis payé au dépôt, rail carte : « Colis déposé : {montant} versé ». */
+    public static NotificationText paymentReleasedAtDeposit(Messages m, String formattedAmount) {
+        return new NotificationText(m.get("notification.payment-released.title"),
+                m.get("notification.payment-released.deposit.body", formattedAmount));
+    }
+
+    /** Transporteur d'un colis payé au dépôt, rail mobile money (payout confirmé par l'opérateur). */
+    public static NotificationText mobileMoneyPayoutSentAtDeposit(Messages m, String formattedAmount) {
+        return new NotificationText(m.get("notification.mobile-money-payout-sent.title"),
+                m.get("notification.mobile-money-payout-sent.deposit.body", formattedAmount));
+    }
+
+    /** Expéditeur d'un colis payé au dépôt : son colis est déposé, le transporteur a été payé. Envoyé une fois. */
+    public static NotificationText depositPaidForSender(Messages m) {
+        return new NotificationText(m.get("notification.deposit-paid.sender.title"),
+                m.get("notification.deposit-paid.sender.body"));
+    }
+
     public static NotificationText mobileMoneyPaymentConfirmed(Messages m) {
         return new NotificationText(m.get("notification.mobile-money-payment-confirmed.title"),
                 m.get("notification.mobile-money-payment-confirmed.body"));

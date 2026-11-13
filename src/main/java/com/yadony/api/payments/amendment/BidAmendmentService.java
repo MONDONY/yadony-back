@@ -173,7 +173,10 @@ public class BidAmendmentService {
                 methods,
                 BidAmendmentViews.utc(window.deadline(bid, announcement).orElse(null)),
                 minNet(currency),
-                maxNet(currency));
+                maxNet(currency),
+                announcement.isPricedPerM3() ? announcement.getAvailableVolumeM3() : null,
+                announcement.isPricedPerM3()
+                        ? priceGrid.displayPrice(announcement.getPricePerM3(), travelerId) : null);
     }
 
     /**
@@ -187,8 +190,9 @@ public class BidAmendmentService {
         AnnouncementEntity announcement = announcements.findById(bid.getAnnouncementId())
                 .orElseThrow(BidAmendmentService::announcementNotFound);
         BigDecimal addedKg = normalizeKg(request.addedKg());
-        requireEligible(bid, announcement, traveler(announcement), sender, addedKg);
-        BidAmendmentQuote q = price(bid, announcement, addedKg, request.items());
+        BigDecimal addedVolumeM3 = normalizeVolume(request.addedVolumeM3());
+        requireEligible(bid, announcement, traveler(announcement), sender, addedKg, addedVolumeM3);
+        BidAmendmentQuote q = price(bid, announcement, addedKg, addedVolumeM3, request.items());
         return new AmendmentQuoteResponse(q.gross(), currency(bid).name());
     }
 
@@ -214,7 +218,8 @@ public class BidAmendmentService {
         AnnouncementEntity announcement = lockAnnouncement(bid).orElseThrow(BidAmendmentService::announcementNotFound);
         UserEntity traveler = traveler(announcement);
         BigDecimal addedKg = normalizeKg(request.addedKg());
-        requireEligible(bid, announcement, traveler, sender, addedKg);
+        BigDecimal addedVolumeM3 = normalizeVolume(request.addedVolumeM3());
+        requireEligible(bid, announcement, traveler, sender, addedKg, addedVolumeM3);
 
         PaymentMethod method = request.paymentMethod();
         BidAmendmentRailHandler handler = method == null
@@ -223,7 +228,7 @@ public class BidAmendmentService {
         if (handler == null) {
             throw BidAmendmentEligibility.exceptionFor("amendment-rail-unavailable");
         }
-        BidAmendmentQuote q = price(bid, announcement, addedKg, request.items());
+        BidAmendmentQuote q = price(bid, announcement, addedKg, addedVolumeM3, request.items());
         LocalDateTime expiresAt = window.deadline(bid, announcement)
                 .orElseThrow(() -> BidAmendmentEligibility.exceptionFor("amendment-not-eligible"));
 
@@ -235,6 +240,7 @@ public class BidAmendmentService {
         a.setRail(handler.rail());
         a.setCurrency(currency(bid).name());
         a.setAddedWeightKg(addedKg);
+        a.setAddedVolumeM3(addedVolumeM3);
         a.setNetAmount(q.net());
         a.setCommissionAmount(q.commission());
         a.setGrossAmount(q.gross());
@@ -543,7 +549,7 @@ public class BidAmendmentService {
                 // Déjà versée : statut inchangé, le rail alerte l'administration (pas d'inversion).
                 events.publishEvent(new BidAmendmentRefundRequestedEvent(a.getId(), bid.getId(), a.getRail(), reason));
             }
-            if (a.getCapacityReservedKg() != null && a.getCapacityReservedKg().signum() > 0) {
+            if (BidAmendmentCapacity.holdsCapacity(a)) {
                 capacity.release(a);
                 changed = true;
             }
@@ -734,23 +740,30 @@ public class BidAmendmentService {
     }
 
     /**
-     * Refus d'éligibilité, s'il y en a un. Quand {@code addedKg} dépasse les kilos libres, la règle « rien à
-     * ajouter » est ignorée : la capacité ({@link #price}) répond alors 409 {@code amendment-capacity-unavailable},
-     * même sur un trajet sans grille dont le dernier kilo vient d'être pris.
+     * Refus d'éligibilité, s'il y en a un. Quand {@code addedKg} dépasse les kilos libres (ou {@code addedVolumeM3}
+     * le volume libre d'un trajet au m³), la règle « rien à ajouter » est ignorée : la capacité ({@link #price})
+     * répond alors 409 {@code amendment-capacity-unavailable}, même sur un trajet sans grille dont le dernier kilo
+     * (ou m³) vient d'être pris.
      */
     private void requireEligible(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
                                  UserEntity sender, BigDecimal addedKg) {
-        boolean exceedsCapacity = addedKg != null && !BidAmendmentCapacity.isAvailable(announcement, addedKg);
+        requireEligible(bid, announcement, traveler, sender, addedKg, null);
+    }
+
+    private void requireEligible(BidEntity bid, AnnouncementEntity announcement, UserEntity traveler,
+                                 UserEntity sender, BigDecimal addedKg, BigDecimal addedVolumeM3) {
+        boolean exceedsCapacity = (addedKg != null || addedVolumeM3 != null)
+                && !BidAmendmentCapacity.isAvailable(announcement, addedKg, addedVolumeM3);
         eligibility.blockingReason(bid, announcement, traveler, sender.getId(), exceedsCapacity).ifPresent(code -> {
             throw BidAmendmentEligibility.exceptionFor(code);
         });
     }
 
-    /** Devis, kilos disponibles et bornes du net : ce que la création et le devis refusent à l'identique. */
+    /** Devis, kilos et volume disponibles, bornes du net : ce que la création et le devis refusent à l'identique. */
     private BidAmendmentQuote price(BidEntity bid, AnnouncementEntity announcement, BigDecimal addedKg,
-                                    List<AmendmentLineRequest> items) {
-        BidAmendmentCapacity.requireAvailable(announcement, addedKg);
-        BidAmendmentQuote q = pricing.quote(bid, announcement, addedKg, items);
+                                    BigDecimal addedVolumeM3, List<AmendmentLineRequest> items) {
+        BidAmendmentCapacity.requireAvailable(announcement, addedKg, addedVolumeM3);
+        BidAmendmentQuote q = pricing.quote(bid, announcement, addedKg, addedVolumeM3, items);
         SupportedCurrency currency = currency(bid);
         BigDecimal min = minNet(currency);
         BigDecimal max = maxNet(currency);
@@ -808,6 +821,19 @@ public class BidAmendmentService {
         return addedKg == null ? BigDecimal.ZERO.setScale(2) : addedKg.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * Volume à la précision de la colonne (3 décimales, V384) ; nul si absent ou nul après arrondi
+     * ({@code chk_bid_amendments_volume} : jamais 0). Un volume négatif est gardé tel quel : la tarification le
+     * refuse en 400.
+     */
+    static BigDecimal normalizeVolume(BigDecimal addedVolumeM3) {
+        if (addedVolumeM3 == null) {
+            return null;
+        }
+        BigDecimal scaled = addedVolumeM3.setScale(3, RoundingMode.HALF_UP);
+        return scaled.signum() == 0 ? null : scaled;
+    }
+
     private void requireEnabled() {
         if (!properties.isEnabled()) {
             throw BidAmendmentEligibility.exceptionFor("amendment-disabled");
@@ -853,6 +879,9 @@ public class BidAmendmentService {
         payload.put("currency", a.getCurrency());
         payload.put("gross", a.getGrossAmount());
         payload.put("addedWeightKg", a.getAddedWeightKg());
+        if (a.getAddedVolumeM3() != null) {
+            payload.put("addedVolumeM3", a.getAddedVolumeM3());
+        }
         payload.put("status", a.getStatus().name());
         payload.putAll(extra);
         auditService.log(ENTITY, a.getId(), action, actorId, payload);

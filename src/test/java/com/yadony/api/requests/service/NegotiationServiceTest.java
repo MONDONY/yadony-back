@@ -4371,22 +4371,61 @@ class NegotiationServiceTest {
             assertThat(service.validateAndFetchExistingTrip(annId, travelerId, req)).isSameAs(ann);
         }
 
+        private com.yadony.api.matching.AnnouncementEntity boatPerM3Trip(UUID travelerId, String availableVolumeM3) {
+            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "1");
+            ann.setAvailableKg(null);
+            ann.setTotalKg(null);
+            ann.setPricePerKg(null);
+            ann.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+            ann.setPricePerM3(new BigDecimal("600"));
+            ann.setVolumeCapacityM3(new BigDecimal("2.000"));
+            ann.setAvailableVolumeM3(new BigDecimal(availableVolumeM3));
+            return ann;
+        }
+
         @Test
-        @DisplayName("trajet bateau au m³ (sans kilos) : liaison refusée en 422 boat-volume-booking-unavailable, sans NPE")
-        void offerWithExistingBoatPerM3Trip_refusedBeforeKgCapacity() {
+        @DisplayName("trajet bateau au m³ (sans kilos) : liaison acceptée quand le volume de la demande tient, sans NPE")
+        void offerWithExistingBoatPerM3Trip_volumeFits_linked() {
             UUID travelerId = UUID.randomUUID();
             UUID annId = UUID.randomUUID();
             PackageRequestEntity req = parisDakarRequest("10");
-            com.yadony.api.matching.AnnouncementEntity ann = parisDakarTrip(travelerId, "1");
-            ann.setAvailableKg(null);
-            ann.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
-            ann.setPricePerM3(new BigDecimal("600"));
+            req.setVolumeM3(new BigDecimal("0.500"));
+            com.yadony.api.matching.AnnouncementEntity ann = boatPerM3Trip(travelerId, "0.500");
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThat(service.validateAndFetchExistingTrip(annId, travelerId, req)).isSameAs(ann);
+        }
+
+        @Test
+        @DisplayName("trajet bateau au m³ : demande sans dimensions → 422 boat-dimensions-required")
+        void offerWithExistingBoatPerM3Trip_requestWithoutVolume_422() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("10");
+            com.yadony.api.matching.AnnouncementEntity ann = boatPerM3Trip(travelerId, "2");
             when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
 
             assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-dimensions-required");
+                });
+        }
+
+        @Test
+        @DisplayName("trajet bateau au m³ : volume de la demande au-delà du restant → 422 insufficient-volume")
+        void offerWithExistingBoatPerM3Trip_volumeTooLarge_422() {
+            UUID travelerId = UUID.randomUUID();
+            UUID annId = UUID.randomUUID();
+            PackageRequestEntity req = parisDakarRequest("10");
+            req.setVolumeM3(new BigDecimal("0.501"));
+            com.yadony.api.matching.AnnouncementEntity ann = boatPerM3Trip(travelerId, "0.500");
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.validateAndFetchExistingTrip(annId, travelerId, req))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("insufficient-volume");
                 });
         }
 
@@ -7251,60 +7290,30 @@ class NegotiationServiceTest {
         }
 
         @Test
-        @DisplayName("start : trajet dédié bateau refusé en 422 boat-volume-booking-unavailable jusqu'à BB2, rien d'écrit")
-        void start_dedicatedBoatTrip_refusedUntilVolumeBooking_savesNothing() {
-            boatRequest("0.800");
+        @DisplayName("très petit volume et prix convenu élevé : prix au m³ dérivé > NUMERIC(10,2) → 422 volume-price-too-high")
+        void dedicatedBoatTrip_derivedPricePerM3BeyondNumeric_422() {
+            boatRequest("0.001");
             LocalDate departure = request.getDesiredDate();
-            lenient().when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
-            lenient().when(config.threadsPerMinuteRateLimit()).thenReturn(1);
-            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
-            lenient().when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
-            lenient().when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
-                .thenReturn(Optional.empty());
-            lenient().when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
-                .thenReturn(0L);
-            lenient().when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
-            lenient().when(announcementRepo.findCountryCodeByCityName(anyString())).thenReturn(Optional.empty());
-            var payload = boatPayload(departure, departure.plusDays(20), departure.plusDays(30));
 
-            assertThatThrownBy(() -> service.start(TRAVELER_ID, new NegotiationStartRequest(
-                REQUEST_ID, new BigDecimal("500"), request.getDesiredDate(),
-                new BigDecimal("40"), null, null, true, payload)))
+            // 100 000 / 0,001 = 100 000 000 au m³ : un centime au-delà de 99 999 999,99.
+            assertThatThrownBy(() -> build(new BigDecimal("100000"),
+                    boatPayload(departure, departure.plusDays(20), departure.plusDays(30))))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
+                    assertThat(ex.getErrorCode()).isEqualTo("volume-price-too-high");
                 });
-
-            verify(announcementRepo, never()).save(any());
-            verify(threadRepo, never()).save(any());
         }
 
         @Test
-        @DisplayName("createDedicatedTrip : fil AWAITING_TRIP bateau refusé en 422, le fil reste en attente de trajet")
-        void createDedicatedTrip_boat_refusedUntilVolumeBooking_threadUntouched() {
-            boatRequest("0.800");
+        @DisplayName("prix au m³ dérivé exactement à la borne technique (99 999 999,99) : accepté")
+        void dedicatedBoatTrip_derivedPricePerM3AtBound_accepted() {
+            boatRequest("0.001");
             LocalDate departure = request.getDesiredDate();
-            NegotiationThreadEntity thread = new NegotiationThreadEntity();
-            thread.setPackageRequestId(REQUEST_ID);
-            thread.setTravelerId(TRAVELER_ID);
-            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
-            thread.setCurrentPriceEur(new BigDecimal("500"));
-            thread.setRoundsCount((short) 1);
-            UUID threadId = UUID.randomUUID();
-            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
-            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
-            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
-            lenient().when(announcementRepo.findCountryCodeByCityName(anyString())).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, threadId,
-                boatPayload(departure, departure.plusDays(20), departure.plusDays(30))))
-                .isInstanceOfSatisfying(YadonyBusinessException.class,
-                    ex -> assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable"));
+            var ann = build(new BigDecimal("99999.99999"),
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(30)));
 
-            verify(announcementRepo, never()).save(any());
-            verify(threadRepo, never()).save(any());
-            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_TRIP);
+            assertThat(ann.getPricePerM3()).isEqualByComparingTo("99999999.99");
         }
 
         @Test

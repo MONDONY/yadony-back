@@ -18,13 +18,12 @@ public final class AdminBidAmounts {
 
     /**
      * Net voyageur d'une demande : l'accord négocié quand il existe, sinon le barème
-     * (poids × prix au kilo, plus les articles de la grille), dans la devise du bid.
+     * (poids × prix au kilo, ou volume × prix au m³ d'un bateau vendu au m³, plus les articles de la
+     * grille), dans la devise du bid.
      */
     public static BigDecimal netOf(BidEntity b, AnnouncementEntity ann, BigDecimal gridNet) {
         if (b.getNegotiatedNetEur() != null) return b.getNegotiatedNetEur();
-        BigDecimal kgNet = (b.getWeightKg() != null && ann != null && ann.getPricePerKg() != null)
-                ? b.getWeightKg().multiply(ann.getPricePerKg())
-                : BigDecimal.ZERO;
+        BigDecimal kgNet = com.yadony.api.matching.BidNetTotal.scheduleNet(b, ann);
         BigDecimal total = kgNet.add(gridNet != null ? gridNet : BigDecimal.ZERO);
         return total.signum() > 0 ? total.setScale(2, RoundingMode.HALF_UP) : null;
     }

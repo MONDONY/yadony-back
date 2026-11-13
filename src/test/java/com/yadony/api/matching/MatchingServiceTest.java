@@ -928,11 +928,35 @@ class MatchingServiceTest {
             activeAnnouncement.setAvailableVolumeM3(new BigDecimal("2"));
         }
 
+        private PackageRequestEntity withVolume(PackageRequestEntity request, String volumeM3) {
+            request.setVolumeM3(volumeM3 == null ? null : new BigDecimal(volumeM3));
+            return request;
+        }
+
         @Test
-        void boatPerM3Trip_isExcludedFromAllThreeMatchingPaths() throws Exception {
-            // Lot 3 (BA3), jusqu'à BB2 : un trajet au m³ ne se réserve pas (422), le matching ne le
-            // propose donc ni au voyageur (suggestion), ni à l'expéditeur, ni en notification. Aucun NPE
-            // pour autant : ni kilos ni prix au kilo à lire.
+        void boatPerM3Trip_requestVolumeFits_matchesAllThreePaths() throws Exception {
+            // Réservation au volume (BB2) : un trajet au m³ est proposé au voyageur (suggestion), à
+            // l'expéditeur et en notification dès que le volume de la demande tient dans le restant (2 m³).
+            // Aucun NPE : ni kilos ni prix au kilo à lire.
+            asBoatPerM3Trip();
+
+            assertThat(suggested(withVolume(buildRequest(25, LocalDate.now().plusDays(10), 3), "0.096"))).isTrue();
+            assertThat(notified(withVolume(buildRequest(25, LocalDate.now().plusDays(10), 3), "2.000"))).isTrue();
+            assertThat(bestMatched(withVolume(buildRequest(15, LocalDate.now().plusDays(10), 3), "1.5"))).isTrue();
+        }
+
+        @Test
+        void boatPerM3Trip_requestVolumeTooLarge_isExcludedFromAllThreePaths() throws Exception {
+            asBoatPerM3Trip();
+
+            assertThat(suggested(withVolume(buildRequest(25, LocalDate.now().plusDays(10), 3), "2.001"))).isFalse();
+            assertThat(notified(withVolume(buildRequest(25, LocalDate.now().plusDays(10), 3), "2.001"))).isFalse();
+            assertThat(bestMatched(withVolume(buildRequest(15, LocalDate.now().plusDays(10), 3), "3"))).isFalse();
+        }
+
+        @Test
+        void boatPerM3Trip_requestWithoutVolume_isExcluded() throws Exception {
+            // Sans dimensions, ni prix ni place au m³ : la liaison serait refusée (boat-dimensions-required).
             asBoatPerM3Trip();
 
             assertThat(suggested(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
@@ -942,13 +966,16 @@ class MatchingServiceTest {
 
         @Test
         void boatPerKgTrip_stillMatches() throws Exception {
-            // Un bateau au kilo (volume facultatif) se réserve comme avant : il reste proposé.
+            // Un bateau au kilo (volume facultatif) se réserve comme avant : il reste proposé, et son volume
+            // facultatif ne filtre rien (même une demande plus volumineuse passe, seuls les kilos comptent).
             activeAnnouncement.setTransportMode(TransportMode.BOAT);
             activeAnnouncement.setCapacityUnit(CapacityUnit.KG_EXACT);
             activeAnnouncement.setAvailableKg(new BigDecimal("30"));
             activeAnnouncement.setVolumeCapacityM3(new BigDecimal("2"));
+            activeAnnouncement.setAvailableVolumeM3(new BigDecimal("2"));
 
             assertThat(notified(buildRequest(25, LocalDate.now().plusDays(10), 3))).isTrue();
+            assertThat(notified(withVolume(buildRequest(25, LocalDate.now().plusDays(10), 3), "5"))).isTrue();
         }
 
         @Test

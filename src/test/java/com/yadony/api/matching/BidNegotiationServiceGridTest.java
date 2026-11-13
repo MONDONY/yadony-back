@@ -273,6 +273,40 @@ class BidNegotiationServiceGridTest {
     }
 
     @Test
+    @DisplayName("ouverture sur un bateau au m³ : volume serveur sur le colis, prix minimum au kilo sans objet (poids nul)")
+    void propose_boatPerM3_storesVolume_andMinPricePerKgGetsNoWeight() {
+        UserEntity sender = sender();
+        AnnouncementEntity announcement = announcement();
+        announcement.setTransportMode(TransportMode.BOAT);
+        announcement.setAvailableKg(null);
+        announcement.setTotalKg(null);
+        announcement.setPricePerKg(null);
+        announcement.setPricePerM3(new BigDecimal("600"));
+        announcement.setVolumeCapacityM3(new BigDecimal("2.5"));
+        announcement.setAvailableVolumeM3(new BigDecimal("2.5"));
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+        when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+        when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+        when(commissionGridService.current()).thenReturn(Optional.empty());
+        lenient().when(messageRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        MinPricePerKgGuard guard = org.mockito.Mockito.mock(MinPricePerKgGuard.class);
+        service.setMinPriceGuard(guard);
+
+        BidNegotiationStartRequest request = new BidNegotiationStartRequest(
+                new BigDecimal("12"), "Vêtements", "CLOTHING", "Fatou Sarr", "+221701234567", true,
+                "CASH", null, null, null, new BigDecimal("50.00"), null, null, null, 40, 40, 60);
+        service.propose(ANNOUNCEMENT_ID, SENDER_UID, request, httpRequest);
+
+        ArgumentCaptor<BidEntity> saved = ArgumentCaptor.forClass(BidEntity.class);
+        verify(bidRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getVolumeM3()).isEqualByComparingTo("0.096");
+        assertThat(saved.getValue().getWeightKg()).isEqualByComparingTo("12");
+        verify(guard).assertAtLeastMinimum(org.mockito.ArgumentMatchers.eq(TRAVELER_ID), any(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("EUR"), any());
+    }
+
+    @Test
     @DisplayName("ouverture sous grille : le brut proposé est validé au contexte figé avant toute écriture")
     void propose_grid_grossBelowMinimum_isRefusedBeforeSave() {
         UserEntity sender = sender();

@@ -10,11 +10,10 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.matching.CapacityUnit;
+import com.yadony.api.matching.TripCapacity;
 import com.yadony.api.matching.TripRescheduleRules;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -46,6 +45,17 @@ public class RescheduleDecisionService {
     private final RematchService rematchService;
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
+
+    /**
+     * Versement au dépôt déjà parti ? (port branché par Spring, paquet {@code payments}) ; repli prudent
+     * {@link DepositPayoutPort#ASSUME_PAID} sans implémentation.
+     */
+    private DepositPayoutPort depositPayouts = DepositPayoutPort.ASSUME_PAID;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDepositPayoutPort(DepositPayoutPort depositPayouts) {
+        this.depositPayouts = depositPayouts;
+    }
 
     public RescheduleDecisionService(BidRepository bidRepository,
                                      AnnouncementRepository announcementRepository,
@@ -87,6 +97,13 @@ public class RescheduleDecisionService {
                     "problem.reschedule-decision-closed");
         }
 
+        // Colis payé au dépôt dont le transporteur a déjà reçu l'argent : se retirer annoncerait un remboursement
+        // qui n'aura jamais lieu (RefundProcessor ne rembourse pas un paiement versé). 409 deposit-paid-no-refund,
+        // rien n'est annulé ; le support ouvre un litige.
+        if (decision == RescheduleDecision.WITHDRAW) {
+            CancellationGuard.assertNoRefundAfterDepositPayout(bid, depositPayouts);
+        }
+
         UUID rescheduleId = bid.getPendingRescheduleId();
         boolean parcelReturnRequired = false;
         if (decision == RescheduleDecision.KEEP) {
@@ -110,13 +127,8 @@ public class RescheduleDecisionService {
         }
         boolean handedOver = bid.getStatus() == BidStatus.HANDED_OVER;
 
-        boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!isKgFree && bid.getWeightKg() != null) {
-            announcement.setAvailableKg(announcement.getAvailableKg().add(bid.getWeightKg()));
-        }
-        if (!isKgFree && announcement.getStatus() == AnnouncementStatus.FULL) {
-            announcement.setStatus(AnnouncementStatus.ACTIVE);
-        }
+        // Place rendue (kilos sauf KG_FREE, volume d'un bateau au m³), FULL → ACTIVE : règle unique TripCapacity.
+        TripCapacity.release(announcement, bid);
         announcementRepository.save(announcement);
 
         if (handedOver) {

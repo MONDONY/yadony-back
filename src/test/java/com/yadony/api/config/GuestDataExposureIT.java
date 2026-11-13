@@ -172,13 +172,21 @@ class GuestDataExposureIT {
             // Argent et secrets de paiement
             "stripeAccountId", "paymentIntentId", "paymentIntentClientSecret", "clientSecret",
             "totalNetEur", "netEur", "commissionRate",
+            // Part nette au volume d'un devis au m³ (BidQuoteResponse, bateau) : un net voyageur comme netEur.
+            "volumeNetEur",
             // Net voyageur : ce que touche le transporteur. Le brut (*Display) reste servi.
             "pricePerKg", "unitPriceNet", "convertedPricePerKg",
             // Numero et pays d'immatriculation du voyageur professionnel : visibles des seuls
             // utilisateurs avec compte (statut et raison sociale restent servis aux invites).
             "businessRegistrationNumber", "businessCountry",
             // Reserve au proprietaire
-            "promoCode");
+            "promoCode",
+            // Regle de versement d'un colis accepte (BidResponse, V383) : moment ou l'argent part vers le
+            // transporteur. Servie aux seules parties du colis, jamais sur une surface invite.
+            "payoutTrigger",
+            // Heure du depot du colis chez le transporteur (BidResponse, etape DEPART) : servie aux seules
+            // parties du colis, jamais sur une surface invite.
+            "depositedAt");
 
     /**
      * Toute cle JSON servie a un invite, a n'importe quelle profondeur.

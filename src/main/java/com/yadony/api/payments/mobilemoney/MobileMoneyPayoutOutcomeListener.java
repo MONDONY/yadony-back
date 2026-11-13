@@ -110,8 +110,12 @@ public class MobileMoneyPayoutOutcomeListener {
         }
         audit.log("PAYMENT", payment.get().getId(), "MM_PAYOUT_COMPLETED", bid.get().getSenderId(),
                 Map.of("operationId", op.getId().toString(), "net", op.getAmount().toPlainString()));
-        events.publishEvent(new PaymentReleasedEvent(bid.get().getId(), announcement.get().getTravelerId(),
-                bid.get().getSenderId(), op.getAmount(), op.getCurrency(), true));
+        PaymentReleasedEvent released = new PaymentReleasedEvent(bid.get().getId(), announcement.get().getTravelerId(),
+                bid.get().getSenderId(), op.getAmount(), op.getCurrency(), true);
+        // Colis payé au dépôt : textes « colis déposé » (l'opération pawaPay ne garde pas la source du versement ;
+        // un colis DEPOSIT n'est jamais versé à la livraison, seulement au dépôt ou par rattrapage après dépôt).
+        events.publishEvent(bid.get().getPayoutTrigger() == com.yadony.api.matching.PayoutTrigger.DEPOSIT
+                ? released.atDeposit() : released);
     }
 
     /**

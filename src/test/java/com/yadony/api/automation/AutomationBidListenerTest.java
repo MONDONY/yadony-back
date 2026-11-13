@@ -109,6 +109,62 @@ class AutomationBidListenerTest {
         verify(bidService).acceptBidBySystem(bidId, travelerId);
     }
 
+    /** Trajet bateau vendu au m³ : aucun kilo (nuls), volume restant {@code availableVolumeM3}. */
+    private static AnnouncementEntity boatPerM3(String availableVolumeM3) {
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        a.setAvailableKg(null);
+        a.setPricePerM3(new BigDecimal("600"));
+        a.setVolumeCapacityM3(new BigDecimal("2.5"));
+        a.setAvailableVolumeM3(new BigDecimal(availableVolumeM3));
+        return a;
+    }
+
+    private BidEntity cardBidWithVolume(String volumeM3) {
+        BidEntity b = new BidEntity();
+        b.setPaymentMethod(PaymentMethod.STRIPE);
+        b.setVolumeM3(volumeM3 == null ? null : new BigDecimal(volumeM3));
+        return b;
+    }
+
+    @Test
+    void onBidCreated_boatPerM3_volumeFits_acceptsTrusted_andOverweightRuleDoesNotApply() {
+        UserEntity sender = new UserEntity();
+        sender.setAverageRating(new BigDecimal("4.9"));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(cardBidWithVolume("0.096")));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(boatPerM3("0.096")));
+        when(ruleRepository.findByTravelerIdOrderByCreatedAtAsc(travelerId)).thenReturn(List.of(
+                presetRule("auto_reject_overweight", true, Map.of()),
+                presetRule("auto_accept_trusted", true, Map.of("minRating", 4.0))));
+
+        // Poids envoyé par l'app (poids max par colis) : jamais comparé à des kilos nuls (aucun NPE).
+        listener.onBidCreated(new BidCreatedEvent(bidId, announcementId, travelerId, senderId,
+                "Awa", new BigDecimal("12"), "Marseille → Dakar"));
+
+        verify(bidService, never()).rejectBidBySystem(any(), any(), any());
+        verify(bidService).acceptBidBySystem(bidId, travelerId);
+    }
+
+    @Test
+    void onBidCreated_boatPerM3_volumeNoLongerFits_orUnknown_notAutoAccepted() {
+        UserEntity sender = new UserEntity();
+        sender.setAverageRating(new BigDecimal("4.9"));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(announcementId)).thenReturn(Optional.of(boatPerM3("0.050")));
+        when(ruleRepository.findByTravelerIdOrderByCreatedAtAsc(travelerId)).thenReturn(List.of(
+                presetRule("auto_accept_trusted", true, Map.of("minRating", 4.0))));
+
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(cardBidWithVolume("0.096")));
+        listener.onBidCreated(new BidCreatedEvent(bidId, announcementId, travelerId, senderId,
+                "Awa", null, "Marseille → Dakar"));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(cardBidWithVolume(null)));
+        listener.onBidCreated(new BidCreatedEvent(bidId, announcementId, travelerId, senderId,
+                "Awa", null, "Marseille → Dakar"));
+
+        verify(bidService, never()).acceptBidBySystem(any(), any());
+    }
+
     @Test
     void onBidCreated_cashBid_doesNotRunPaymentEscrowAutomation() {
         BidEntity cashBid = new BidEntity();

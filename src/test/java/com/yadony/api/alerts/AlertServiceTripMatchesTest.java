@@ -397,29 +397,33 @@ class AlertServiceTripMatchesTest {
     }
 
     @Test
-    void getTripMatches_excludesPerM3Trips_untilBoatVolumeBooking() {
+    void getTripMatches_includesPerM3Trips() {
         UUID travelerId = UUID.randomUUID();
+        UUID boatTravelerId = UUID.randomUUID();
         AnnouncementEntity perKg = trip(travelerId, LocalDate.of(2026, 7, 10),
                 new BigDecimal("15.00"), new BigDecimal("8.50"));
-        AnnouncementEntity perM3 = perM3Trip(trip(UUID.randomUUID(), LocalDate.of(2026, 7, 12),
+        AnnouncementEntity perM3 = perM3Trip(trip(boatTravelerId, LocalDate.of(2026, 7, 12),
                 new BigDecimal("10.00"), new BigDecimal("7.00")));
         when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
         when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
                 .thenReturn(List.of(perKg, perM3));
         when(userRepository.findAllById(anyCollection()))
-                .thenReturn(List.of(traveler(travelerId, "Moussa", "Diallo", new BigDecimal("4.7"))));
+                .thenReturn(List.of(traveler(travelerId, "Moussa", "Diallo", new BigDecimal("4.7")),
+                        traveler(boatTravelerId, "Awa", "Traoré", new BigDecimal("4.9"))));
 
-        assertThat(service.getTripMatches(uid, alertId)).hasSize(1);
+        // Le trajet au m³ se réserve au volume : proposé comme le trajet au kilo (une alerte ne décrit aucun colis).
+        assertThat(service.getTripMatches(uid, alertId)).hasSize(2);
     }
 
     @Test
-    void findSenderAlertsMatchingTrip_perM3Trip_excluded_untilBoatVolumeBooking() {
+    void findSenderAlertsMatchingTrip_perM3Trip_matchesLikeKgTrip() {
+        when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS))
+                .thenReturn(List.of(senderAlert()));
         AnnouncementEntity trip = perM3Trip(tripAt("Paris", "Bamako", LocalDate.of(2026, 7, 10),
                 BigDecimal.ONE, BigDecimal.ONE, AnnouncementStatus.ACTIVE));
 
-        assertThat(service.findSenderAlertsMatchingTrip(trip)).isEmpty();
-        assertThat(service.isTripOpenToThirdParties(trip)).isFalse();
-        verifyNoInteractions(alertRepository);
+        assertThat(service.findSenderAlertsMatchingTrip(trip)).hasSize(1);
+        assertThat(service.isTripOpenToThirdParties(trip)).isTrue();
     }
 
     @Test

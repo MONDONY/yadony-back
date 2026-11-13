@@ -693,16 +693,12 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
-    void fichesBateau_decriventLeM3LaFourchetteLesRetardsEtLaGardeSansAnnoncerLePaiementAuDepot() {
+    void fichesBateau_decriventLeM3LaFourchetteLesRetardsEtLaGarde() {
         List<String> ids = List.of("modes-transport", "proposer-trajet", "envoyer-colis", "reporter-trajet",
                 "preparer-colis", "rechercher-trajet");
         for (String id : ids) {
             for (String locale : List.of("fr", "en")) {
                 assertThat(article(locale, id)).as(locale + "/" + id).isPresent();
-                // Le paiement au dépôt et l'annulation après dépôt arrivent avec la PR de paiement.
-                assertThat(body(locale, id).toLowerCase()).as(locale + "/" + id)
-                        .doesNotContain("au dépôt").doesNotContain("at drop-off").doesNotContain("après le dépôt")
-                        .doesNotContain("after drop-off");
             }
         }
         assertThat(body("fr", "modes-transport")).contains("m³").contains("GP Pro").contains("fourchette")
@@ -746,6 +742,33 @@ class KnowledgeBaseFichesTest {
         assertThat(body("en", "trajets-recurrents")).contains("boat").contains("refused");
         assertThat(body("fr", "kilos-prix")).contains("m³").contains("prix au m³").contains("« Kg libre » n'existe pas");
         assertThat(body("en", "kilos-prix")).contains("m³").contains("price per m³").contains("\"Free kilos\" does not exist");
+    }
+
+    @Test
+    void ficheBateauPayeAuDepot_ditLaRealiteDuCode() {
+        // PR B du lot 3 : transporteur vérifié payé au dépôt, QR de l'expéditeur et photo, aucun remboursement
+        // automatique ensuite (409 deposit-paid-no-refund → support), pas de supplément après dépôt, avenant au m³.
+        assertThat(body("fr", "paiement-depot-bateau")).contains("payé au dépôt").contains("GP Pro")
+                .contains("QR du colis").contains("photo").contains("rien n'est remboursé automatiquement")
+                .contains("support").contains("litige").contains("aucun supplément").contains("espèces")
+                .contains("dimensions").contains("sans indiquer de kilos").contains("ajouter du volume")
+                .contains("prix au m³");
+        assertThat(body("en", "paiement-depot-bateau")).contains("paid when the parcel is dropped off")
+                .contains("GP Pro").contains("QR code").contains("photo")
+                .contains("nothing is refunded automatically").contains("support").contains("dispute")
+                .contains("no extra charge").contains("cash").contains("dimensions").contains("without giving kilos")
+                .contains("add volume").contains("price per m³");
+        assertThat(body("fr", "modes-transport")).contains("à son dépôt");
+        assertThat(body("en", "modes-transport")).contains("dropped off");
+        for (String id : List.of("annuler-envoi", "annuler-trajet", "colis-non-conforme")) {
+            assertThat(body("fr", id)).as("fr/" + id).contains("support");
+            assertThat(body("en", id)).as("en/" + id).contains("support");
+        }
+        KnowledgeBase kb = productionKb();
+        assertThat(firstHit(kb, "fr", "Mon colis bateau est payé au dépôt, puis-je être remboursé ?"))
+                .isEqualTo("paiement-depot-bateau");
+        assertThat(firstHit(kb, "en", "My boat parcel was paid at drop-off, can I get a refund?"))
+                .isEqualTo("paiement-depot-bateau");
     }
 
     @Test

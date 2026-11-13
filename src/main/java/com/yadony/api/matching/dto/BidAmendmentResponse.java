@@ -1,5 +1,7 @@
 package com.yadony.api.matching.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -26,6 +28,8 @@ import java.util.UUID;
  *                        la remise (DEPART) est refusée.
  * @param commissionClientSecret rail espèces, voyageur seulement : client secret de la 3DS de la commission,
  *                        renseigné dans la seule réponse qui la déclenche.
+ * @param addedVolumeM3   m³ ajoutés (trajet vendu au m³), {@code null} pour un ajout de kilos ou d'articles.
+ *                        Toujours sérialisé.
  */
 public record BidAmendmentResponse(
         UUID id,
@@ -42,7 +46,18 @@ public record BidAmendmentResponse(
         String closedReason,
         boolean blocksHandover,
         String commissionStatus,
-        String commissionClientSecret) {
+        String commissionClientSecret,
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal addedVolumeM3) {
+
+    /** Vue d'une modification sans volume ajouté. */
+    public BidAmendmentResponse(UUID id, String status, String rail, String currency, BigDecimal addedWeightKg,
+                                List<Item> items, BigDecimal grossAmount, BigDecimal netAmount,
+                                BigDecimal commissionAmount, OffsetDateTime expiresAt, OffsetDateTime paymentExpiresAt,
+                                String closedReason, boolean blocksHandover, String commissionStatus,
+                                String commissionClientSecret) {
+        this(id, status, rail, currency, addedWeightKg, items, grossAmount, netAmount, commissionAmount, expiresAt,
+                paymentExpiresAt, closedReason, blocksHandover, commissionStatus, commissionClientSecret, null);
+    }
 
     /** Article de grille ajouté. {@code netAmount} nul pour l'expéditeur. */
     public record Item(String label, int quantity, BigDecimal grossAmount, BigDecimal netAmount) {
@@ -52,6 +67,6 @@ public record BidAmendmentResponse(
     public BidAmendmentResponse withCommissionClientSecret(String clientSecret) {
         return new BidAmendmentResponse(id, status, rail, currency, addedWeightKg, items, grossAmount, netAmount,
                 commissionAmount, expiresAt, paymentExpiresAt, closedReason, blocksHandover, commissionStatus,
-                clientSecret);
+                clientSecret, addedVolumeM3);
     }
 }

@@ -14,7 +14,6 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
@@ -110,6 +109,8 @@ public class MobileMoneyBidPaymentService {
     private final PawapayProperties props;
     private final MobileMoneyPayoutAccounts payoutAccounts;
     private final MobileMoneyOperationViews views;
+    /** Règle de versement figée au passage à ACCEPTED ({@link #confirmEscrow}). */
+    private final com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy;
 
     /**
      * Transaction INDÉPENDANTE, réservée à l'entrée d'audit d'un dépôt refusé —
@@ -147,7 +148,8 @@ public class MobileMoneyBidPaymentService {
                                         ApplicationEventPublisher events,
                                         PromoService promoService, CommissionVoucherService voucherService,
                                         PlatformTransactionManager transactionManager, PawapayProperties props,
-                                        MobileMoneyPayoutAccounts payoutAccounts, MobileMoneyOperationViews views) {
+                                        MobileMoneyPayoutAccounts payoutAccounts, MobileMoneyOperationViews views,
+                                        com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -164,6 +166,7 @@ public class MobileMoneyBidPaymentService {
         this.props = props;
         this.payoutAccounts = payoutAccounts;
         this.views = views;
+        this.payoutTriggerPolicy = payoutTriggerPolicy;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -222,10 +225,8 @@ public class MobileMoneyBidPaymentService {
         }
         // FLUTTER-GA : acceptation refusée après la date limite de dépôt (fuseau du trajet).
         com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
-        boolean kgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!kgFree && bid.getWeightKg() != null && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
-        }
+        // Place restante (règle unique) : 409 capacity-insufficient (kilos) ou insufficient-volume (bateau au m³).
+        com.yadony.api.matching.TripCapacity.assertAcceptable(announcement, bid);
 
         MobileMoneyBidPricing.Quote quote = pricing.price(bid, announcement);
         PriceBreakdown price = quote.price();
@@ -249,8 +250,8 @@ public class MobileMoneyBidPaymentService {
         // détient aucun bon actif.
         voucherService.consume(bid.getSenderId(), bidId);
 
-        // Capacité réservée dès l'acceptation, rendue par expire() ou cancelBid.
-        if (announcement.reserveCapacity(bid.getWeightKg())) {
+        // Capacité (kilos ou volume au m³) réservée dès l'acceptation, rendue par expire() ou cancelBid.
+        if (com.yadony.api.matching.TripCapacity.reserve(announcement, bid)) {
             announcementRepository.save(announcement);
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -562,6 +563,9 @@ public class MobileMoneyBidPaymentService {
         // confirmEscrow après le point irréversible.
         AnnouncementEntity announcement = announcementRepository.findById(bid.getAnnouncementId())
                 .orElseThrow(() -> new IllegalStateException("Annonce introuvable : " + bid.getAnnouncementId()));
+        // Le colis passe à ACCEPTED ici, pas à l'acceptation du voyageur (AWAITING_PAYMENT) : la règle de
+        // versement se fige à cet instant, transporteur relu en base. Ne lève jamais (argent déjà encaissé).
+        payoutTriggerPolicy.freeze(bid, announcement);
         bid.setStatus(BidStatus.ACCEPTED);
         bid.setAwaitingPaymentExpiresAt(null);
         if (bid.getQrToken() == null) bid.setQrToken(UUID.randomUUID().toString());
@@ -572,7 +576,8 @@ public class MobileMoneyBidPaymentService {
 
         audit.log("PAYMENT", paymentId, "MM_ESCROW", bid.getSenderId(),
                 Map.of("bidId", bid.getId().toString(), "operationId", operationId.toString(),
-                        "amount", payment.getAmount().toPlainString(), "currency", payment.getCurrency()));
+                        "amount", payment.getAmount().toPlainString(), "currency", payment.getCurrency(),
+                        "payoutTrigger", bid.getPayoutTrigger().name()));
         events.publishEvent(new MobileMoneyPaymentConfirmedEvent(
                 bid.getId(), bid.getSenderId(), announcement.getTravelerId(), payment.getAmount(), payment.getCurrency()));
         log.info("Séquestre mobile money : paiement {} ESCROW, bid {} ACCEPTED", paymentId, bid.getId());
@@ -769,9 +774,9 @@ public class MobileMoneyBidPaymentService {
      * sait rien du paiement réel.
      *
      * <p>Restitution de capacité : inverse exact de la réservation faite par {@link #acceptBid}
-     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même méthode
-     * d'entité ({@code AnnouncementEntity#releaseCapacity}, condition COMBINÉE portée une seule
-     * fois) : un bid sans poids ne rend jamais une annonce complète, et si elle l'est, c'est un
+     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même règle
+     * ({@code TripCapacity#release} : {@code AnnouncementEntity#releaseCapacity} au kilo, condition
+     * COMBINÉE portée une seule fois ; volume pour un bateau au m³) : un bid sans poids ne rend jamais une annonce complète, et si elle l'est, c'est un
      * autre bid qui l'a remplie — la rebasculer {@code ACTIVE} sans avoir rendu le moindre kilo
      * ferait réapparaître en recherche un trajet réellement encore à zéro kilo disponible.
      */
@@ -816,7 +821,7 @@ public class MobileMoneyBidPaymentService {
         }
 
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId()).orElse(null);
-        if (announcement != null && announcement.releaseCapacity(bid.getWeightKg())) {
+        if (com.yadony.api.matching.TripCapacity.release(announcement, bid)) {
             announcementRepository.save(announcement);
         }
         bid.setStatus(BidStatus.CANCELLED);
@@ -856,7 +861,8 @@ public class MobileMoneyBidPaymentService {
         return new MobileMoneyPaymentStatusResponse(bid.getId(), bid.getStatus().name(),
                 payment.map(p -> p.getStatus().name()).orElse(null), bid.getAwaitingPaymentExpiresAt(),
                 payment.map(PaymentEntity::getAmount).orElse(null),
-                payment.map(PaymentEntity::getCurrency).orElse(announcement != null ? announcement.getCurrency() : null), view);
+                payment.map(PaymentEntity::getCurrency).orElse(announcement != null ? announcement.getCurrency() : null), view,
+                bid.isPayoutTriggerFrozen() ? bid.getPayoutTrigger().name() : null);
     }
 
     private static YadonyBusinessException notFound(String code, String messageKey) {

@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +45,7 @@ public class ThreadAcceptedBidListener {
     private final BidPhotoService bidPhotoService;
     private final PromoService promoService;
     private final CommissionVoucherService voucherService;
+    private final PayoutTriggerPolicy payoutTriggerPolicy;
 
     public ThreadAcceptedBidListener(BidRepository bidRepository,
                                      AnnouncementRepository announcementRepository,
@@ -54,7 +54,8 @@ public class ThreadAcceptedBidListener {
                                      StorageService storageService,
                                      BidPhotoService bidPhotoService,
                                      PromoService promoService,
-                                     CommissionVoucherService voucherService) {
+                                     CommissionVoucherService voucherService,
+                                     PayoutTriggerPolicy payoutTriggerPolicy) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.auditService = auditService;
@@ -63,6 +64,7 @@ public class ThreadAcceptedBidListener {
         this.bidPhotoService = bidPhotoService;
         this.promoService = promoService;
         this.voucherService = voucherService;
+        this.payoutTriggerPolicy = payoutTriggerPolicy;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -87,6 +89,14 @@ public class ThreadAcceptedBidListener {
         bid.setItemSize(e.itemSize());
         bid.setDescription(e.description() != null ? e.description() : e.contentCategory());
         bid.setContentCategory(e.contentCategory());
+        // Le trajet est lu avant le passage à ACCEPTED : la règle de versement se fige sur lui, à
+        // cet instant (le colis d'un fil naît accepté). Trajet introuvable : à la livraison.
+        // Verrou du trajet AVANT sa lecture (UPDATE neutre, en conflit avec le findByIdForUpdate des autres
+        // acceptations) : la place prise plus bas (kilos ou dernier m³) ne peut pas être écrasée par une
+        // acceptation simultanée sur le même trajet.
+        announcementRepository.lockForUpdate(e.travelerAnnouncementId());
+        java.util.Optional<AnnouncementEntity> trip = announcementRepository.findById(e.travelerAnnouncementId());
+        payoutTriggerPolicy.freeze(bid, trip.orElse(null));
         bid.setStatus(BidStatus.ACCEPTED);
         bid.setPaymentIntentId(e.paymentIntentId());
         bid.setLinkedNegotiationThreadId(e.threadId());
@@ -140,7 +150,7 @@ public class ThreadAcceptedBidListener {
             }
         }
 
-        announcementRepository.findById(e.travelerAnnouncementId()).ifPresent(announcement -> {
+        trip.ifPresent(announcement -> {
             // Même règle que BidService/BidNegotiationService : le bid hérite
             // toujours la devise de l'annonce (trajet), jamais celle de la
             // demande/du thread — cf. spec 2026-08-20-devise-par-annonce.
@@ -148,25 +158,32 @@ public class ThreadAcceptedBidListener {
             // le défaut Java de BidEntity.currency ("EUR").
             bid.setCurrency(announcement.getCurrency());
             bid.applyHandoverFrom(announcement);
-            boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
+            // Trajet vendu au m³ : le colis porte le volume de la demande (calculé par le serveur à sa
+            // publication), qui prend la place. Hors m³ : aucun volume (celui, facultatif, d'un bateau au kilo
+            // n'est jamais décrémenté, cf. TripCapacity).
+            if (announcement.isPricedPerM3()) {
+                bid.setVolumeM3(e.volumeM3());
+            }
             // Dedicated trips (linkedPackageRequestId != null) intentionally start with
-            // availableKg = 0 — the full capacity is reserved for the sender. Subtracting
-            // weightKg would produce a negative value and violate the DB constraint.
-            // Surplus capacity is managed separately via openSurplus().
+            // all their capacity reserved for the sender (availableKg = 0 ; au m³, tout le volume
+            // de la demande, jamais vendu à un tiers). Subtracting weightKg would produce a negative
+            // value and violate the DB constraint. Surplus capacity is managed separately via openSurplus().
             boolean isDedicatedTrip = announcement.getLinkedPackageRequestId() != null;
-            if (!isKgFree && !isDedicatedTrip && bid.getWeightKg() != null && announcement.getAvailableKg() != null) {
-                announcement.setAvailableKg(announcement.getAvailableKg().subtract(bid.getWeightKg()));
-                // Lot B (correction 2) : ne jamais réécrire le statut d'une annonce retirée par
-                // la modération — le paiement de l'expéditeur est déjà acquis à ce stade (AFTER_COMMIT),
-                // on matérialise donc quand même le bid, mais sans ressusciter le trajet en FULL.
-                if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0
-                        && announcement.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN) {
-                    announcement.setStatus(AnnouncementStatus.FULL);
-                }
+            // Lot B (correction 2) : jamais de bascule FULL sur une annonce retirée par la modération (ni,
+            // règle de TripCapacity, sur un trajet annulé ou livré) — le paiement de l'expéditeur est déjà
+            // acquis à ce stade (AFTER_COMMIT), on matérialise donc quand même le bid, sans ressusciter le trajet.
+            if (!isDedicatedTrip) {
+                TripCapacity.reserve(announcement, bid);
             }
             announcementRepository.save(announcement);
         });
         BidEntity saved = bidRepository.save(bid);
+        // Fil déjà payé dont le trajet au m³ s'est rempli pendant le paiement : le colis ne prend que ce qui restait
+        // (TripCapacity), l'équipe est alertée pour arbitrer avec le transporteur.
+        if (TripCapacity.overbooked(saved)) {
+            eventPublisher.publishEvent(new com.yadony.api.matching.events.TripVolumeOverbookedEvent(
+                    saved.getAnnouncementId(), saved.getId(), saved.getVolumeM3(), saved.getCapacityReservedVolumeM3()));
+        }
 
         // Rachat (redeem) du code promo appliqué au paiement, si présent — le bid_id vient
         // d'être créé, c'est le SEUL point où promo_redemptions (UNIQUE(promo_code_id, bid_id))
@@ -207,7 +224,8 @@ public class ThreadAcceptedBidListener {
             Map.of(
                 "threadId", e.threadId().toString(),
                 "packageRequestId", e.packageRequestId().toString(),
-                "agreedPrice", e.agreedPriceEur().toString()
+                "agreedPrice", e.agreedPriceEur().toString(),
+                "payoutTrigger", saved.getPayoutTrigger().name()
             ));
         log.info("Bid {} created from thread {} (announcement {})",
             saved.getId(), e.threadId(), e.travelerAnnouncementId());

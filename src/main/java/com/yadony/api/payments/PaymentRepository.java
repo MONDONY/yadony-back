@@ -171,6 +171,76 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
                                                 @Param("windowStart") LocalDateTime windowStart,
                                                 org.springframework.data.domain.Pageable page);
 
+    /**
+     * Séquestres (tous rails) d'un colis payé au dépôt ({@code DEPOSIT}), hors espèces, déposé (étape DEPART) avant
+     * {@code depositedBefore} et toujours pas versé : le versement au dépôt n'est pas parti (garde, compte Connect,
+     * échec technique). Par {@code bid_id} ou par le colis rattaché au fil de négociation. Pour l'alerte J+48 du
+     * dépôt ({@link EscrowScheduler}) : rien n'est versé automatiquement. Seulement un colis toujours dans le parcours
+     * (déposé, en route, arrivé, livré) : jamais un colis annulé, refusé ou absent, que l'alerte inviterait à payer.
+     */
+    @Query("""
+            SELECT p FROM PaymentEntity p, com.yadony.api.matching.BidEntity b
+             WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND b.payoutTrigger = com.yadony.api.matching.PayoutTrigger.DEPOSIT
+               AND (b.paymentMethod IS NULL OR b.paymentMethod <> com.yadony.api.payments.cash.PaymentMethod.CASH)
+               AND b.status IN (com.yadony.api.matching.BidStatus.HANDED_OVER,
+                                com.yadony.api.matching.BidStatus.IN_TRANSIT,
+                                com.yadony.api.matching.BidStatus.ARRIVED,
+                                com.yadony.api.matching.BidStatus.COMPLETED)
+               AND ((p.bidId IS NOT NULL AND b.id = p.bidId)
+                    OR (p.bidId IS NULL AND p.negotiationThreadId IS NOT NULL
+                        AND b.linkedNegotiationThreadId = p.negotiationThreadId))
+               AND EXISTS (SELECT 1 FROM com.yadony.api.tracking.TrackingEventEntity t
+                            WHERE t.bidId = b.id
+                              AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART
+                              AND t.scannedAt < :depositedBefore)
+            """)
+    List<PaymentEntity> findDepositedUnreleasedEscrows(@Param("depositedBefore") LocalDateTime depositedBefore);
+
+    /** Colis à reprendre par {@link DepositReleaseRetryJob} : colis, paiement et heure du dépôt (scan DEPART). */
+    interface DepositRetryCandidate {
+        UUID getBidId();
+
+        UUID getPaymentId();
+
+        LocalDateTime getDepositedAt();
+    }
+
+    /**
+     * Versements au dépôt à reprendre ({@link DepositReleaseRetryJob}) : colis payé au dépôt ({@code DEPOSIT}), hors
+     * espèces, toujours déposé (HANDED_OVER, IN_TRANSIT, ARRIVED, COMPLETED : jamais un colis annulé, refusé ou absent),
+     * DEPART enregistré entre {@code depositedAfter} et {@code depositedBefore}, paiement plateforme (carte ou mobile
+     * money) toujours en séquestre et sans garde posée (litige bancaire, remboursement partiel, retenue : leur garde a
+     * déjà alerté, un nouvel essai n'y changerait rien). Par {@code bid_id} ou par le colis rattaché au fil. Plus
+     * anciens dépôts d'abord.
+     */
+    @Query("""
+            SELECT b.id AS bidId, p.id AS paymentId, t.scannedAt AS depositedAt
+              FROM PaymentEntity p, com.yadony.api.matching.BidEntity b, com.yadony.api.tracking.TrackingEventEntity t
+             WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND p.disputed = false
+               AND (p.refundedAmount IS NULL OR p.refundedAmount = 0)
+               AND p.payoutHeldAt IS NULL
+               AND b.payoutTrigger = com.yadony.api.matching.PayoutTrigger.DEPOSIT
+               AND (b.paymentMethod IS NULL OR b.paymentMethod <> com.yadony.api.payments.cash.PaymentMethod.CASH)
+               AND b.status IN (com.yadony.api.matching.BidStatus.HANDED_OVER,
+                                com.yadony.api.matching.BidStatus.IN_TRANSIT,
+                                com.yadony.api.matching.BidStatus.ARRIVED,
+                                com.yadony.api.matching.BidStatus.COMPLETED)
+               AND ((p.bidId IS NOT NULL AND b.id = p.bidId)
+                    OR (p.bidId IS NULL AND p.negotiationThreadId IS NOT NULL
+                        AND b.linkedNegotiationThreadId = p.negotiationThreadId))
+               AND t.bidId = b.id
+               AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART
+               AND t.scannedAt < :depositedBefore
+               AND t.scannedAt > :depositedAfter
+             ORDER BY t.scannedAt, b.id
+            """)
+    List<DepositRetryCandidate> findDepositReleaseRetryCandidates(
+            @Param("depositedBefore") LocalDateTime depositedBefore,
+            @Param("depositedAfter") LocalDateTime depositedAfter,
+            org.springframework.data.domain.Pageable page);
+
     List<PaymentEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(LocalDateTime from, LocalDateTime to);
 
     /** Story 9.8 — GDPR: check active escrow payments for given bid IDs. */

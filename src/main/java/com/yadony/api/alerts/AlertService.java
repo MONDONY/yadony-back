@@ -363,9 +363,8 @@ public class AlertService {
                 // ouvert avec de la place (FLUTTER-EW). Couvre correspondances,
                 // compteurs et digest, qui passent tous par ici.
                 .filter(AnnouncementEntity::isPubliclyVisible)
-                // Jusqu'à la réservation au m³ (BB2), un trajet au m³ ne se réserve pas (422) : on ne le propose pas,
-                // comme le matching (même prédicat).
-                .filter(a -> !a.isPricedPerM3())
+                // Un trajet bateau vendu au m³ se réserve au volume : il est proposé comme un trajet au kilo. Une alerte
+                // ne décrit aucun colis (ni poids ni volume) : rien à comparer, comme pour les kilos d'un trajet.
                 // Même règle que la recherche (handoverDeadlineNotPassed) : un trajet dont la
                 // date limite de dépôt est passée n'accepte plus de demande (PROD-1R).
                 .filter(a -> !a.isHandoverDeadlinePassed(clock.instant()))
@@ -434,7 +433,8 @@ public class AlertService {
 
     /**
      * Un tiers peut-il être prévenu de ce trajet (alerte, suggestion selon ses recherches) ?
-     * Publié (ACTIVE ou FULL), visible du public, pas vendu au m³ (avant BB2) et dépôt encore ouvert.
+     * Publié (ACTIVE ou FULL), visible du public et dépôt encore ouvert ; un trajet vendu au m³ y est soumis aux
+     * mêmes règles qu'un trajet au kilo (il se réserve au volume).
      */
     public boolean isTripOpenToThirdParties(AnnouncementEntity trip) {
         if (trip.getStatus() != AnnouncementStatus.ACTIVE
@@ -443,11 +443,6 @@ public class AlertService {
         }
         // Trajet dédié non ouvert au public : aucune alerte de tiers (FLUTTER-EW).
         if (!trip.isPubliclyVisible()) {
-            return false;
-        }
-        // Jusqu'à la réservation au m³ (BB2), un trajet vendu au m³ ne se réserve pas (422) : aucune alerte ni
-        // suggestion, comme le matching. Lever ici, avec les autres chemins, quand BB2 ouvre la réservation.
-        if (trip.isPricedPerM3()) {
             return false;
         }
         // Dépôt déjà clos : personne ne pourrait y faire de demande (PROD-1R).

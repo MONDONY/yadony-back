@@ -37,7 +37,9 @@ import java.util.UUID;
  * au versement suivant réussi). La livraison ne repasse pas : sans cette alerte, rien ne retentait.
  *
  * <p>« Livré » = colis {@code COMPLETED} (code de retrait validé, {@code DeliveryConfirmedEvent}
- * publié), retrouvé par {@code bid_id} ou, pour une négociation, par le colis rattaché au fil.
+ * publié), retrouvé par {@code bid_id} ou, pour une négociation, par le colis rattaché au fil. Un colis payé au
+ * dépôt ({@code DEPOSIT}) est « versable » dès son dépôt ({@link DepositRelease#depositedAndPayable}) : c'est le
+ * rattrapage d'un dépôt dont le versement n'a pas pu partir (séquestre tardif, compte Connect prêt plus tard).
  */
 @Component
 public class DeliveredEscrowReleaser {
@@ -182,10 +184,20 @@ public class DeliveredEscrowReleaser {
         return String.valueOf(cause.getMessage());
     }
 
-    /** Colis livré du paiement (par {@code bid_id}, sinon par le fil de négociation), s'il existe. */
+    /**
+     * Colis « versable » du paiement (par {@code bid_id}, sinon par le fil de négociation), s'il existe : colis payé à
+     * la livraison et livré ({@code COMPLETED}), ou colis payé au dépôt et déposé ({@link DepositRelease}). Le
+     * versement qui suit garde la source de l'appelant ({@code late-escrow}, {@code auto-heal-release}…).
+     */
     public Optional<DeliveredBid> deliveredBidOf(PaymentEntity payment) {
         BidEntity bid = bidOf(payment);
-        if (bid == null || bid.getStatus() != BidStatus.COMPLETED) {
+        if (bid == null) {
+            return Optional.empty();
+        }
+        boolean payable = DepositRelease.paidAtDeposit(bid)
+                ? DepositRelease.depositedAndPayable(bid, bidRepository)
+                : bid.getStatus() == BidStatus.COMPLETED;
+        if (!payable) {
             return Optional.empty();
         }
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())

@@ -40,8 +40,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Trajet dédié d'une négociation en bateau (lot 3, BA7) sur PostgreSQL embarqué, toutes migrations
  * Flyway et {@code ddl-auto=validate} : la forme « au m³ » du trajet (volume de la demande, prix au m³
  * dérivé, aucun kilo) respecte les CHECK de V382, la garde « transporteur vérifié » (BA2) s'applique, la
- * fourchette d'arrivée est obligatoire, et, tant que la réservation au volume n'existe pas (BB2), l'offre
- * est refusée en 422 avant toute écriture : ni trajet ni fil orphelin.
+ * fourchette d'arrivée est obligatoire, et l'offre (début de fil comme trajet d'un fil en attente) écrit
+ * le trajet dédié au m³ et le fil, la réservation au volume existant (BB2) : le prix du fil reste le prix
+ * total du colis, le prix au m³ n'en est que la dérivée.
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
@@ -180,14 +181,51 @@ class NegotiationDedicatedTripBoatIT {
     }
 
     @Test
-    @DisplayName("start : trajet dédié bateau refusé en 422 boat-volume-booking-unavailable jusqu'à BB2, ni trajet ni fil écrits")
-    void start_dedicatedBoat_refusedUntilVolumeBooking_writesNothing() {
+    @DisplayName("start : trajet dédié bateau au m³ écrit avec le fil, prix du fil = prix total convenu")
+    void start_dedicatedBoat_writesPerM3TripAndThread() {
         PackageRequestEntity request = boatRequest("0.800");
 
-        assertThatThrownBy(() -> start(request.getId(), boatTrip(DEP.plusDays(30))))
+        NegotiationThreadResponse thread = start(request.getId(), boatTrip(DEP.plusDays(30)));
+
+        assertThat(dedicatedTrips(request.getId())).isEqualTo(1);
+        assertThat(threads(request.getId())).isEqualTo(1);
+        Map<String, Object> trip = jdbc.queryForMap("""
+                SELECT available_kg, volume_capacity_m3, available_volume_m3, price_per_m3
+                FROM announcements WHERE linked_package_request_id = ?
+                """, request.getId());
+        assertThat(trip.get("available_kg")).isNull();
+        assertThat((BigDecimal) trip.get("volume_capacity_m3")).isEqualByComparingTo("0.800");
+        assertThat((BigDecimal) trip.get("available_volume_m3")).isEqualByComparingTo("0.800");
+        assertThat((BigDecimal) trip.get("price_per_m3")).isEqualByComparingTo("625.00");
+        assertThat(jdbc.queryForObject("SELECT current_price_eur FROM negotiation_threads WHERE id = ?",
+                BigDecimal.class, thread.id())).isEqualByComparingTo("500");
+    }
+
+    @Test
+    @DisplayName("start sans kilos sur une demande bateau : le fil reprend le poids de la demande, volume servi à l'app")
+    void start_dedicatedBoat_withoutKilos_usesRequestWeight() {
+        PackageRequestEntity request = boatRequest("0.800");
+
+        NegotiationThreadResponse thread = negotiationService.start(travelerId, new NegotiationStartRequest(
+                request.getId(), new BigDecimal("500"), DEP, null, null, null, true, boatTrip(DEP.plusDays(30))));
+
+        assertThat(jdbc.queryForObject("SELECT traveler_available_kg FROM negotiation_threads WHERE id = ?",
+                BigDecimal.class, thread.id())).isEqualByComparingTo("40");
+        assertThat(thread.volumeM3()).isEqualByComparingTo("0.800");
+        assertThat(thread.transportMode()).isEqualTo("BOAT");
+    }
+
+    @Test
+    @DisplayName("start : 1 litre à 100 000 € → prix au m³ dérivé hors NUMERIC(10,2), 422 volume-price-too-high, rien d'écrit")
+    void start_dedicatedBoat_derivedPricePerM3TooHigh_422() {
+        PackageRequestEntity request = boatRequest("0.001");
+
+        assertThatThrownBy(() -> negotiationService.start(travelerId, new NegotiationStartRequest(
+                request.getId(), new BigDecimal("100000"), DEP, new BigDecimal("40"), null, null, true,
+                boatTrip(DEP.plusDays(30)))))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
+                    assertThat(ex.getErrorCode()).isEqualTo("volume-price-too-high");
                 });
 
         assertThat(dedicatedTrips(request.getId())).isZero();
@@ -238,8 +276,8 @@ class NegotiationDedicatedTripBoatIT {
     }
 
     @Test
-    @DisplayName("createDedicatedTrip : trajet dédié bateau refusé en 422 boat-volume-booking-unavailable, fil AWAITING_TRIP inchangé, aucun trajet écrit")
-    void createDedicatedTrip_boat_refusedUntilVolumeBooking_threadUntouched() {
+    @DisplayName("createDedicatedTrip : fil AWAITING_TRIP bateau → trajet dédié au m³ écrit et lié, fil en attente de paiement")
+    void createDedicatedTrip_boat_linksPerM3Trip() {
         PackageRequestEntity request = boatRequest("0.800");
         com.yadony.api.requests.entity.NegotiationThreadEntity thread =
                 new com.yadony.api.requests.entity.NegotiationThreadEntity();
@@ -253,18 +291,15 @@ class NegotiationDedicatedTripBoatIT {
         thread.setLastActivityAt(java.time.LocalDateTime.now());
         UUID threadId = threadRepo.saveAndFlush(thread).getId();
 
-        assertThatThrownBy(() -> negotiationService.createDedicatedTrip(
-                travelerId, threadId, boatTrip(DEP.plusDays(30))))
-                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
-                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
-                });
+        negotiationService.createDedicatedTrip(travelerId, threadId, boatTrip(DEP.plusDays(30)));
 
-        assertThat(dedicatedTrips(request.getId())).isZero();
+        assertThat(dedicatedTrips(request.getId())).isEqualTo(1);
         Map<String, Object> row = jdbc.queryForMap(
                 "SELECT status, traveler_announcement_id FROM negotiation_threads WHERE id = ?", threadId);
-        assertThat(row.get("status")).isEqualTo("AWAITING_TRIP");
-        assertThat(row.get("traveler_announcement_id")).isNull();
+        assertThat(row.get("status")).isEqualTo("AWAITING_PAYMENT");
+        assertThat(row.get("traveler_announcement_id")).isNotNull();
+        assertThat((BigDecimal) jdbc.queryForObject("SELECT price_per_m3 FROM announcements WHERE id = ?",
+                BigDecimal.class, row.get("traveler_announcement_id"))).isEqualByComparingTo("625.00");
     }
 
     @Test

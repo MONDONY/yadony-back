@@ -16,4 +16,4 @@ Weight and budget depend on the mode. By road and by boat (when they are offered
 The parcel size (S to XL) is optional: it rules out travelers whose max size is smaller.
 When boat is offered, give the parcel's dimensions (length, width, height in cm, 400 at most each): Yadony works out the volume in m³, which is required to publish the request (a draft can do without). For "Any", the dimensions are optional, but all three if you give any.
 When boat is offered, a boat trip announces its arrival as a date range and its price per m³; if the traveler announces a delay, you are notified.
-A traveler carries the parcel, card payment is secured and released on confirmed delivery, and tracking is done by QR from handover to reception.
+A traveler carries the parcel, card payment is secured and released on confirmed delivery (except a boat parcel accepted by a verified carrier: it is paid when the parcel is dropped off, see transport modes), and tracking is done by QR from handover to reception.
