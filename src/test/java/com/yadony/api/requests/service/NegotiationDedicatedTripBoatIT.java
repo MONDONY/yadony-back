@@ -57,6 +57,8 @@ class NegotiationDedicatedTripBoatIT {
     @Autowired AnnouncementRepository announcementRepo;
     @Autowired PlatformSettingsService platformSettings;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.yadony.api.requests.repository.NegotiationThreadRepository threadRepo;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     private UUID senderId;
     private UUID travelerId;
@@ -233,5 +235,60 @@ class NegotiationDedicatedTripBoatIT {
                         ex -> assertThat(ex.getErrorCode()).isEqualTo("boat-dimensions-required"));
 
         assertThat(dedicatedTrips(request.getId())).isZero();
+    }
+
+    @Test
+    @DisplayName("createDedicatedTrip : trajet dédié bateau refusé en 422 boat-volume-booking-unavailable, fil AWAITING_TRIP inchangé, aucun trajet écrit")
+    void createDedicatedTrip_boat_refusedUntilVolumeBooking_threadUntouched() {
+        PackageRequestEntity request = boatRequest("0.800");
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
+                new com.yadony.api.requests.entity.NegotiationThreadEntity();
+        thread.setPackageRequestId(request.getId());
+        thread.setTravelerId(travelerId);
+        thread.setTravelerTravelDate(DEP);
+        thread.setTravelerAvailableKg(new BigDecimal("40"));
+        thread.setStatus(com.yadony.api.requests.entity.NegotiationThreadStatus.AWAITING_TRIP);
+        thread.setCurrentPriceEur(new BigDecimal("500"));
+        thread.setRoundsCount((short) 1);
+        thread.setLastActivityAt(java.time.LocalDateTime.now());
+        UUID threadId = threadRepo.saveAndFlush(thread).getId();
+
+        assertThatThrownBy(() -> negotiationService.createDedicatedTrip(
+                travelerId, threadId, boatTrip(DEP.plusDays(30))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
+                });
+
+        assertThat(dedicatedTrips(request.getId())).isZero();
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT status, traveler_announcement_id FROM negotiation_threads WHERE id = ?", threadId);
+        assertThat(row.get("status")).isEqualTo("AWAITING_TRIP");
+        assertThat(row.get("traveler_announcement_id")).isNull();
+    }
+
+    @Test
+    @DisplayName("le fil sans mode sérialise la clé transportMode à null avec l'ObjectMapper du contexte (NON_NULL global)")
+    void threadResponse_nullMode_keyPresentWithSpringObjectMapper() throws Exception {
+        PackageRequestEntity request = boatRequest("0.800");
+        request.setTransportMode(null);
+        com.yadony.api.requests.entity.NegotiationThreadEntity thread =
+                new com.yadony.api.requests.entity.NegotiationThreadEntity();
+        thread.setPackageRequestId(request.getId());
+        thread.setTravelerId(travelerId);
+        thread.setTravelerTravelDate(DEP);
+        thread.setTravelerAvailableKg(new BigDecimal("40"));
+        thread.setStatus(com.yadony.api.requests.entity.NegotiationThreadStatus.OPEN);
+        thread.setCurrentPriceEur(new BigDecimal("500"));
+        thread.setRoundsCount((short) 1);
+        thread.setLastActivityAt(java.time.LocalDateTime.now());
+
+        NegotiationThreadResponse response = negotiationService.toResponse(
+                thread, List.of(), null, userRepository.findById(travelerId).orElseThrow(), request,
+                travelerId, "Expéditeur", null);
+
+        com.fasterxml.jackson.databind.JsonNode node = objectMapper.valueToTree(response);
+        assertThat(node.has("transportMode")).isTrue();
+        assertThat(node.get("transportMode").isNull()).isTrue();
     }
 }

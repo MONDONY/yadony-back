@@ -456,7 +456,12 @@ public class NegotiationService {
         String senderName = userRepository.findById(request.getSenderId())
             .map(this::buildDisplayName)
             .orElse(UserEntity.UNKNOWN_DISPLAY_NAME);
-        return toResponse(thread, responses, null, traveler, request, callerId, senderName, null);
+        // Le trajet lié porte le mode (et le résumé) quand la demande est « peu importe » :
+        // sans lui, le fil perdrait son icône après une contre-offre.
+        com.yadony.api.matching.AnnouncementEntity linkedAnn = thread.getTravelerAnnouncementId() != null
+            ? announcementRepo.findById(thread.getTravelerAnnouncementId()).orElse(null)
+            : null;
+        return toResponse(thread, responses, null, traveler, request, callerId, senderName, linkedAnn);
     }
 
     @Transactional

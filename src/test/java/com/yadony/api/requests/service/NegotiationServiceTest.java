@@ -1297,6 +1297,35 @@ class NegotiationServiceTest {
         }
 
         @Test
+        @DisplayName("counter_anyRequest_exposesOfferMode : demande « peu importe », la contre-offre garde le mode et le résumé du trajet lié")
+        void counter_anyRequest_exposesOfferMode() {
+            UUID tripId = UUID.randomUUID();
+            thread.setTravelerAnnouncementId(tripId);
+            request.setTransportMode(null);
+            com.yadony.api.matching.AnnouncementEntity trip = new com.yadony.api.matching.AnnouncementEntity();
+            trip.setDepartureCity("Marseille");
+            trip.setArrivalCity("Dakar");
+            trip.setAvailableKg(new BigDecimal("5"));
+            trip.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+            when(announcementRepo.findById(tripId)).thenReturn(java.util.Optional.of(trip));
+            when(config.maxNegotiationRounds()).thenReturn(5);
+            when(threadRepo.findById(THREAD_ID)).thenReturn(java.util.Optional.of(thread));
+            lenient().when(requestRepo.findById(REQUEST_ID)).thenReturn(java.util.Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(java.util.Optional.of(traveler));
+            var lastMsg = NegotiationMessageEntity.create(THREAD_ID, TRAVELER_ID,
+                NegotiationMessageKind.PROPOSAL, new BigDecimal("30"), null);
+            when(messageRepo.findByThreadIdOrderByCreatedAtAsc(THREAD_ID))
+                .thenReturn(java.util.List.of(lastMsg));
+
+            var response = service.counter(SENDER_ID, THREAD_ID,
+                new com.yadony.api.requests.dto.NegotiationCounterRequest(new BigDecimal("25"), "Mon contre"));
+
+            assertThat(response.transportMode()).isEqualTo("BOAT");
+            assertThat(response.linkedTrip()).isNotNull();
+            assertThat(response.linkedTrip().arrivalCity()).isEqualTo("Dakar");
+        }
+
+        @Test
         @DisplayName("35 000 F CFA sur un fil XOF → accepté, aucun plafond métier")
         void counter_largeXofAmount_hasNoBusinessCeiling() {
             // Recette TestFlight du 2026-09-19 : le plafond de 500 € mis à l'échelle
