@@ -129,4 +129,28 @@ class PaymentServiceTestFactory {
                 PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
         );
     }
+
+    /** Variante pour les tests qui touchent la demande : dépôts de demandes et de trajets, éditeur d'événements. */
+    static PaymentService bare(PaymentRepository paymentRepository,
+                               BidRepository bidRepository,
+                               AnnouncementRepository announcementRepository,
+                               ApplicationEventPublisher eventPublisher,
+                               AuditService auditService) {
+        return new PaymentService(
+                mock(UserRepository.class),
+                bidRepository,
+                mock(BidGridItemRepository.class),
+                announcementRepository,
+                paymentRepository,
+                auditService,
+                eventPublisher,
+                defaultConnectProperties(),
+                new ObjectMapper(),
+                mock(AdminAlertService.class),
+                stubbedResolver(),
+                mock(PromoService.class),
+                new StripeGatewayImpl(null),
+                PaymentServiceTestFactory.stubbedContacts(), mock(com.yadony.api.voucher.CommissionVoucherService.class), mock(com.yadony.api.payments.ConnectAccountProvisioner.class)
+        );
+    }
 }
