@@ -33,5 +33,22 @@ public record AdminPackageRequestListItemResponse(
         BigDecimal targetPrice,
         LocalDateTime createdAt,
         long reportCount,
-        long openNegotiationCount
-) {}
+        long openNegotiationCount,
+        /** Dimensions du colis en cm (route et bateau) ; null quand l'expéditeur ne les a pas saisies. */
+        Integer lengthCm,
+        Integer widthCm,
+        Integer heightCm,
+        /** Volume en m³ (bateau) ; null hors bateau. */
+        BigDecimal volumeM3
+) {
+
+    /** Ancienne forme (avant les dimensions) : dimensions et volume à null. */
+    public AdminPackageRequestListItemResponse(UUID id, UUID senderId, String senderName, String departureCity,
+                                               String arrivalCity, LocalDate desiredDate, BigDecimal weightKg,
+                                               ParcelSize parcelSize, TransportMode transportMode,
+                                               PackageRequestStatus status, String currency, BigDecimal targetPrice,
+                                               LocalDateTime createdAt, long reportCount, long openNegotiationCount) {
+        this(id, senderId, senderName, departureCity, arrivalCity, desiredDate, weightKg, parcelSize, transportMode,
+                status, currency, targetPrice, createdAt, reportCount, openNegotiationCount, null, null, null, null);
+    }
+}

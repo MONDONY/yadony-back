@@ -606,7 +606,10 @@ public class AlertService {
                 MatchingTextUtil.truncate(p.getDescription(), 100),
                 0,
                 p.getCreatedAt() != null ? p.getCreatedAt().toString() : null,
-                p.getCurrency());
+                p.getCurrency(),
+                // Alerte de corridor : aucun trajet, donc aucun mode de trajet ; le mode de la demande, lui, est servi.
+                null,
+                p.getTransportMode() != null ? p.getTransportMode().name() : null);
     }
 
     private CorridorAlertResponse toResponse(CorridorAlertEntity e, long matchCount, long newMatchCount) {

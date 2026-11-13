@@ -3,11 +3,11 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.dto.AdminReportContextResponse.Fact;
 import com.yadony.api.admin.dto.AdminReportContextResponse.TargetPreview;
 import com.yadony.api.common.MatchingTextUtil;
+import com.yadony.api.common.TransportModeLabels;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
-import com.yadony.api.matching.TransportMode;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.repository.PackageRequestRepository;
 import com.yadony.api.signalements.ReportEntity;
@@ -60,8 +60,14 @@ public class ReportTargetPreviewBuilder {
         List<Fact> facts = new ArrayList<>();
         facts.add(new Fact("Trajet", MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity())));
         add(facts, "Départ", date(a.getDepartureDate()));
-        add(facts, "Transport", transport(a.getTransportMode()));
-        add(facts, "Prix", a.getPricePerKg() != null ? money(a.getPricePerKg(), a.getCurrency()) + " / kg" : null);
+        add(facts, "Transport", TransportModeLabels.transportLabel(a.getTransportMode()));
+        // Bateau au m³ : prix et place en m³, jamais une ligne de kilos vide.
+        if (a.isPricedPerM3()) {
+            add(facts, "Prix", money(a.getPricePerM3(), a.getCurrency()) + " / m³");
+            add(facts, "Volume", volumes(a.getAvailableVolumeM3(), a.getVolumeCapacityM3()));
+        } else {
+            add(facts, "Prix", a.getPricePerKg() != null ? money(a.getPricePerKg(), a.getCurrency()) + " / kg" : null);
+        }
         add(facts, "Poids", weights(a.getAvailableKg(), a.getTotalKg()));
         return new TargetPreview("ANNOUNCEMENT", name(a.getStatus()), facts, shorten(a.getDescription()));
     }
@@ -74,7 +80,10 @@ public class ReportTargetPreviewBuilder {
             when += " (± " + p.getDateToleranceDays() + " j)";
         }
         add(facts, "Date souhaitée", when);
+        add(facts, "Transport", TransportModeLabels.transportLabel(p.getTransportMode()));
         add(facts, "Poids", p.getWeightKg() != null ? kg(p.getWeightKg()) : null);
+        add(facts, "Volume", p.getVolumeM3() != null ? m3(p.getVolumeM3()) : null);
+        add(facts, "Dimensions", dimensions(p.getLengthCm(), p.getWidthCm(), p.getHeightCm()));
         add(facts, "Contenu", p.getContentCategory());
         if (p.getTargetPriceEur() != null) {
             add(facts, "Budget", money(p.getTargetPriceEur(), p.getCurrency()) + (p.isNegotiable() ? " (négociable)" : ""));
@@ -90,6 +99,7 @@ public class ReportTargetPreviewBuilder {
                 MatchingTextUtil.corridorLabel(a.getDepartureCity(), a.getArrivalCity())
                         + (a.getDepartureDate() != null ? " · " + DATE.format(a.getDepartureDate()) : ""))));
         add(facts, "Poids", b.getWeightKg() != null ? kg(b.getWeightKg()) : null);
+        add(facts, "Volume", b.getVolumeM3() != null ? m3(b.getVolumeM3()) : null);
         add(facts, "Contenu", b.getContentCategory());
         if (b.getNegotiatedNetEur() != null) {
             add(facts, "Montant négocié", money(b.getNegotiatedNetEur(), "EUR"));
@@ -111,18 +121,6 @@ public class ReportTargetPreviewBuilder {
         return d != null ? DATE.format(d) : null;
     }
 
-    private static String transport(TransportMode mode) {
-        if (mode == null) return null;
-        return switch (mode) {
-            case PLANE -> "Avion";
-            case CAR -> "Voiture";
-            case TRAIN -> "Train";
-            case BUS -> "Bus";
-            case BOAT -> "Bateau";
-            case OTHER -> "Autre";
-        };
-    }
-
     /** Nombre sans zéros inutiles, virgule française : « 8,5 ». */
     static String number(BigDecimal n) {
         String plain = n.stripTrailingZeros().toPlainString();
@@ -131,6 +129,10 @@ public class ReportTargetPreviewBuilder {
 
     static String kg(BigDecimal n) {
         return number(n) + " kg";
+    }
+
+    static String m3(BigDecimal n) {
+        return number(n) + " m³";
     }
 
     static String money(BigDecimal amount, String currency) {
@@ -143,6 +145,20 @@ public class ReportTargetPreviewBuilder {
         }
         if (available != null) return number(available) + " kg disponibles";
         return total != null ? kg(total) : null;
+    }
+
+    private static String volumes(BigDecimal available, BigDecimal total) {
+        if (available != null && total != null) {
+            return number(available) + " m³ disponibles sur " + number(total) + " m³";
+        }
+        if (available != null) return number(available) + " m³ disponibles";
+        return total != null ? m3(total) : null;
+    }
+
+    /** « 60 × 40 × 40 cm » quand les trois mesures sont connues, sinon rien. */
+    private static String dimensions(Integer length, Integer width, Integer height) {
+        if (length == null || width == null || height == null) return null;
+        return length + " × " + width + " × " + height + " cm";
     }
 
     /** Texte libre : coupé proprement, jamais plus de {@value #DESCRIPTION_MAX} caractères. */

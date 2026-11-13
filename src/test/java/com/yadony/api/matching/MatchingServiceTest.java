@@ -219,6 +219,23 @@ class MatchingServiceTest {
         }
 
         @Test
+        void toDto_carriesTripAndRequestModes() throws Exception {
+            PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
+            request.setTransportMode(null);
+            activeAnnouncement.setTransportMode(TransportMode.CAR);
+            when(announcementRepository.findActiveByTravelerId(TRAVELER_ID))
+                    .thenReturn(List.of(activeAnnouncement));
+            when(packageRequestRepository.findOpenByCorridor("Paris", "Dakar"))
+                    .thenReturn(List.of(request));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+
+            MatchingRequestDto dto = matchingService.findMatchingRequests(TRAVELER_ID).get(0);
+
+            assertThat(dto.tripTransportMode()).isEqualTo("CAR");
+            assertThat(dto.requestTransportMode()).isNull();
+        }
+
+        @Test
         void findMatchingRequests_includesRoadRequestOnInterchangeableRoadMode() throws Exception {
             PackageRequestEntity request = buildRequest(5, LocalDate.now().plusDays(10), 3);
             request.setTransportMode(TransportMode.CAR);
@@ -230,7 +247,11 @@ class MatchingServiceTest {
                     .thenReturn(List.of(request));
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
 
-            assertThat(matchingService.findMatchingRequests(TRAVELER_ID)).hasSize(1);
+            List<MatchingRequestDto> results = matchingService.findMatchingRequests(TRAVELER_ID);
+            assertThat(results).hasSize(1);
+            // Le trajet garde son propre mode (BUS), la demande le sien (CAR) : dony-pro affiche les deux.
+            assertThat(results.get(0).tripTransportMode()).isEqualTo("BUS");
+            assertThat(results.get(0).requestTransportMode()).isEqualTo("CAR");
         }
 
         @Test

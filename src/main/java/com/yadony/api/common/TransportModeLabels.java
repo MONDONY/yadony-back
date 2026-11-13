@@ -27,6 +27,23 @@ public final class TransportModeLabels {
         };
     }
 
+    /**
+     * Libellé du groupe de mode, celui des listes et des filtres : « Avion », « Bateau », « Route » (voiture
+     * et bus ensemble, comme dans la recherche), « Train », « Autre » ; {@code null} si le mode est inconnu.
+     */
+    public static String transportLabel(TransportMode mode) {
+        if (mode == null) {
+            return null;
+        }
+        return switch (mode) {
+            case PLANE -> "Avion";
+            case BOAT -> "Bateau";
+            case CAR, BUS -> "Route";
+            case TRAIN -> "Train";
+            case OTHER -> "Autre";
+        };
+    }
+
     /** Symbole du mode ; {@code null} pour « autre » et pour un mode inconnu (repli neutre, sans symbole). */
     public static String symbol(TransportMode mode) {
         if (mode == null) {

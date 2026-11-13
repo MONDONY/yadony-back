@@ -378,9 +378,7 @@ public class AnnouncementSpecification {
      * voiture et bus sont interchangeables (« Route »), les autres modes exigent l'égalité stricte.
      */
     public static Specification<AnnouncementEntity> hasTransportMode(TransportMode mode) {
-        List<TransportMode> accepted = Arrays.stream(TransportMode.values())
-                .filter(offered -> TransportMode.accepts(mode, offered))
-                .toList();
+        List<TransportMode> accepted = TransportMode.acceptedBy(mode);
         return (root, query, cb) -> accepted.size() == 1
                 ? cb.equal(root.get("transportMode"), accepted.get(0))
                 : root.get("transportMode").in(accepted);

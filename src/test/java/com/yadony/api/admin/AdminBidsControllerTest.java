@@ -191,7 +191,7 @@ class AdminBidsControllerTest {
         ann.setStatus(AnnouncementStatus.ACTIVE);
         when(announcementRepo.findById(id)).thenReturn(Optional.of(ann));
 
-        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, null, 0, 20).getBody();
+        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, null, null, 0, 20).getBody();
 
         assertThat(page.getContent()).hasSize(1);
         assertThat(page.getTotalElements()).isEqualTo(1);
@@ -202,7 +202,7 @@ class AdminBidsControllerTest {
         UUID id = UUID.randomUUID();
         when(announcementRepo.findById(id)).thenReturn(Optional.empty());
 
-        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, null, 0, 20).getBody();
+        Page<AdminAnnouncementListItemResponse> page = controller().listAnnouncements(id, null, null, 0, 20).getBody();
 
         assertThat(page.getContent()).isEmpty();
         assertThat(page.getTotalElements()).isZero();
@@ -218,7 +218,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
         // Annonce sans voyageur : aucun nom à charger, loadUserNames court-circuite.
 
-        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(null, null, 0, 20);
+        ResponseEntity<Page<AdminAnnouncementListItemResponse>> resp = controller().listAnnouncements(null, null, null, 0, 20);
 
         assertThat(resp.getBody().getContent().get(0).currency()).isEqualTo("XOF");
     }
@@ -228,7 +228,7 @@ class AdminBidsControllerTest {
         Page<AnnouncementEntity> page = new PageImpl<>(List.of());
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(page);
         // empty page → travelerIds empty → loadUserNames short-circuits, no repo call needed
-        ResponseEntity<?> resp = controller().listAnnouncements(null, null, 0, 20);
+        ResponseEntity<?> resp = controller().listAnnouncements(null, null, null, 0, 20);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(resp.getBody()).isNotNull();
     }
@@ -249,7 +249,7 @@ class AdminBidsControllerTest {
         when(announcementRepo.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(leg1, single)));
         when(announcementRepo.findByTripGroupIdIn(java.util.Set.of(group))).thenReturn(List.of(leg1, leg2));
 
-        var content = controller().listAnnouncements(null, null, 0, 20).getBody().getContent();
+        var content = controller().listAnnouncements(null, null, null, 0, 20).getBody().getContent();
 
         assertThat(content.get(0).tripGroupId()).isEqualTo(group);
         assertThat(content.get(0).tripLegIndex()).isEqualTo(1);
@@ -257,5 +257,82 @@ class AdminBidsControllerTest {
         assertThat(content.get(1).tripGroupId()).isNull();
         assertThat(content.get(1).tripLegIndex()).isNull();
         assertThat(content.get(1).tripLegCount()).isNull();
+    }
+
+    // ---- mode de transport (lot 4) ----
+
+    private static org.springframework.data.jpa.domain.Specification<AnnouncementEntity> anySpec() {
+        return org.mockito.ArgumentMatchers.any();
+    }
+
+    @Test
+    void listAnnouncements_exposesTransportModeAndBoatVolumes() {
+        AnnouncementEntity boat = new AnnouncementEntity();
+        boat.setStatus(AnnouncementStatus.ACTIVE);
+        boat.setTransportMode(TransportMode.BOAT);
+        boat.setVolumeCapacityM3(new java.math.BigDecimal("10.000"));
+        boat.setAvailableVolumeM3(new java.math.BigDecimal("4.500"));
+        boat.setPricePerM3(new java.math.BigDecimal("150.00"));
+        boat.setArrivalDateMax(java.time.LocalDate.of(2027, 1, 20));
+        when(announcementRepo.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(boat)));
+
+        AdminAnnouncementListItemResponse row = controller().listAnnouncements(null, null, null, 0, 20)
+                .getBody().getContent().get(0);
+
+        assertThat(row.transportMode()).isEqualTo("BOAT");
+        assertThat(row.volumeCapacityM3()).isEqualByComparingTo("10");
+        assertThat(row.availableVolumeM3()).isEqualByComparingTo("4.5");
+        assertThat(row.pricePerM3()).isEqualByComparingTo("150");
+        assertThat(row.arrivalDateMax()).isEqualTo(java.time.LocalDate.of(2027, 1, 20));
+        assertThat(row.availableKg()).isNull();
+        assertThat(row.pricePerKg()).isNull();
+    }
+
+    @Test
+    void listAnnouncements_modeFilterWithoutQuery_usesTheModeSpecification() {
+        AnnouncementEntity car = new AnnouncementEntity();
+        car.setStatus(AnnouncementStatus.ACTIVE);
+        car.setTransportMode(TransportMode.CAR);
+        when(announcementRepo.findAll(anySpec(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(car)));
+
+        var content = controller().listAnnouncements(null, null, "CAR", 0, 20).getBody().getContent();
+
+        assertThat(content).extracting(AdminAnnouncementListItemResponse::transportMode).containsExactly("CAR");
+        org.mockito.Mockito.verify(announcementRepo, org.mockito.Mockito.never()).findAll(any(Pageable.class));
+    }
+
+    @Test
+    void listAnnouncements_roadFilterWithQuery_searchesCarAndBus() {
+        when(announcementRepo.searchAdminByModes(eq("%dakar%"), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        controller().listAnnouncements(null, "Dakar", "car", 0, 20);
+
+        org.mockito.ArgumentCaptor<java.util.Collection<TransportMode>> modes =
+                org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        org.mockito.Mockito.verify(announcementRepo).searchAdminByModes(eq("%dakar%"), modes.capture(), any(Pageable.class));
+        assertThat(modes.getValue()).containsExactlyInAnyOrder(TransportMode.CAR, TransportMode.BUS);
+        org.mockito.Mockito.verify(announcementRepo, org.mockito.Mockito.never()).searchAdmin(any(), any());
+    }
+
+    @Test
+    void listAnnouncements_anyOrIdIgnoresTheModeFilter() {
+        when(announcementRepo.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+        controller().listAnnouncements(null, null, "ANY", 0, 20);
+        org.mockito.Mockito.verify(announcementRepo).findAll(any(Pageable.class));
+
+        UUID id = UUID.randomUUID();
+        when(announcementRepo.findById(id)).thenReturn(Optional.empty());
+        assertThat(controller().listAnnouncements(id, null, "BOAT", 0, 20).getBody().getContent()).isEmpty();
+        org.mockito.Mockito.verify(announcementRepo).findById(id);
+    }
+
+    @Test
+    void listAnnouncements_unknownMode_is422() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller().listAnnouncements(null, null, "ROCKET", 0, 20))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("invalid-transport-mode");
+                });
     }
 }

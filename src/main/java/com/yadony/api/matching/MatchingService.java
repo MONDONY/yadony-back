@@ -311,7 +311,9 @@ public class MatchingService {
                 messageExcerpt,
                 matchScore,
                 request.getCreatedAt().toString(),
-                request.getCurrency()
+                request.getCurrency(),
+                announcement.getTransportMode() != null ? announcement.getTransportMode().name() : null,
+                request.getTransportMode() != null ? request.getTransportMode().name() : null
         );
     }
 

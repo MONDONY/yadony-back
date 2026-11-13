@@ -77,4 +77,22 @@ class MatchingRequestsEndpointTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].contentType").value("Documents"));
     }
+
+    @Test
+    void findMatchingRequests_serializesNullRequestMode_andTripModeOfAM3Trip() throws Exception {
+        MatchingRequestDto dto = new MatchingRequestDto(
+                UUID.randomUUID().toString(), UUID.randomUUID().toString(), "Marseille → Dakar",
+                "2026-12-10", null, UUID.randomUUID().toString(), "Awa K", "AK", 4.5, 3,
+                3.0, "Documents", 8.0, null, "excerpt", 80, "2026-11-20T10:00:00", "EUR", "BOAT", null);
+        when(matchingService.findMatchingRequests(travelerId)).thenReturn(List.of(dto));
+
+        mockMvc.perform(get("/travelers/me/matching-requests").with(authentication(asTraveler())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].tripTransportMode").value("BOAT"))
+                // null = « peu importe » : la clé reste présente, même nulle.
+                .andExpect(jsonPath("$[0]", org.hamcrest.Matchers.hasKey("requestTransportMode")))
+                .andExpect(jsonPath("$[0].requestTransportMode").value(org.hamcrest.Matchers.nullValue()))
+                // Trajet au m³ : pas de kilos, la clé disparaît (comme avant).
+                .andExpect(jsonPath("$[0]", org.hamcrest.Matchers.not(org.hamcrest.Matchers.hasKey("tripAvailableKg"))));
+    }
 }

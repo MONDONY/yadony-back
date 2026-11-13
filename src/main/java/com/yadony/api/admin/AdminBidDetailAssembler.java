@@ -346,7 +346,8 @@ public class AdminBidDetailAssembler {
                 ann.getPricePerKg(),
                 ann.getTripGroupId(), ann.getTripLegIndex(),
                 bid.getHandoverDeadline() != null ? bid.getHandoverDeadline() : ann.getHandoverDeadline(),
-                others);
+                others,
+                ann.getVolumeCapacityM3(), ann.getAvailableVolumeM3(), ann.getPricePerM3());
     }
 
     private static AdminBidDetailResponse.Party party(UserEntity u, Map<String, FirebaseContactService.Contact> contacts,

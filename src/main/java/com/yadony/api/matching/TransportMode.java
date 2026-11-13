@@ -3,6 +3,8 @@ package com.yadony.api.matching;
 import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.http.HttpStatus;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 
 public enum TransportMode {
@@ -28,6 +30,14 @@ public enum TransportMode {
             return true;
         }
         return isRoad(requested) && isRoad(offered);
+    }
+
+    /**
+     * Modes qui servent {@code requested} selon {@link #accepts} : voiture et bus ensemble (« Route »), les
+     * autres modes seuls ; tous les modes quand {@code requested} est null (« peu importe »).
+     */
+    public static List<TransportMode> acceptedBy(TransportMode requested) {
+        return Arrays.stream(values()).filter(offered -> accepts(requested, offered)).toList();
     }
 
     /**

@@ -98,7 +98,8 @@ class ReportTargetPreviewBuilderTest {
 
     @Test
     void annonce_tousLesModesDeTransportEnFrancais() {
-        String[][] expected = {{"PLANE", "Avion"}, {"CAR", "Voiture"}, {"TRAIN", "Train"}, {"BUS", "Bus"},
+        // Voiture et bus forment un seul groupe « Route », comme dans la recherche et les filtres admin.
+        String[][] expected = {{"PLANE", "Avion"}, {"CAR", "Route"}, {"TRAIN", "Train"}, {"BUS", "Route"},
                 {"BOAT", "Bateau"}, {"OTHER", "Autre"}};
         for (String[] e : expected) {
             AnnouncementEntity a = announcement();
@@ -107,6 +108,99 @@ class ReportTargetPreviewBuilderTest {
             assertThat(fact(builder.build(report(ReportTargetType.ANNOUNCEMENT, targetId)), "Transport").value())
                     .isEqualTo(e[1]);
         }
+    }
+
+    @Test
+    void transport_carAndBusReadRoute() {
+        for (TransportMode mode : new TransportMode[] {TransportMode.CAR, TransportMode.BUS}) {
+            AnnouncementEntity a = announcement();
+            a.setTransportMode(mode);
+            when(announcementRepo.findById(targetId)).thenReturn(Optional.of(a));
+            assertThat(fact(builder.build(report(ReportTargetType.ANNOUNCEMENT, targetId)), "Transport").value())
+                    .isEqualTo("Route");
+        }
+    }
+
+    @Test
+    void annonce_bateauAuM3_prixEtVolumeEnM3_jamaisDeKilosVides() {
+        AnnouncementEntity a = announcement();
+        a.setTransportMode(TransportMode.BOAT);
+        a.setPricePerKg(null);
+        a.setAvailableKg(null);
+        a.setTotalKg(null);
+        a.setPricePerM3(new BigDecimal("150.00"));
+        a.setVolumeCapacityM3(new BigDecimal("10.000"));
+        a.setAvailableVolumeM3(new BigDecimal("2.500"));
+        when(announcementRepo.findById(targetId)).thenReturn(Optional.of(a));
+
+        TargetPreview p = builder.build(report(ReportTargetType.ANNOUNCEMENT, targetId));
+
+        assertThat(fact(p, "Transport").value()).isEqualTo("Bateau");
+        assertThat(fact(p, "Prix").value()).isEqualTo("150 EUR / m³");
+        assertThat(fact(p, "Volume").value()).isEqualTo("2,5 m³ disponibles sur 10 m³");
+        assertThat(fact(p, "Poids")).isNull();
+        assertThat(p.facts()).extracting(Fact::value).noneMatch(v -> v.contains("null"));
+    }
+
+    @Test
+    void annonce_bateauAuM3_volumeSeulementDisponibleOuSeulementTotal() {
+        AnnouncementEntity onlyAvailable = announcement();
+        onlyAvailable.setTransportMode(TransportMode.BOAT);
+        onlyAvailable.setPricePerM3(new BigDecimal("150"));
+        onlyAvailable.setAvailableVolumeM3(new BigDecimal("3"));
+        when(announcementRepo.findById(targetId)).thenReturn(Optional.of(onlyAvailable));
+        assertThat(fact(builder.build(report(ReportTargetType.ANNOUNCEMENT, targetId)), "Volume").value())
+                .isEqualTo("3 m³ disponibles");
+
+        AnnouncementEntity onlyTotal = announcement();
+        onlyTotal.setTransportMode(TransportMode.BOAT);
+        onlyTotal.setPricePerM3(new BigDecimal("150"));
+        onlyTotal.setVolumeCapacityM3(new BigDecimal("8"));
+        when(announcementRepo.findById(targetId)).thenReturn(Optional.of(onlyTotal));
+        assertThat(fact(builder.build(report(ReportTargetType.ANNOUNCEMENT, targetId)), "Volume").value())
+                .isEqualTo("8 m³");
+
+        AnnouncementEntity none = announcement();
+        none.setTransportMode(TransportMode.BOAT);
+        none.setPricePerM3(new BigDecimal("150"));
+        when(announcementRepo.findById(targetId)).thenReturn(Optional.of(none));
+        assertThat(fact(builder.build(report(ReportTargetType.ANNOUNCEMENT, targetId)), "Volume")).isNull();
+    }
+
+    @Test
+    void demandeDEnvoi_bateau_modeVolumeEtDimensions() {
+        PackageRequestEntity p = new PackageRequestEntity();
+        p.setDepartureCity("Marseille");
+        p.setArrivalCity("Dakar");
+        p.setTransportMode(TransportMode.BOAT);
+        p.setVolumeM3(new BigDecimal("0.096"));
+        p.setLengthCm(60);
+        p.setWidthCm(40);
+        p.setHeightCm(40);
+        when(packageRequestRepo.findById(targetId)).thenReturn(Optional.of(p));
+
+        TargetPreview preview = builder.build(report(ReportTargetType.PACKAGE_REQUEST, targetId));
+
+        assertThat(fact(preview, "Transport").value()).isEqualTo("Bateau");
+        assertThat(fact(preview, "Volume").value()).isEqualTo("0,096 m³");
+        assertThat(fact(preview, "Dimensions").value()).isEqualTo("60 × 40 × 40 cm");
+    }
+
+    @Test
+    void demandeDEnvoi_peuImporteEtDimensionsIncompletes_sansLigne() {
+        PackageRequestEntity p = new PackageRequestEntity();
+        p.setDepartureCity("Paris");
+        p.setArrivalCity("Dakar");
+        p.setTransportMode(null);
+        p.setLengthCm(60);
+        p.setWidthCm(40);
+        when(packageRequestRepo.findById(targetId)).thenReturn(Optional.of(p));
+
+        TargetPreview preview = builder.build(report(ReportTargetType.PACKAGE_REQUEST, targetId));
+
+        assertThat(fact(preview, "Transport")).isNull();
+        assertThat(fact(preview, "Dimensions")).isNull();
+        assertThat(fact(preview, "Volume")).isNull();
     }
 
     @Test
@@ -272,6 +366,18 @@ class ReportTargetPreviewBuilderTest {
 
         assertThat(builder.build(report(ReportTargetType.BID, targetId)).facts()).extracting(Fact::label).containsExactly("Poids");
         verifyNoInteractions(announcementRepo);
+    }
+
+    @Test
+    void offre_bateau_volumeEnM3() {
+        BidEntity b = new BidEntity();
+        b.setVolumeM3(new BigDecimal("1.200"));
+        when(bidRepo.findById(targetId)).thenReturn(Optional.of(b));
+
+        TargetPreview p = builder.build(report(ReportTargetType.BID, targetId));
+
+        assertThat(fact(p, "Volume").value()).isEqualTo("1,2 m³");
+        assertThat(fact(p, "Poids")).isNull();
     }
 
     // ---- sans aperçu ----

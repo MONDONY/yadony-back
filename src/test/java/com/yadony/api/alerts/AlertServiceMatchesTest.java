@@ -119,6 +119,26 @@ class AlertServiceMatchesTest {
         assertThat(matches.get(0).weightKg()).isEqualTo(3.0);
     }
 
+    /** Alerte de corridor : aucun trajet derrière, donc aucun mode de trajet ; le mode de la demande est servi. */
+    @Test
+    void alertMatchingDto_hasNoTripMode() {
+        PackageRequestEntity boat = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 10));
+        boat.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        PackageRequestEntity any = pkg("Documents", new BigDecimal("3.00"), LocalDate.of(2026, 7, 11));
+        any.setTransportMode(null);
+
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert(true)));
+        when(packageRequestRepository.findOpenByCorridor("Paris", "Bamako")).thenReturn(List.of(boat, any));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(senderWithId(boat.getSenderId()), senderWithId(any.getSenderId())));
+
+        List<MatchingRequestDto> matches = service.getMatches(uid, alertId);
+
+        assertThat(matches).extracting(MatchingRequestDto::tripTransportMode).containsOnlyNulls();
+        assertThat(matches).extracting(MatchingRequestDto::requestTransportMode)
+                .containsExactlyInAnyOrder("BOAT", null);
+    }
+
     /** « Date flexible » : une demande sans date remonte quelle que soit la fenêtre de l'alerte. */
     @Test
     void getMatches_flexibleDatePackage_matchesAnyWindow_withNullDate() {

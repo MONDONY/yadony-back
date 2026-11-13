@@ -14,6 +14,14 @@ class TransportModeTest {
     }
 
     @Test
+    void acceptedBy_groupsCarAndBus_otherModesAlone_nullMeansAll() {
+        assertThat(TransportMode.acceptedBy(TransportMode.CAR)).containsExactlyInAnyOrder(TransportMode.CAR, TransportMode.BUS);
+        assertThat(TransportMode.acceptedBy(TransportMode.BUS)).containsExactlyInAnyOrder(TransportMode.CAR, TransportMode.BUS);
+        assertThat(TransportMode.acceptedBy(TransportMode.BOAT)).containsExactly(TransportMode.BOAT);
+        assertThat(TransportMode.acceptedBy(null)).containsExactly(TransportMode.values());
+    }
+
+    @Test
     void car_acceptsBus() {
         assertThat(TransportMode.accepts(TransportMode.CAR, TransportMode.BUS)).isTrue();
     }

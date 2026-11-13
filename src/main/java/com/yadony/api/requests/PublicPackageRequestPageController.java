@@ -1,5 +1,6 @@
 package com.yadony.api.requests;
 
+import com.yadony.api.common.TransportModeLabels;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
@@ -118,6 +119,8 @@ public class PublicPackageRequestPageController {
         model.addAttribute("arrivalCity", packageRequest.getArrivalCity());
         model.addAttribute("desiredDate", desiredDate);
         model.addAttribute("dateTolerance", flexibleDate ? null : toleranceLabel(packageRequest));
+        // Ligne « Transport » seulement quand la demande fixe un mode (null = « peu importe », pas de ligne).
+        model.addAttribute("transportMode", TransportModeLabels.transportLabel(packageRequest.getTransportMode()));
         // Libellés Open Graph assemblés ici plutôt que dans le gabarit, même raison que
         // pour la page trajet : une expression conditionnelle multiligne portant une
         // apostrophe française n'est pas analysable par Thymeleaf dans un attribut meta.

@@ -57,8 +57,24 @@ public record AdminBidDetailResponse(
      */
     Incidents incidents,
     /** Alerte la plus urgente (DISPUTE_OPEN, NO_SHOW, PAYMENT_PENDING, LATE), la même règle que la liste. */
-    String alert
+    String alert,
+    /** Volume réservé en m³ (colis bateau) ; null hors bateau. */
+    BigDecimal volumeM3
 ) {
+
+    /** Ancienne forme (avant le bateau) : volume à null. */
+    public AdminBidDetailResponse(UUID id, String status, UUID announcementId, String senderName, String travelerName,
+                                  String corridor, BigDecimal weightKg, BigDecimal netEur, String paymentMethod,
+                                  LocalDateTime createdAt, String contentCategory, String recipientName,
+                                  String trackingNumber, BigDecimal commissionRate, String refusalReason,
+                                  String currency, String description, Trip trip, Party sender, Party traveler,
+                                  Recipient recipient, Money money, Links links, Boolean confirmationCodePresent,
+                                  List<String> photoUrls, Milestones milestones, Incidents incidents, String alert) {
+        this(id, status, announcementId, senderName, travelerName, corridor, weightKg, netEur, paymentMethod,
+                createdAt, contentCategory, recipientName, trackingNumber, commissionRate, refusalReason, currency,
+                description, trip, sender, traveler, recipient, money, links, confirmationCodePresent, photoUrls,
+                milestones, incidents, alert, null);
+    }
 
     /** Trajet : l'annonce du voyageur à laquelle le colis est rattaché. */
     public record Trip(
@@ -86,8 +102,29 @@ public record AdminBidDetailResponse(
         Integer tripLegIndex,
         LocalDateTime handoverDeadline,
         /** Autres colis (non supprimés) sur la même annonce. */
-        long otherBidsCount
-    ) {}
+        long otherBidsCount,
+        /** Volume total proposé en m³ (bateau) ; null hors bateau au m³. */
+        BigDecimal volumeCapacityM3,
+        /** Volume restant en m³ (bateau) ; null hors bateau au m³. */
+        BigDecimal availableVolumeM3,
+        /** Prix au m³ (bateau) ; null hors bateau au m³. */
+        BigDecimal pricePerM3
+    ) {
+
+        /** Ancienne forme (avant le bateau) : volumes et prix au m³ à null. */
+        public Trip(UUID announcementId, String status, String departureCity, String arrivalCity,
+                    String departureCountryCode, String arrivalCountryCode, LocalDate departureDate,
+                    LocalTime departureTime, OffsetDateTime departureAt, LocalDate arrivalDate, LocalTime arrivalTime,
+                    String timezone, String pickupAddressLabel, String deliveryAddressLabel, String transportMode,
+                    BigDecimal totalKg, BigDecimal availableKg, BigDecimal reservedKg, String capacityUnit,
+                    BigDecimal pricePerKg, UUID tripGroupId, Integer tripLegIndex, LocalDateTime handoverDeadline,
+                    long otherBidsCount) {
+            this(announcementId, status, departureCity, arrivalCity, departureCountryCode, arrivalCountryCode,
+                    departureDate, departureTime, departureAt, arrivalDate, arrivalTime, timezone, pickupAddressLabel,
+                    deliveryAddressLabel, transportMode, totalKg, availableKg, reservedKg, capacityUnit, pricePerKg,
+                    tripGroupId, tripLegIndex, handoverDeadline, otherBidsCount, null, null, null);
+        }
+    }
 
     /** Expéditeur ou voyageur. Les champs de versement ne concernent que le voyageur. */
     public record Party(

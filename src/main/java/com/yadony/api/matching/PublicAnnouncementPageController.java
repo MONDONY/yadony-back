@@ -206,6 +206,8 @@ public class PublicAnnouncementPageController {
         // Mode du trajet : libellé et symbole selon le mode, rien quand il est inconnu (jamais l'avion par défaut).
         model.addAttribute("modeLabel", TransportModeLabels.label(announcement.getTransportMode()));
         model.addAttribute("modeSymbol", TransportModeLabels.symbol(announcement.getTransportMode()));
+        // Ligne « Transport » : libellé du groupe (voiture et bus = « Route ») ; absente si le mode est inconnu.
+        model.addAttribute("transportMode", TransportModeLabels.transportLabel(announcement.getTransportMode()));
         model.addAttribute("arrivalRange", arrivalRangeLabel(announcement));
         // Le bateau n'est pas payé comme les autres modes : la phrase sur le versement au voyageur n'est pas la sienne.
         model.addAttribute("showEscrowNote", announcement.getTransportMode() != TransportMode.BOAT);
