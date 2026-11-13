@@ -722,6 +722,33 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void fichesBateau_ditentQuandIlEstPropose_etNeDisentPasQueLeVolumeSertAuPrixAvantBB2() {
+        // Fiches lues depuis le jar : une phrase sans condition décrirait un mode fermé après un déploiement.
+        assertThat(body("fr", "proposer-trajet")).contains("Quand il est proposé, le bateau");
+        assertThat(body("en", "proposer-trajet")).contains("When boat is offered, it is reserved");
+        assertThat(body("fr", "envoyer-colis")).contains("Quand le bateau est proposé");
+        assertThat(body("en", "envoyer-colis")).contains("When boat is offered");
+        assertThat(body("fr", "preparer-colis")).contains("Quand le bateau est proposé");
+        assertThat(body("en", "preparer-colis")).contains("When boat is offered");
+        for (String locale : List.of("fr", "en")) {
+            assertThat(body(locale, "envoyer-colis")).as(locale).doesNotContain("sert au prix")
+                    .doesNotContain("sets the price");
+            assertThat(body(locale, "preparer-colis")).as(locale).doesNotContain("sert au prix")
+                    .doesNotContain("sets the price");
+        }
+    }
+
+    @Test
+    void fichesBateau_disentQueModelesEtRecurrencesSontRefuses_etQueLeM3SeFixeAvecLeVolume() {
+        assertThat(body("fr", "modeles-trajet")).contains("bateau").contains("refusé");
+        assertThat(body("en", "modeles-trajet")).contains("boat").contains("refused");
+        assertThat(body("fr", "trajets-recurrents")).contains("bateau").contains("refusée");
+        assertThat(body("en", "trajets-recurrents")).contains("boat").contains("refused");
+        assertThat(body("fr", "kilos-prix")).contains("m³").contains("prix au m³").contains("« Kg libre » n'existe pas");
+        assertThat(body("en", "kilos-prix")).contains("m³").contains("price per m³").contains("\"Free kilos\" does not exist");
+    }
+
+    @Test
     void fiches_noEmDash() {
         assertThat(allBodies()).isNotEmpty().noneMatch(b -> b.contains("\u2014"));
     }

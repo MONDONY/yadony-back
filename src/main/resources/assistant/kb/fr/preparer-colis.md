@@ -8,8 +8,8 @@ routes:
 ---
 Emballez soigneusement le colis et décrivez précisément son contenu, avec son poids approximatif et au moins une photo (obligatoire à la demande) : elle protège les deux parties en cas de désaccord.
 Si le voyageur facture un objet à l'article (téléphone, ordinateur, valise…), choisissez cet article plutôt que de le déclarer au kilo : à la remise, le voyageur vérifie le colis et peut refuser un colis qui ne correspond pas à la déclaration ; vous êtes alors remboursé.
-Indiquez le vrai poids : par la route et par bateau, pas de plafond de 32 kg (jusqu'à 999 999 kg) ; en avion, 32 kg au plus. La taille (S sac, M carton, L valise ou chaise, XL meuble) est facultative. Si le voyageur fixe une taille ou un poids max par colis, un colis plus grand ou plus lourd est refusé à la demande.
-Pour le bateau, mesurez le colis emballé (longueur, largeur, hauteur en cm) : le volume en m³ en est déduit et sert au prix. La date d'arrivée d'un bateau est une fourchette qui peut glisser : un retard annoncé par le voyageur vous est notifié.
+Indiquez le vrai poids : par la route et par bateau (quand ils sont proposés), pas de plafond de 32 kg (jusqu'à 999 999 kg) ; en avion, 32 kg au plus. La taille (S sac, M carton, L valise ou chaise, XL meuble) est facultative. Si le voyageur fixe une taille ou un poids max par colis, un colis plus grand ou plus lourd est refusé à la demande.
+Quand le bateau est proposé, mesurez le colis emballé (longueur, largeur, hauteur en cm) : le volume en m³ en est déduit. La date d'arrivée d'un bateau est une fourchette qui peut glisser : un retard annoncé par le voyageur vous est notifié.
 Vérifiez que le contenu photographié correspond à la catégorie déclarée.
 Avant la remise, ouvrez votre envoi dans Activités › Mes colis pour afficher le QR du colis : le voyageur le lit à la remise, et vous pouvez aussi l'enregistrer, l'imprimer et le coller sur le colis.
 Soyez présent à la remise et indiquez le bon destinataire.
