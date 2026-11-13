@@ -27,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -231,6 +232,45 @@ public class ConversationService {
         }
 
         return saved;
+    }
+
+    /**
+     * Rattache la conversation de questions du couple (demandeur, annonce) à la demande qui vient
+     * d'être créée : elle devient la conversation de réservation du bid (même identifiant
+     * Firestore, historique conservé) et le plafond de messages est levé. Sans effet (faux) s'il
+     * n'y a pas de fil INQUIRY ouvert pour le couple, s'il est déjà promu, ou si le bid a déjà
+     * son propre fil. L'échec Firestore est journalisé : la base reste à jour, et la réparation
+     * {@link #ensureFirestoreDocument} réécrit des champs cohérents si le document manque.
+     *
+     * @return vrai si CET appel a promu le fil
+     */
+    @Transactional
+    public boolean promoteInquiryToBid(UUID askerId, UUID announcementId, UUID bidId) {
+        Optional<ConversationEntity> found =
+            conversationRepository.findByAskerAndAnnouncement(askerId, announcementId);
+        if (found.isEmpty() || !found.get().isInquiry()) {
+            return false;
+        }
+        if (conversationRepository.findByBidId(bidId).isPresent()) {
+            return false;
+        }
+        ConversationEntity conv = found.get();
+        conv.promoteToBid(bidId, LocalDateTime.now(ZoneOffset.UTC));
+        conversationRepository.save(conv);
+
+        auditService.log("conversation", conv.getId(), "INQUIRY_PROMOTED", askerId,
+            Map.of("bidId", bidId.toString(), "announcementId", announcementId.toString()));
+
+        try {
+            firestoreService.updateConversation(conv.getFirestoreConversationId(), Map.of(
+                "kind", ConversationKind.SENDER_TRAVELER.name(),
+                "quotaLifted", true,
+                "bidId", bidId.toString()));
+        } catch (Exception e) {
+            log.error("Firestore promotion update failed for conversation {} (bid {}): {}",
+                conv.getFirestoreConversationId(), bidId, e.getMessage());
+        }
+        return true;
     }
 
     private static YadonyBusinessException announcementNotFound() {

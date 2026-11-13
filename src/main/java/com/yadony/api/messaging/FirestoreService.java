@@ -310,6 +310,23 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Met à jour des champs du document parent {@code conversations/{conversationId}}
+     * (promotion d'une conversation de questions en conversation de réservation). Lève en cas
+     * d'échec : l'appelant décide s'il journalise ou propage, la base restant la source de vérité.
+     */
+    public void updateConversation(String conversationId, Map<String, Object> fields) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping updateConversation");
+            return;
+        }
+        try {
+            firestore.collection("conversations").document(conversationId).update(fields).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore updateConversation failed", e);
+        }
+    }
+
     public void clearConversationDeleted(String conversationId) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping clearConversationDeleted");

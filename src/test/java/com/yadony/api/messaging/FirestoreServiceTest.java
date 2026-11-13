@@ -98,6 +98,37 @@ class FirestoreServiceTest {
                 .hasMessageContaining("markReadOnly");
     }
 
+    @Test
+    void updateConversation_doesNotThrow_whenFirestoreIsNull() {
+        new FirestoreService(null).updateConversation("conv_x", Map.of("kind", "SENDER_TRAVELER"));
+    }
+
+    @Test
+    void updateConversation_updatesTheParentDocumentFields() {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference collection = mock(CollectionReference.class);
+        DocumentReference document = mock(DocumentReference.class);
+        when(firestore.collection("conversations")).thenReturn(collection);
+        when(collection.document("conv_up")).thenReturn(document);
+        Map<String, Object> fields = Map.of("kind", "SENDER_TRAVELER", "quotaLifted", true);
+        when(document.update(fields)).thenReturn(ApiFutures.immediateFuture(mock(WriteResult.class)));
+
+        new FirestoreService(firestore).updateConversation("conv_up", fields);
+
+        verify(document).update(fields);
+    }
+
+    @Test
+    void updateConversation_failure_isRaised() {
+        Firestore firestore = mock(Firestore.class);
+        when(firestore.collection("conversations")).thenThrow(new IllegalStateException("down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> new FirestoreService(firestore).updateConversation("conv_up", Map.of("a", 1)))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("updateConversation");
+    }
+
     // ── Lot B : coupure de messagerie — moderation/{firebaseUid} ────────────────
 
     @Test
