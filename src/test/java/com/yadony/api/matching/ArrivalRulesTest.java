@@ -4,7 +4,10 @@ import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import org.springframework.test.util.ReflectionTestUtils;
+
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -146,6 +149,60 @@ class ArrivalRulesTest {
         a.setArrivalDate(LocalDate.now(java.time.ZoneOffset.UTC).plusDays(5));
 
         assertThat(ArrivalRules.renewedPickupCodeExpiry(a)).isEqualTo(ArrivalRules.pickupCodeExpiry(a));
+    }
+
+    private static TripDelayEntity delayEndingOn(LocalDate max) {
+        TripDelayEntity d = new TripDelayEntity();
+        d.setNewArrivalDate(max.minusDays(2));
+        d.setNewArrivalDateMax(max);
+        return d;
+    }
+
+    @Test
+    @DisplayName("code régénéré après un retard hors bateau : calé sur la fin de fourchette du retard (M1)")
+    void renewedCode_afterNonBoatDelay_usesTheDelayedRangeEnd() {
+        LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
+        AnnouncementEntity a = new AnnouncementEntity();
+        ReflectionTestUtils.setField(a, "id", java.util.UUID.randomUUID());
+        a.setTransportMode(TransportMode.CAR);
+        a.setDepartureDate(today);
+        a.setArrivalDate(today.plusDays(3));
+        TripDelayRepository repository = org.mockito.Mockito.mock(TripDelayRepository.class);
+        org.mockito.Mockito.when(repository.findFirstByAnnouncementIdOrderByCreatedAtDesc(a.getId()))
+                .thenReturn(java.util.Optional.of(delayEndingOn(today.plusDays(10))));
+
+        // Sans le retard, l'expiration tombe vers J+6 ; avec lui, 72 h après le début de J+10.
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a)).isEqualTo(today.plusDays(6).atStartOfDay());
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a, repository)).isEqualTo(today.plusDays(13).atStartOfDay());
+    }
+
+    @Test
+    @DisplayName("code régénéré : sans dépôt, sans retard, bateau ou retard plus court, la règle de l'annonce prévaut")
+    void renewedCode_withoutUsableDelay_keepsTheAnnouncementRule() {
+        LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
+        AnnouncementEntity a = new AnnouncementEntity();
+        ReflectionTestUtils.setField(a, "id", java.util.UUID.randomUUID());
+        a.setTransportMode(TransportMode.CAR);
+        a.setDepartureDate(today);
+        a.setArrivalDate(today.plusDays(5));
+        TripDelayRepository repository = org.mockito.Mockito.mock(TripDelayRepository.class);
+        LocalDateTime planned = ArrivalRules.renewedPickupCodeExpiry(a);
+
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a, null)).isEqualTo(planned);
+        org.mockito.Mockito.when(repository.findFirstByAnnouncementIdOrderByCreatedAtDesc(a.getId()))
+                .thenReturn(java.util.Optional.empty());
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a, repository)).isEqualTo(planned);
+        // Un retard dont la fin précède l'arrivée de l'annonce ne la raccourcit jamais.
+        org.mockito.Mockito.when(repository.findFirstByAnnouncementIdOrderByCreatedAtDesc(a.getId()))
+                .thenReturn(java.util.Optional.of(delayEndingOn(today.plusDays(2))));
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a, repository)).isEqualTo(planned);
+        // Bateau : la fin vit sur l'annonce, le dépôt n'est pas lu.
+        a.setTransportMode(TransportMode.BOAT);
+        a.setArrivalDateMax(today.plusDays(9));
+        org.mockito.Mockito.clearInvocations(repository);
+        assertThat(ArrivalRules.renewedPickupCodeExpiry(a, repository))
+                .isEqualTo(ArrivalRules.renewedPickupCodeExpiry(a));
+        org.mockito.Mockito.verifyNoInteractions(repository);
     }
 
     @Test

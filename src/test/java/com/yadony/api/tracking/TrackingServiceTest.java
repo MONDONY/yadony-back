@@ -1466,6 +1466,31 @@ class TrackingServiceTest {
     }
 
     @Test
+    void refreshCode_afterANonBoatDelay_isCalledOnTheDelayedRangeEnd() {
+        // M1 : hors bateau l'annonce ne garde que le début de la fourchette ; la fin du retard annoncé cale le code.
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("111111");
+        AnnouncementEntity ann = buildAnnouncement();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        ann.setDepartureDate(today);
+        ann.setArrivalDate(today.plusDays(3));
+        com.yadony.api.matching.TripDelayRepository delays = mock(com.yadony.api.matching.TripDelayRepository.class);
+        com.yadony.api.matching.TripDelayEntity delay = new com.yadony.api.matching.TripDelayEntity();
+        delay.setNewArrivalDate(today.plusDays(8));
+        delay.setNewArrivalDateMax(today.plusDays(10));
+        when(delays.findFirstByAnnouncementIdOrderByCreatedAtDesc(annId)).thenReturn(Optional.of(delay));
+        service.setTripDelayRepository(delays);
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.expiresAt()).isEqualTo(today.plusDays(13).atStartOfDay());
+    }
+
+    @Test
     void confirmDelivery_refusalsAreKeptWhenTheTransactionEnds() throws NoSuchMethodException {
         // FLUTTER-BA : le compteur d'essais et l'effacement d'un code expiré sont écrits
         // juste avant l'erreur. Annulés avec la transaction, la limite de trois essais ne

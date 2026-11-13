@@ -142,6 +142,28 @@ public final class ArrivalRules {
         return renewedPickupCodeExpiry(latestArrivalDate(announcement), announcement.getArrivalTime());
     }
 
+    /**
+     * Même règle, avec la fin de fourchette d'un retard annoncé hors bateau : l'annonce n'y garde que le début
+     * ({@code chk_announcements_boat_columns}), la fin vit dans le dernier retard ({@link TripDelayEntity}). Sans
+     * elle, un code régénéré après un retard expirerait avant l'arrivée annoncée. Un bateau garde sa fin sur
+     * l'annonce, qui reste la référence ; un retard dont la fin précède l'arrivée de l'annonce ne la raccourcit
+     * jamais. Dépôt absent ou trajet sans retard : règle de {@link #renewedPickupCodeExpiry(AnnouncementEntity)}.
+     */
+    public static java.time.LocalDateTime renewedPickupCodeExpiry(AnnouncementEntity announcement,
+                                                                  TripDelayRepository tripDelayRepository) {
+        LocalDate arrivalDay = latestArrivalDate(announcement);
+        if (tripDelayRepository != null && announcement.getId() != null && announcement.getArrivalDateMax() == null) {
+            LocalDate delayedMax = tripDelayRepository
+                    .findFirstByAnnouncementIdOrderByCreatedAtDesc(announcement.getId())
+                    .map(TripDelayEntity::getNewArrivalDateMax)
+                    .orElse(null);
+            if (delayedMax != null && delayedMax.isAfter(arrivalDay)) {
+                arrivalDay = delayedMax;
+            }
+        }
+        return renewedPickupCodeExpiry(arrivalDay, announcement.getArrivalTime());
+    }
+
     /** Même règle sur un jour d'arrivée donné : l'expiration prévue, jamais avant maintenant + 24 h. */
     public static java.time.LocalDateTime renewedPickupCodeExpiry(LocalDate arrivalDay, LocalTime arrivalTime) {
         java.time.LocalDateTime planned = pickupCodeExpiry(arrivalDay, arrivalTime);

@@ -13,6 +13,7 @@ import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.PickupCodes;
+import com.yadony.api.matching.TripDelayRepository;
 import com.yadony.api.matching.RevokedTrackingTokenEntity;
 import com.yadony.api.matching.RevokedTrackingTokenRepository;
 import com.yadony.api.matching.dto.BidResponse;
@@ -63,6 +64,14 @@ public class RecipientChangeService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
+
+    /** Retards annoncés (fin de fourchette hors bateau, lue au renouvellement du code) ; absent hors Spring. */
+    private TripDelayRepository tripDelayRepository;
+
+    @Autowired
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
 
     @Autowired
     public RecipientChangeService(BidRepository bidRepository,
@@ -145,7 +154,7 @@ public class RecipientChangeService {
                     .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
             bid.setConfirmationCode(PickupCodes.newCode());
             bid.setConfirmationCodeAttempts(0);
-            bid.setConfirmationCodeExpiry(ArrivalRules.renewedPickupCodeExpiry(announcement));
+            bid.setConfirmationCodeExpiry(ArrivalRules.renewedPickupCodeExpiry(announcement, tripDelayRepository));
         }
         bid.setConfirmationCodePublicEnabled(false);
 

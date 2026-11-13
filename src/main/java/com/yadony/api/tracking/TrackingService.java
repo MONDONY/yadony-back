@@ -122,6 +122,14 @@ public class TrackingService {
         this.handoverBlockers = List.copyOf(handoverBlockers);
     }
 
+    /** Retards annoncés (fin de fourchette hors bateau, lue au renouvellement du code) ; absent hors Spring. */
+    private com.yadony.api.matching.TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTripDelayRepository(com.yadony.api.matching.TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     /** Mode recette (FLUTTER-FA) ; fermé tant que Spring ne l'a pas injecté. */
     private com.yadony.api.common.RecetteMode recetteMode = com.yadony.api.common.RecetteMode.disabled();
 
@@ -730,7 +738,7 @@ public class TrackingService {
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         String newCode = com.yadony.api.matching.PickupCodes.newCode();
-        LocalDateTime newExpiry = com.yadony.api.matching.ArrivalRules.renewedPickupCodeExpiry(announcement);
+        LocalDateTime newExpiry = com.yadony.api.matching.ArrivalRules.renewedPickupCodeExpiry(announcement, tripDelayRepository);
         bid.setConfirmationCode(newCode);
         bid.setConfirmationCodeAttempts(0);
         bid.setConfirmationCodeExpiry(newExpiry);
