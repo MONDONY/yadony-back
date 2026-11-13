@@ -60,8 +60,16 @@ public class TripRescheduleService {
         this.eventPublisher = eventPublisher;
     }
 
+    /** Retards annoncés (V382) : purgés au report ; aucun tant que Spring ne l'a pas injecté. */
+    private TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     @Transactional
-    @CacheEvict(value = "announcements-search", allEntries = true)
+    @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public TripRescheduleResponse reschedule(UUID announcementId, String firebaseUid, TripRescheduleRequest request) {
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
@@ -114,6 +122,7 @@ public class TripRescheduleService {
             announcement.setStatus(full ? AnnouncementStatus.FULL : AnnouncementStatus.ACTIVE);
         }
         announcementRepository.save(announcement);
+        clearAnnouncedDelays(announcement.getId());
 
         List<TripRescheduledEvent.Target> targets = applyToBids(announcement, reschedule.getId());
         int awaitingDecision = (int) targets.stream().filter(TripRescheduledEvent.Target::decisionRequired).count();
@@ -135,6 +144,20 @@ public class TripRescheduleService {
         return new TripRescheduleResponse(reschedule.getId(), announcement.getRescheduleCount(),
                 TripRescheduleRules.MAX_RESCHEDULES - announcement.getRescheduleCount(),
                 awaitingDecision, targets.size() - awaitingDecision);
+    }
+
+    /**
+     * Un report (le trajet repasse en vente, nouveau calendrier) rend caduques les retards annoncés avant :
+     * ils sont retirés de la lecture ({@code latestTripDelay} redevient nul), la ligne et l'audit restent.
+     */
+    private void clearAnnouncedDelays(UUID announcementId) {
+        if (tripDelayRepository == null) {
+            return;
+        }
+        for (TripDelayEntity delay : tripDelayRepository.findByAnnouncementId(announcementId)) {
+            delay.softDelete();
+            tripDelayRepository.save(delay);
+        }
     }
 
     private void assertReschedulable(AnnouncementEntity announcement) {

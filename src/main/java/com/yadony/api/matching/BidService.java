@@ -1550,10 +1550,19 @@ public class BidService {
         return prefetch;
     }
 
-    /** Dernier retard annoncé du trajet du colis, null sans retard. Une requête par liste via le prefetch. */
+    /** Colis auxquels le dernier retard du trajet est servi (ceux dont l'expéditeur a été prévenu). */
+    private static final java.util.Set<BidStatus> TRIP_DELAY_VISIBLE_STATUSES = java.util.EnumSet.of(
+            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+
+    /**
+     * Dernier retard annoncé du trajet du colis, null sans retard. Servi seulement aux colis que le retard
+     * concerne (remis, en transit, arrivés, livrés) : un colis en attente, refusé ou annulé n'a pas été
+     * prévenu et n'a pas à lire le message du voyageur. Une requête par liste via le prefetch.
+     */
     private com.yadony.api.matching.dto.TripDelayInfo latestTripDelay(AnnouncementEntity announcement,
+                                                                      BidEntity bid,
                                                                       BidResponsePrefetch prefetch) {
-        if (announcement == null) {
+        if (announcement == null || !TRIP_DELAY_VISIBLE_STATUSES.contains(bid.getStatus())) {
             return null;
         }
         return prefetch != null
@@ -1873,7 +1882,8 @@ public class BidService {
                 moneyBreakdown,
                 travelerTracking,
                 bid.getItemSize() != null ? bid.getItemSize().name() : null,
-                latestTripDelay(announcement, prefetch)
+                latestTripDelay(announcement, bid, prefetch),
+                announcement != null ? announcement.getArrivalDateMax() : null
         );
     }
 

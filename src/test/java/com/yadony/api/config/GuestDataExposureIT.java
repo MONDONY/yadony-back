@@ -15,6 +15,9 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.PricingMode;
 import com.yadony.api.matching.TransportMode;
+import com.yadony.api.matching.TripDelayEntity;
+import com.yadony.api.matching.TripDelayReason;
+import com.yadony.api.matching.TripDelayRepository;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
@@ -221,6 +224,11 @@ class GuestDataExposureIT {
             // invité (même masquage que pricePerKg, GuestSession.travelerNetOrNull). La clé est servie,
             // jamais la valeur : vérifié par unInviteNeRecoitJamaisLeNetAuM3.
             "arrivalDateMax", "volumeCapacityM3", "availableVolumeM3", "pricePerM3Display", "pricePerM3",
+            // Dernier retard annoncé (motif, dates, message libre du voyageur) : champ ajouté donc toujours
+            // sérialisé, mais à null pour tout lecteur autre que le voyageur propriétaire, invité compris
+            // (vérifié par unInviteNeRecoitJamaisLeRetardAnnonce). Les clés internes du retard (reason,
+            // announcedAt, message) ne sortent donc jamais vers un invité et ne sont pas listées ici.
+            "latestTripDelay",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
@@ -281,6 +289,7 @@ class GuestDataExposureIT {
     @Autowired private MockMvc mockMvc;
     @Autowired private UserRepository userRepository;
     @Autowired private AnnouncementRepository announcementRepository;
+    @Autowired private TripDelayRepository tripDelayRepository;
     @Autowired private AnnouncementPriceGridItemRepository gridItemRepository;
     @Autowired private PackageRequestRepository packageRequestRepository;
 
@@ -305,6 +314,7 @@ class GuestDataExposureIT {
     @BeforeEach
     void seed() {
         // Ordre impose par les dependances : les demandes et trajets referencent users(id).
+        tripDelayRepository.deleteAll();
         packageRequestRepository.deleteAll();
         gridItemRepository.deleteAll();
         announcementRepository.deleteAll();
@@ -651,6 +661,49 @@ class GuestDataExposureIT {
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
         assertThat(detailInscrit.path("pricePerM3").decimalValue())
                 .as("un inscrit voit le net au m³").isEqualByComparingTo(NET_PAR_M3);
+    }
+
+    /**
+     * Retard annoncé (lot 3) : {@code latestTripDelay} sur la fiche d'un trajet est servi au seul voyageur
+     * propriétaire. Un invité et un autre inscrit lisent la clé à null : le message libre du voyageur et ses
+     * dates de retard ne sortent pas de la fiche publique.
+     */
+    @Test
+    @DisplayName("fiche d'un trajet : le retard annoncé n'est servi qu'au voyageur propriétaire")
+    void unInviteNeRecoitJamaisLeRetardAnnonce() throws Exception {
+        UUID voyageurId = userRepository.findByFirebaseUid("uid-voyageur-exposition").orElseThrow().getId();
+        TripDelayEntity retard = new TripDelayEntity();
+        retard.setAnnouncementId(trajetId);
+        retard.setReason(TripDelayReason.TRANSPORT_DISRUPTION);
+        retard.setNewArrivalDate(LocalDate.now().plusDays(3));
+        retard.setNewArrivalDateMax(LocalDate.now().plusDays(6));
+        retard.setMessage("MESSAGE-LIBRE-DU-VOYAGEUR");
+        retard.setCreatedBy(voyageurId);
+        tripDelayRepository.save(retard);
+
+        JsonNode invite = lire(get("/announcements/" + trajetId), "retard-detail-invite");
+        auditer(invite, "GET /announcements/{id} (retard annoncé)");
+        assertThat(invite.has("latestTripDelay")).as("la clé est toujours servie").isTrue();
+        assertThat(invite.get("latestTripDelay").isNull()).as("null pour un invité").isTrue();
+        assertThat(invite.toString()).doesNotContain("MESSAGE-LIBRE-DU-VOYAGEUR");
+
+        var autreInscrit = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+        JsonNode inscrit = MAPPER.readTree(mockMvc.perform(get("/announcements/" + trajetId)
+                        .with(authentication(autreInscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(inscrit.get("latestTripDelay").isNull()).as("null pour un autre inscrit").isTrue();
+        assertThat(inscrit.toString()).doesNotContain("MESSAGE-LIBRE-DU-VOYAGEUR");
+
+        var proprietaire = new UsernamePasswordAuthenticationToken(
+                "uid-voyageur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
+        JsonNode pourLeProprietaire = MAPPER.readTree(mockMvc.perform(get("/announcements/" + trajetId)
+                        .with(authentication(proprietaire)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(pourLeProprietaire.path("latestTripDelay").path("message").asText())
+                .as("le propriétaire lit son retard").isEqualTo("MESSAGE-LIBRE-DU-VOYAGEUR");
+        assertThat(pourLeProprietaire.path("latestTripDelay").path("reason").asText())
+                .isEqualTo("TRANSPORT_DISRUPTION");
     }
 
     // ── Non-regression : rien ne change pour un compte inscrit ────────────────

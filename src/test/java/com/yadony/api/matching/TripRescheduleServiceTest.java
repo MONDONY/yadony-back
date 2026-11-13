@@ -94,6 +94,32 @@ class TripRescheduleServiceTest {
     }
 
     @Test
+    void reschedule_softDeletesTheAnnouncedDelays_soLatestTripDelayGoesStale() {
+        TripDelayRepository delayRepository = org.mockito.Mockito.mock(TripDelayRepository.class);
+        service.setTripDelayRepository(delayRepository);
+        TripDelayEntity d1 = new TripDelayEntity();
+        TripDelayEntity d2 = new TripDelayEntity();
+        when(delayRepository.findByAnnouncementId(announcementId)).thenReturn(List.of(d1, d2));
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(List.of());
+
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+
+        assertThat(d1.getDeletedAt()).isNotNull();
+        assertThat(d2.getDeletedAt()).isNotNull();
+        org.mockito.Mockito.verify(delayRepository).save(d1);
+        org.mockito.Mockito.verify(delayRepository).save(d2);
+    }
+
+    @Test
+    void reschedule_withoutDelayRepository_stillWorks() {
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(List.of());
+
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+
+        assertThat(announcement.getDepartureDate()).isEqualTo(newDate);
+    }
+
+    @Test
     void rescheduleResetsDepartedAt() {
         announcement.setDepartedAt(java.time.OffsetDateTime.now().minusHours(1));
         announcement.setDeparturePromptSentAt(java.time.OffsetDateTime.now().minusHours(1));

@@ -90,8 +90,19 @@ class TripDelayedConversationListenerTest {
     }
 
     @Test
+    void neutralReason_readsTheSameOnEveryMode_frAndEn() {
+        // Le motif neutre n'évoque ni port ni avion ni route : il se lit pareil sur tout trajet.
+        TripDelayedEvent e = new TripDelayedEvent(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "TRANSPORT_DISRUPTION", from, to, null, List.of());
+
+        assertThat(TripDelayedConversationListener.body(TestMessages.fr(), e)).contains("(transport perturbé)");
+        assertThat(TripDelayedConversationListener.body(TestMessages.en(), e)).contains("(transport disruption)");
+    }
+
+    @Test
     void everyReasonHasAWording_frAndEn() {
-        for (String reason : List.of("PORT_CONGESTION", "WEATHER", "EXTENDED_STOPOVER", "OTHER")) {
+        for (com.yadony.api.matching.TripDelayReason r : com.yadony.api.matching.TripDelayReason.values()) {
+            String reason = r.name();
             TripDelayedEvent e = new TripDelayedEvent(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
                     reason, from, to, null, List.of());
             assertThat(TripDelayedConversationListener.body(TestMessages.fr(), e)).doesNotContain("trip-delay.reason");

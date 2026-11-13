@@ -1643,6 +1643,8 @@ public class AnnouncementService {
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
             detail = detail.withParcelsSummary(parcelsSummary(announcement));
+            // Dernier retard annoncé, message libre compris : lu par le seul voyageur propriétaire.
+            detail = detail.withLatestTripDelay(TripDelays.latest(tripDelayRepository, id));
             // Même règle que la liste « Mes trajets » (TripPositionService.isWindowOpen), lue ici
             // pour un seul trajet : le booléen suffit, jamais de position.
             detail = detail.withTrackingActive(com.yadony.api.tracking.TripPositionService.isWindowOpen(

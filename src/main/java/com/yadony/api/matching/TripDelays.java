@@ -27,7 +27,8 @@ final class TripDelays {
                 .orElse(null);
     }
 
-    /** Dernier retard de chacun des trajets donnés ; un trajet sans retard est absent de la table. */
+    /** Dernier retard de chacun des trajets donnés (requête bornée à un retard par trajet) ; un trajet sans
+     * retard est absent de la table. */
     static Map<UUID, TripDelayInfo> latestByAnnouncement(TripDelayRepository repository,
                                                          Collection<UUID> announcementIds) {
         Map<UUID, TripDelayInfo> out = new HashMap<>();
@@ -37,7 +38,7 @@ final class TripDelays {
         List<UUID> distinct = announcementIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
         for (int from = 0; from < distinct.size(); from += BidResponsePrefetch.CHUNK_SIZE) {
             List<UUID> chunk = distinct.subList(from, Math.min(from + BidResponsePrefetch.CHUNK_SIZE, distinct.size()));
-            for (TripDelayEntity delay : repository.findByAnnouncementIdInNewestFirst(chunk)) {
+            for (TripDelayEntity delay : repository.findLatestByAnnouncementIdIn(chunk)) {
                 out.putIfAbsent(delay.getAnnouncementId(), TripDelayInfo.from(delay));
             }
         }

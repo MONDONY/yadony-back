@@ -269,7 +269,7 @@ class BoatSchemaIT {
     @DisplayName("un retard avec un motif connu est accepté, un motif inconnu refusé")
     void tripDelay_reasonCheck() throws Exception {
         UUID ann = insertAnnouncement("BOAT", 10, 40, 50, null, null, null);
-        for (String reason : new String[] {"PORT_CONGESTION", "WEATHER", "EXTENDED_STOPOVER", "OTHER"}) {
+        for (String reason : new String[] {"PORT_CONGESTION", "WEATHER", "EXTENDED_STOPOVER", "TRANSPORT_DISRUPTION", "OTHER"}) {
             insertDelay(ann, reason);
         }
         assertThatThrownBy(() -> insertDelay(ann, "FLIGHT_CANCELLED"))

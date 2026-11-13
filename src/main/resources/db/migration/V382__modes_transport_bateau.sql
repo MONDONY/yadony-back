@@ -116,7 +116,7 @@ CREATE TABLE trip_delays (
     updated_at                 TIMESTAMP NOT NULL,
     deleted_at                 TIMESTAMP,
     CONSTRAINT chk_trip_delays_reason
-        CHECK (reason IN ('PORT_CONGESTION', 'WEATHER', 'EXTENDED_STOPOVER', 'OTHER')),
+        CHECK (reason IN ('PORT_CONGESTION', 'WEATHER', 'EXTENDED_STOPOVER', 'TRANSPORT_DISRUPTION', 'OTHER')),
     CONSTRAINT chk_trip_delays_range
         CHECK (new_arrival_date_max >= new_arrival_date)
 );

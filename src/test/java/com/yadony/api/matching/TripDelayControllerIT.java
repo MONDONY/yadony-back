@@ -7,6 +7,7 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
+import com.yadony.api.matching.events.TripDelayedEvent;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -23,6 +24,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -49,6 +52,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @ActiveProfiles("e2e")
 @AutoConfigureMockMvc
+@RecordApplicationEvents
 @DisplayName("POST /announcements/{id}/delays")
 class TripDelayControllerIT {
 
@@ -62,6 +66,7 @@ class TripDelayControllerIT {
     @Autowired BidRepository bidRepository;
     @Autowired TripDelayRepository delayRepository;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ApplicationEvents events;
 
     private UserEntity traveler;
     private UserEntity sender;
@@ -163,9 +168,22 @@ class TripDelayControllerIT {
     }
 
     private static String body(LocalDate min, LocalDate max) {
+        return body("PORT_CONGESTION", min, max);
+    }
+
+    private static String body(String reason, LocalDate min, LocalDate max) {
         return """
-                {"reason":"PORT_CONGESTION","arrivalDate":"%s","arrivalDateMax":"%s","message":"Quai saturé"}
-                """.formatted(min, max);
+                {"reason":"%s","arrivalDate":"%s","arrivalDateMax":"%s","message":"Quai saturé"}
+                """.formatted(reason, min, max);
+    }
+
+    /** Trajet routier parti il y a deux jours (les dates de retard restent dans le futur proche). */
+    private AnnouncementEntity persistCar() {
+        AnnouncementEntity car = persistTrip(AnnouncementStatus.IN_PROGRESS, TransportMode.CAR);
+        LocalDate carDeparture = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(2);
+        car.setDepartureDate(carDeparture);
+        car.setArrivalDate(carDeparture.plusDays(1));
+        return announcementRepository.save(car);
     }
 
     private static String validBody() {
@@ -178,7 +196,9 @@ class TripDelayControllerIT {
         BidEntity handedOver = persistBid(trip, BidStatus.HANDED_OVER, "111111");
         BidEntity inTransit = persistBid(trip, BidStatus.IN_TRANSIT, "222222");
         BidEntity completed = persistBid(trip, BidStatus.COMPLETED, "333333");
+        BidEntity arrived = persistBid(trip, BidStatus.ARRIVED, "555555");
         BidEntity cancelled = persistBid(trip, BidStatus.CANCELLED, "444444");
+        BidEntity pending = persistBid(trip, BidStatus.PENDING, "666666");
         LocalDateTime untouched = completed.getConfirmationCodeExpiry();
 
         mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
@@ -198,7 +218,15 @@ class TripDelayControllerIT {
         assertThat(bidRepository.findById(handedOver.getId()).orElseThrow().getConfirmationCodeExpiry()).isEqualTo(expected);
         assertThat(bidRepository.findById(inTransit.getId()).orElseThrow().getConfirmationCodeExpiry()).isEqualTo(expected);
         assertThat(bidRepository.findById(completed.getId()).orElseThrow().getConfirmationCodeExpiry()).isEqualTo(untouched);
+        assertThat(bidRepository.findById(arrived.getId()).orElseThrow().getConfirmationCodeExpiry()).isEqualTo(expected);
         assertThat(bidRepository.findById(cancelled.getId()).orElseThrow().getConfirmationCodeExpiry()).isEqualTo(untouched);
+        assertThat(bidRepository.findById(pending.getId()).orElseThrow().getConfirmationCodeExpiry()).isEqualTo(untouched);
+
+        // Cibles de l'événement : exactement les colis en route, ni le livré, ni l'annulé, ni l'en attente.
+        List<TripDelayedEvent> published = events.stream(TripDelayedEvent.class).toList();
+        assertThat(published).hasSize(1);
+        assertThat(published.get(0).targets()).extracting(TripDelayedEvent.Target::bidId)
+                .containsExactlyInAnyOrder(handedOver.getId(), inTransit.getId(), arrived.getId());
 
         TripDelayEntity row = delayRepository.findFirstByAnnouncementIdOrderByCreatedAtDesc(trip.getId()).orElseThrow();
         assertThat(row.getPreviousArrivalDate()).isEqualTo(DEPARTURE.plusDays(20));
@@ -223,21 +251,112 @@ class TripDelayControllerIT {
     @Test
     @DisplayName("hors bateau : seule l'arrivée au plus tôt est écrite sur l'annonce, la ligne garde la fourchette")
     void announce_onACar_keepsArrivalDateMaxNull() throws Exception {
-        AnnouncementEntity car = persistTrip(AnnouncementStatus.IN_PROGRESS, TransportMode.CAR);
-        car.setArrivalDate(DEPARTURE.plusDays(1));
-        announcementRepository.save(car);
+        AnnouncementEntity car = persistCar();
+        LocalDate carDeparture = car.getDepartureDate();
+        BidEntity inTransit = persistBid(car, BidStatus.IN_TRANSIT, "777777");
 
         mockMvc.perform(post("/announcements/{id}/delays", car.getId()).with(authentication(asTraveler(traveler)))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body(DEPARTURE.plusDays(3), DEPARTURE.plusDays(6))))
+                        .content(body("TRANSPORT_DISRUPTION", carDeparture.plusDays(3), carDeparture.plusDays(12))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.arrivalDateMax").value(DEPARTURE.plusDays(6).toString()));
+                .andExpect(jsonPath("$.reason").value("TRANSPORT_DISRUPTION"))
+                .andExpect(jsonPath("$.arrivalDateMax").value(carDeparture.plusDays(12).toString()));
 
         AnnouncementEntity reloaded = announcementRepository.findById(car.getId()).orElseThrow();
-        assertThat(reloaded.getArrivalDate()).isEqualTo(DEPARTURE.plusDays(3));
+        assertThat(reloaded.getArrivalDate()).isEqualTo(carDeparture.plusDays(3));
         assertThat(reloaded.getArrivalDateMax()).isNull();
         assertThat(delayRepository.findFirstByAnnouncementIdOrderByCreatedAtDesc(car.getId()).orElseThrow()
-                .getNewArrivalDateMax()).isEqualTo(DEPARTURE.plusDays(6));
+                .getNewArrivalDateMax()).isEqualTo(carDeparture.plusDays(12));
+        // Le code de retrait est calé sur la FIN annoncée, pas sur le début que l'annonce garde seul.
+        assertThat(bidRepository.findById(inTransit.getId()).orElseThrow().getConfirmationCodeExpiry())
+                .isEqualTo(carDeparture.plusDays(12).atStartOfDay().plusDays(3));
+    }
+
+    @Test
+    @DisplayName("hors bateau : fin au-delà de la durée du mode : 422 arrival-too-far ; PORT_CONGESTION : 422 trip-delay-reason-invalid")
+    void announce_onACar_endBeyondTheModeAndBoatOnlyReason_422() throws Exception {
+        AnnouncementEntity car = persistCar();
+        LocalDate carDeparture = car.getDepartureDate();
+
+        mockMvc.perform(post("/announcements/{id}/delays", car.getId()).with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("TRANSPORT_DISRUPTION", carDeparture.plusDays(3), carDeparture.plusDays(15))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("arrival-too-far"));
+        mockMvc.perform(post("/announcements/{id}/delays", car.getId()).with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("PORT_CONGESTION", carDeparture.plusDays(3), carDeparture.plusDays(4))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("trip-delay-reason-invalid"));
+        assertThat(delaysOf(car)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("fourchette entièrement passée : 422 arrival-range-invalid, rien d'écrit, codes intacts")
+    void announce_rangeInThePast_422() throws Exception {
+        BidEntity handedOver = persistBid(trip, BidStatus.HANDED_OVER, "111111");
+        LocalDateTime untouched = handedOver.getConfirmationCodeExpiry();
+
+        mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(DEPARTURE.plusDays(1), DEPARTURE.plusDays(2))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("arrival-range-invalid"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("aujourd'hui")));
+
+        assertThat(delaysOf(trip)).isEmpty();
+        assertThat(bidRepository.findById(handedOver.getId()).orElseThrow().getConfirmationCodeExpiry())
+                .isEqualTo(untouched);
+        assertThat(announcementRepository.findById(trip.getId()).orElseThrow().getArrivalDate())
+                .isEqualTo(DEPARTURE.plusDays(20));
+    }
+
+    @Test
+    @DisplayName("double appui : même retard renvoyé (201), une ligne, un événement, un audit")
+    void announce_twiceInARow_isIdempotent() throws Exception {
+        persistBid(trip, BidStatus.HANDED_OVER, "111111");
+
+        String first = mockMvc.perform(post("/announcements/{id}/delays", trip.getId())
+                        .with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String second = mockMvc.perform(post("/announcements/{id}/delays", trip.getId())
+                        .with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON).content(validBody()))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+
+        assertThat(objectMapper.readTree(second).get("id")).isEqualTo(objectMapper.readTree(first).get("id"));
+        assertThat(delaysOf(trip)).hasSize(1);
+        assertThat(events.stream(TripDelayedEvent.class).count()).isEqualTo(1);
+        Integer audits = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'TRIP_DELAY_ANNOUNCED' AND entity_id = ?",
+                Integer.class, trip.getId());
+        assertThat(audits).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("au-delà de 5 retards en 24 h : 409 trip-delay-too-frequent, fr et en")
+    void announce_sixthInADay_409() throws Exception {
+        for (int i = 0; i < TripDelayService.MAX_DELAYS_PER_DAY; i++) {
+            mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body(DEPARTURE.plusDays(31 + i), DEPARTURE.plusDays(41 + i))))
+                    .andExpect(status().isCreated());
+        }
+
+        mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(DEPARTURE.plusDays(60), DEPARTURE.plusDays(70))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("trip-delay-too-frequent"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("5 retards")));
+        mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                        .header("Accept-Language", "en-US")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(DEPARTURE.plusDays(60), DEPARTURE.plusDays(70))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("5 delays")));
+        assertThat(delaysOf(trip)).hasSize(TripDelayService.MAX_DELAYS_PER_DAY);
     }
 
     @Test
@@ -301,7 +420,7 @@ class TripDelayControllerIT {
                 .andExpect(status().isForbidden());
         mockMvc.perform(post("/announcements/{id}/delays", trip.getId())
                         .contentType(MediaType.APPLICATION_JSON).content(validBody()))
-                .andExpect(status().is4xxClientError());
+                .andExpect(status().isUnauthorized());
         assertThat(delaysOf(trip)).isEmpty();
     }
 
@@ -355,6 +474,96 @@ class TripDelayControllerIT {
         mockMvc.perform(get("/announcements/my").with(authentication(asTraveler(traveler))))
                 .andExpect(jsonPath("$.content[0].latestTripDelay.arrivalDate").value(arrival))
                 .andExpect(jsonPath("$.content[0].latestTripDelay.arrivalDateMax").value(arrivalMax));
+    }
+
+    @Test
+    @DisplayName("latestTripDelay du colis : servi aux colis en route et livrés, null pour un colis en attente")
+    void latestTripDelay_isNullForParcelsTheDelayDoesNotConcern() throws Exception {
+        BidEntity pending = persistBid(trip, BidStatus.PENDING, null);
+        BidEntity handedOver = persistBid(trip, BidStatus.HANDED_OVER, "111111");
+        mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                .contentType(MediaType.APPLICATION_JSON).content(validBody())).andExpect(status().isCreated());
+
+        mockMvc.perform(get("/bids/{id}", handedOver.getId()).with(authentication(as(sender, "ROLE_SENDER"))))
+                .andExpect(jsonPath("$.latestTripDelay.reason").value("PORT_CONGESTION"));
+        mockMvc.perform(get("/bids/{id}", pending.getId()).with(authentication(as(sender, "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestTripDelay").value(nullValue()));
+    }
+
+    @Test
+    @DisplayName("BidResponse.arrivalDateMax : la fin de fourchette d'un bateau, toujours sérialisée, null hors bateau")
+    void bidResponse_servesArrivalDateMax() throws Exception {
+        BidEntity boatBid = persistBid(trip, BidStatus.HANDED_OVER, "111111");
+        AnnouncementEntity car = persistCar();
+        BidEntity carBid = persistBid(car, BidStatus.HANDED_OVER, "222222");
+
+        MvcResult boat = mockMvc.perform(get("/bids/{id}", boatBid.getId())
+                        .with(authentication(as(sender, "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.arrivalDate").value(DEPARTURE.plusDays(20).toString()))
+                .andExpect(jsonPath("$.arrivalDateMax").value(DEPARTURE.plusDays(30).toString()))
+                .andReturn();
+        assertThat(rawKeyPresent(boat, "arrivalDateMax")).isTrue();
+        MvcResult road = mockMvc.perform(get("/bids/{id}", carBid.getId())
+                        .with(authentication(as(sender, "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.arrivalDateMax").value(nullValue()))
+                .andReturn();
+        assertThat(rawKeyPresent(road, "arrivalDateMax")).as("clé toujours servie, nulle").isTrue();
+    }
+
+    @Test
+    @DisplayName("fiche du trajet : latestTripDelay servi au seul voyageur propriétaire")
+    void announcementDetail_latestTripDelay_ownerOnly() throws Exception {
+        persistBid(trip, BidStatus.HANDED_OVER, "111111");
+        mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                .contentType(MediaType.APPLICATION_JSON).content(validBody())).andExpect(status().isCreated());
+
+        mockMvc.perform(get("/announcements/{id}", trip.getId()).with(authentication(asTraveler(traveler))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestTripDelay.reason").value("PORT_CONGESTION"))
+                .andExpect(jsonPath("$.latestTripDelay.arrivalDateMax").value(DEPARTURE.plusDays(50).toString()))
+                .andExpect(jsonPath("$.latestTripDelay.message").value("Quai saturé"));
+        for (UsernamePasswordAuthenticationToken other : List.of(
+                as(sender, "ROLE_SENDER"), asTraveler(otherTraveler))) {
+            MvcResult res = mockMvc.perform(get("/announcements/{id}", trip.getId()).with(authentication(other)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.latestTripDelay").value(nullValue()))
+                    .andReturn();
+            assertThat(rawKeyPresent(res, "latestTripDelay")).as("clé toujours servie").isTrue();
+            assertThat(res.getResponse().getContentAsString()).doesNotContain("Quai saturé");
+        }
+    }
+
+    @Test
+    @DisplayName("un report efface le retard annoncé : latestTripDelay redevient nul, la ligne reste en base (soft delete)")
+    void reschedule_clearsTheAnnouncedDelay() throws Exception {
+        BidEntity bid = persistBid(trip, BidStatus.HANDED_OVER, "111111");
+        mockMvc.perform(post("/announcements/{id}/delays", trip.getId()).with(authentication(asTraveler(traveler)))
+                .contentType(MediaType.APPLICATION_JSON).content(validBody())).andExpect(status().isCreated());
+        mockMvc.perform(get("/bids/{id}", bid.getId()).with(authentication(as(sender, "ROLE_SENDER"))))
+                .andExpect(jsonPath("$.latestTripDelay.reason").value("PORT_CONGESTION"));
+
+        LocalDate newDeparture = LocalDate.now().plusDays(10);
+        String reschedule = """
+                {"departureDate":"%s","departureTime":"10:00","arrivalDate":"%s","handoverDeadline":"%sT18:00:00",
+                 "reason":"POSTPONED"}
+                """.formatted(newDeparture, newDeparture.plusDays(25), newDeparture.minusDays(1));
+        mockMvc.perform(post("/announcements/{id}/reschedule", trip.getId()).with(authentication(asTraveler(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON).content(reschedule))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/bids/{id}", bid.getId()).with(authentication(as(sender, "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestTripDelay").value(nullValue()));
+        mockMvc.perform(get("/announcements/{id}", trip.getId()).with(authentication(asTraveler(traveler))))
+                .andExpect(jsonPath("$.latestTripDelay").value(nullValue()));
+        assertThat(delayRepository.findFirstByAnnouncementIdOrderByCreatedAtDesc(trip.getId())).isEmpty();
+        Integer kept = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM trip_delays WHERE announcement_id = ? AND deleted_at IS NOT NULL",
+                Integer.class, trip.getId());
+        assertThat(kept).isEqualTo(1);
     }
 
     private boolean rawKeyPresent(MvcResult result, Object... path) throws Exception {

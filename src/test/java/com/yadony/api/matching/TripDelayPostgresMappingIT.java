@@ -132,7 +132,7 @@ class TripDelayPostgresMappingIT {
     }
 
     @Test
-    @DisplayName("les quatre motifs tiennent dans la colonne, previous_* et message peuvent être nuls")
+    @DisplayName("chaque motif (dont TRANSPORT_DISRUPTION) tient dans la colonne, previous_* et message peuvent être nuls")
     void everyReasonAndNullablesRoundTrip() {
         UUID traveler = user();
         UUID trip = boatTrip(traveler);
@@ -199,6 +199,40 @@ class TripDelayPostgresMappingIT {
 
         assertThat(TripDelays.latestByAnnouncement(delays, List.of())).isEmpty();
         assertThat(TripDelays.latestByAnnouncement(null, List.of(tripA))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("lecture groupée bornée : une seule ligne par trajet quel que soit le nombre de retards, soft delete ignoré")
+    void latestBatch_loadsOneRowPerTrip() {
+        UUID traveler = user();
+        UUID tripA = boatTrip(traveler);
+        UUID tripB = boatTrip(traveler);
+        for (int i = 0; i < 4; i++) {
+            delays.saveAndFlush(delay(tripA, traveler, TripDelayReason.WEATHER, 30 + i, 40 + i, "A" + i));
+            delays.saveAndFlush(delay(tripB, traveler, TripDelayReason.OTHER, 30 + i, 40 + i, "B" + i));
+        }
+        TripDelayEntity deletedNewest = delays.saveAndFlush(delay(tripB, traveler, TripDelayReason.OTHER, 50, 60, "B-supprimé"));
+        jdbc.update("UPDATE trip_delays SET deleted_at = ? WHERE id = ?", LocalDateTime.now(), deletedNewest.getId());
+
+        List<TripDelayEntity> latest = delays.findLatestByAnnouncementIdIn(List.of(tripA, tripB));
+
+        assertThat(latest).hasSize(2);
+        assertThat(latest).extracting(TripDelayEntity::getMessage).containsExactlyInAnyOrder("A3", "B3");
+    }
+
+    @Test
+    @DisplayName("fenêtre de 24 h et retards d'un trajet : requêtes dérivées valides contre le schéma")
+    void recentWindowAndPerTripQueries() {
+        UUID traveler = user();
+        UUID trip = boatTrip(traveler);
+        UUID old = delays.saveAndFlush(delay(trip, traveler, TripDelayReason.WEATHER, 30, 35, "ancien")).getId();
+        jdbc.update("UPDATE trip_delays SET created_at = ? WHERE id = ?", LocalDateTime.now().minusDays(2), old);
+        UUID recent = delays.saveAndFlush(delay(trip, traveler, TripDelayReason.OTHER, 40, 45, "récent")).getId();
+
+        assertThat(delays.findByAnnouncementIdAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+                trip, LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(1)))
+                .extracting(TripDelayEntity::getId).containsExactly(recent);
+        assertThat(delays.findByAnnouncementId(trip)).hasSize(2);
     }
 
     @Test

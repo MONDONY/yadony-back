@@ -14,6 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,9 +29,11 @@ import java.util.UUID;
  * non livré en est prévenu (notification, e-mail, message dans la conversation du colis).
  *
  * <p>Contrairement au report ({@link TripRescheduleService}), le départ a eu lieu : aucun choix n'est
- * demandé à l'expéditeur, aucune date de remise ne bouge. Le nombre de retards n'est pas limité ; deux
- * annonces identiques de suite sont deux retards (aucun mécanisme d'idempotence HTTP n'existe sur ces
- * endpoints, hors paiements Stripe).
+ * demandé à l'expéditeur, aucune date de remise ne bouge. Le total de retards n'est pas limité, mais le
+ * rythme l'est : sous le verrou du trajet, une annonce identique à la dernière de moins de
+ * {@value #REPLAY_WINDOW_MINUTES} minutes (double appui, réessai) renvoie ce retard sans rien écrire ni
+ * renotifier, et au-delà de {@value #MAX_DELAYS_PER_DAY} retards en 24 heures c'est 409
+ * {@code trip-delay-too-frequent}.
  *
  * <p>Verrous dans le même ordre que {@link TripRescheduleService} et {@code CancellationService} : le
  * trajet d'abord, puis ses colis en route par date de création, pour qu'aucune paire de transactions ne
@@ -36,6 +41,11 @@ import java.util.UUID;
  */
 @Service
 public class TripDelayService {
+
+    /** Une annonce identique à la dernière de moins de ce délai est un rejeu (double appui, réessai). */
+    static final int REPLAY_WINDOW_MINUTES = 10;
+    /** Retards au plus par trajet sur 24 heures glissantes. */
+    static final int MAX_DELAYS_PER_DAY = 5;
 
     private final AnnouncementRepository announcementRepository;
     private final BidRepository bidRepository;
@@ -72,7 +82,20 @@ public class TripDelayService {
         if (announcement.getStatus() != AnnouncementStatus.IN_PROGRESS) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "trip-delay-not-allowed", "problem.trip-delay-not-allowed");
         }
+
+        // Sous le verrou du trajet : un second appel simultané attend ici, puis voit la ligne validée.
+        String message = normalizedMessage(request.message());
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        List<TripDelayEntity> lastDay = delayRepository
+                .findByAnnouncementIdAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(announcement.getId(), now.minusDays(1));
+        if (!lastDay.isEmpty() && isReplay(lastDay.get(0), request, message, now)) {
+            return TripDelayInfo.from(lastDay.get(0));
+        }
         assertRange(announcement, request);
+        if (lastDay.size() >= MAX_DELAYS_PER_DAY) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "trip-delay-too-frequent",
+                    "problem.trip-delay-too-frequent", MAX_DELAYS_PER_DAY);
+        }
 
         LocalDate previousArrivalDate = announcement.getArrivalDate();
         LocalDate previousArrivalDateMax = announcement.getArrivalDateMax();
@@ -85,7 +108,7 @@ public class TripDelayService {
         // La ligne garde la fourchette demandée même hors bateau (new_arrival_date_max NOT NULL).
         delay.setNewArrivalDate(request.arrivalDate());
         delay.setNewArrivalDateMax(request.arrivalDateMax());
-        delay.setMessage(request.message() == null || request.message().isBlank() ? null : request.message().trim());
+        delay.setMessage(message);
         delay.setCreatedBy(traveler.getId());
         TripDelayEntity saved = delayRepository.save(delay);
 
@@ -97,7 +120,7 @@ public class TripDelayService {
         announcement.setArrivalPromptSentAt(null);
         announcementRepository.save(announcement);
 
-        List<TripDelayedEvent.Target> targets = applyToBids(announcement);
+        List<TripDelayedEvent.Target> targets = applyToBids(announcement, request.arrivalDateMax());
 
         Map<String, Object> audit = new LinkedHashMap<>();
         audit.put("delayId", String.valueOf(saved.getId()));
@@ -115,33 +138,76 @@ public class TripDelayService {
         return TripDelayInfo.from(saved);
     }
 
+    private static String normalizedMessage(String message) {
+        return message == null || message.isBlank() ? null : message.trim();
+    }
+
+    /** Même motif, même fourchette, même message que le dernier retard, annoncé il y a moins de 10 minutes. */
+    private static boolean isReplay(TripDelayEntity last, TripDelayRequest request, String message,
+                                    LocalDateTime now) {
+        return last.getCreatedAt() != null
+                && last.getCreatedAt().isAfter(now.minusMinutes(REPLAY_WINDOW_MINUTES))
+                && last.getReason() == request.reason()
+                && last.getNewArrivalDate().equals(request.arrivalDate())
+                && last.getNewArrivalDateMax().equals(request.arrivalDateMax())
+                && java.util.Objects.equals(last.getMessage(), message);
+    }
+
     /**
-     * Fourchette demandée : début pas avant le départ et fin pas avant le début (422
-     * {@code arrival-range-invalid}), fin au plus départ + 120 jours (422 {@code arrival-too-far}). Hors
-     * bateau, le début compte seul sur l'annonce : il reste soumis à la durée maximale du mode.
+     * Fourchette demandée, valable pour tous les modes : motif propre au bateau refusé ailleurs (422
+     * {@code trip-delay-reason-invalid}) ; début pas avant le départ (422 {@code arrival-range-invalid}) et
+     * fin pas avant le début ni avant aujourd'hui (même code) ; fin au plus départ + 120 jours pour un
+     * bateau, sinon dans la durée maximale du mode (422 {@code arrival-too-far}, 3 jours avion, 14 jours
+     * route) : la fin compte aussi hors bateau, c'est elle qui cale l'expiration du code de retrait.
      */
     private static void assertRange(AnnouncementEntity announcement, TripDelayRequest request) {
+        TransportMode mode = announcement.getTransportMode();
+        if (request.reason() == TripDelayReason.PORT_CONGESTION && mode != TransportMode.BOAT) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "trip-delay-reason-invalid",
+                    "problem.trip-delay-reason-invalid");
+        }
         LocalDate departure = announcement.getDepartureDate();
         if (departure != null && request.arrivalDate().isBefore(departure)) {
+            // Code imposé par le brief, détail propre à ce cas.
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-range-invalid",
-                    "problem.arrival-range-invalid");
+                    "problem.arrival-before-departure");
         }
         ArrivalRules.validateRange(departure, request.arrivalDate(), request.arrivalDateMax());
-        if (announcement.getTransportMode() != TransportMode.BOAT) {
-            ArrivalRules.validate(departure, null, request.arrivalDate(), null, announcement.getTransportMode());
+        if (request.arrivalDateMax().isBefore(today(announcement))) {
+            // Une fin passée n'est pas un retard : elle ferait expirer les codes de retrait des colis en route.
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-range-invalid",
+                    "problem.arrival-range-past");
         }
+        if (mode != TransportMode.BOAT) {
+            ArrivalRules.validate(departure, null, request.arrivalDateMax(), null, mode);
+        }
+    }
+
+    /** Aujourd'hui dans le fuseau du trajet (UTC si absent ou illisible). */
+    private static LocalDate today(AnnouncementEntity announcement) {
+        ZoneId zone = ZoneOffset.UTC;
+        if (announcement.getTimezone() != null) {
+            try {
+                zone = ZoneId.of(announcement.getTimezone());
+            } catch (java.time.DateTimeException ignored) {
+                // Fuseau illisible : UTC.
+            }
+        }
+        return LocalDate.now(zone);
     }
 
     /**
      * Colis non livrés, c'est-à-dire en route (remis, en transit, arrivés) : le code de retrait part de la
-     * nouvelle fin de fourchette, pour qu'un navire en retard n'accoste pas après l'expiration. Les colis
+     * FIN de la nouvelle fourchette (la demandée, aussi hors bateau où l'annonce ne garde que le début), pour
+     * qu'un navire ou un véhicule en retard n'arrive pas après l'expiration, et vaut au moins 24 h. Les colis
      * livrés ou annulés ne sont ni modifiés ni prévenus.
      */
-    private List<TripDelayedEvent.Target> applyToBids(AnnouncementEntity announcement) {
+    private List<TripDelayedEvent.Target> applyToBids(AnnouncementEntity announcement, LocalDate arrivalDateMax) {
         List<TripDelayedEvent.Target> targets = new ArrayList<>();
         for (BidEntity bid : bidRepository.findHandedOverByAnnouncementIdForUpdate(announcement.getId())) {
             if (bid.getConfirmationCode() != null) {
-                bid.setConfirmationCodeExpiry(ArrivalRules.pickupCodeExpiry(announcement));
+                bid.setConfirmationCodeExpiry(
+                        ArrivalRules.renewedPickupCodeExpiry(arrivalDateMax, announcement.getArrivalTime()));
                 bidRepository.save(bid);
             }
             targets.add(new TripDelayedEvent.Target(bid.getId(), bid.getSenderId()));

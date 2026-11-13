@@ -174,5 +174,9 @@ public record BidResponse(
         /** Dernier retard annoncé par le voyageur (nouvelle fourchette d'arrivée estimée, motif, message) ; null
          * si le trajet n'en a jamais annoncé. Toujours sérialisé (null explicite), champ ajouté. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        TripDelayInfo latestTripDelay
+        TripDelayInfo latestTripDelay,
+        /** Fin de la fourchette d'arrivée estimée du trajet ({@code arrivalDate} = début), bateau seulement ;
+         * null sinon. Toujours sérialisé (null explicite), champ ajouté : les anciennes apps l'ignorent. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        java.time.LocalDate arrivalDateMax
 ) {}

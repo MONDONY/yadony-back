@@ -13,7 +13,8 @@ import java.util.UUID;
  * {@code latestTripDelay}, le dernier retard du trajet servi dans {@link BidResponse} et
  * {@link AnnouncementResponse}.
  *
- * @param reason        motif ({@code PORT_CONGESTION}, {@code WEATHER}, {@code EXTENDED_STOPOVER}, {@code OTHER})
+ * @param reason        motif ({@code PORT_CONGESTION} (bateau), {@code WEATHER}, {@code EXTENDED_STOPOVER},
+ *                      {@code TRANSPORT_DISRUPTION}, {@code OTHER})
  * @param arrivalDate   nouvelle arrivée estimée au plus tôt
  * @param arrivalDateMax nouvelle arrivée estimée au plus tard
  * @param announcedAt   instant de l'annonce (UTC)

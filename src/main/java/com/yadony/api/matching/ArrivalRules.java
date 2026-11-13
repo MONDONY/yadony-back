@@ -118,9 +118,13 @@ public final class ArrivalRules {
      * qu'un navire en retard dans sa fourchette n'accoste.
      */
     public static java.time.LocalDateTime pickupCodeExpiry(AnnouncementEntity announcement) {
-        LocalDate arrivalDay = latestArrivalDate(announcement);
-        if (announcement.getArrivalTime() != null) {
-            return arrivalDay.atTime(announcement.getArrivalTime()).plusDays(1);
+        return pickupCodeExpiry(latestArrivalDate(announcement), announcement.getArrivalTime());
+    }
+
+    /** Même règle sur un jour d'arrivée donné (l'annonce de retard la calcule sur la fin de fourchette). */
+    public static java.time.LocalDateTime pickupCodeExpiry(LocalDate arrivalDay, LocalTime arrivalTime) {
+        if (arrivalTime != null) {
+            return arrivalDay.atTime(arrivalTime).plusDays(1);
         }
         return arrivalDay.atStartOfDay().plusDays(3);
     }
@@ -135,7 +139,12 @@ public final class ArrivalRules {
      * (FLUTTER-BA). Le nouveau code vaut donc au moins 24 h à partir de maintenant.
      */
     public static java.time.LocalDateTime renewedPickupCodeExpiry(AnnouncementEntity announcement) {
-        java.time.LocalDateTime planned = pickupCodeExpiry(announcement);
+        return renewedPickupCodeExpiry(latestArrivalDate(announcement), announcement.getArrivalTime());
+    }
+
+    /** Même règle sur un jour d'arrivée donné : l'expiration prévue, jamais avant maintenant + 24 h. */
+    public static java.time.LocalDateTime renewedPickupCodeExpiry(LocalDate arrivalDay, LocalTime arrivalTime) {
+        java.time.LocalDateTime planned = pickupCodeExpiry(arrivalDay, arrivalTime);
         java.time.LocalDateTime floor = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
                 .plus(RENEWED_CODE_MIN_VALIDITY);
         return planned.isAfter(floor) ? planned : floor;

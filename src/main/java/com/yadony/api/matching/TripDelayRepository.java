@@ -14,9 +14,23 @@ public interface TripDelayRepository extends JpaRepository<TripDelayEntity, UUID
     Optional<TripDelayEntity> findFirstByAnnouncementIdOrderByCreatedAtDesc(UUID announcementId);
 
     /**
-     * Retards de plusieurs trajets, le plus récent d'abord : les listes de colis et de trajets en tirent
-     * le dernier de chaque trajet en une requête ({@link TripDelays#latestByAnnouncement}).
+     * Dernier retard de chacun des trajets donnés (au plus un par trajet, sauf égalité d'instant que
+     * {@link TripDelays#latestByAnnouncement} départage) : les listes de colis et de trajets le lisent en une
+     * requête bornée, quel que soit le nombre de retards passés.
      */
-    @Query("SELECT d FROM TripDelayEntity d WHERE d.announcementId IN :ids ORDER BY d.createdAt DESC, d.id DESC")
-    List<TripDelayEntity> findByAnnouncementIdInNewestFirst(@Param("ids") Collection<UUID> ids);
+    @Query("""
+            SELECT d FROM TripDelayEntity d
+            WHERE d.announcementId IN :ids
+              AND d.createdAt = (SELECT MAX(d2.createdAt) FROM TripDelayEntity d2
+                                 WHERE d2.announcementId = d.announcementId AND d2.deletedAt IS NULL)
+            ORDER BY d.id DESC
+            """)
+    List<TripDelayEntity> findLatestByAnnouncementIdIn(@Param("ids") Collection<UUID> ids);
+
+    /** Retards d'un trajet annoncés depuis {@code since}, le plus récent d'abord (dédoublonnage, plafond). */
+    List<TripDelayEntity> findByAnnouncementIdAndCreatedAtGreaterThanEqualOrderByCreatedAtDesc(
+            UUID announcementId, java.time.LocalDateTime since);
+
+    /** Tous les retards actifs d'un trajet (soft delete au report). */
+    List<TripDelayEntity> findByAnnouncementId(UUID announcementId);
 }
