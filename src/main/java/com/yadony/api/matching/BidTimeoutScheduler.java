@@ -80,6 +80,7 @@ public class BidTimeoutScheduler {
                 twentyFourHoursAgo, halfDayThresholdDate, minGraceThreshold);
 
         for (BidEntity bid : timedOut) {
+            BidStatus statusBeforeTimeout = bid.getStatus();
             bid.setStatus(BidStatus.CANCELLED);
             bid.setRejectionReason("TRAVELER_NO_RESPONSE");
             bidRepository.save(bid);
@@ -92,7 +93,8 @@ public class BidTimeoutScheduler {
 
             // Le BidRejectedEventListener (existant) va annuler le hold Stripe ou rembourser
             eventPublisher.publishEvent(new BidRejectedEvent(
-                    bid.getId(), bid.getSenderId(), "TRAVELER_NO_RESPONSE"));
+                    bid.getId(), bid.getSenderId(), "TRAVELER_NO_RESPONSE",
+                    null, false, statusBeforeTimeout));
 
             log.info("Bid {} auto-cancelled (no traveler response within timeout)", bid.getId());
         }

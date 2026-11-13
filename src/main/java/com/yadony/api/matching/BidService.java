@@ -1113,6 +1113,7 @@ public class BidService {
             requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
         }
 
+        BidStatus statusBeforeReject = bid.getStatus();
         bid.setStatus(BidStatus.REJECTED);
         if (request != null) {
             // Un refus manuel ne garde qu'un motif de la liste fermée (FLUTTER-AF) : le texte
@@ -1136,7 +1137,7 @@ public class BidService {
         boolean rematchEligible = !systemInitiated && !isOffPlatformPending;
         eventPublisher.publishEvent(new BidRejectedEvent(
                 bid.getId(), bid.getSenderId(), bid.getRejectionReason(),
-                bid.getAnnouncementId(), rematchEligible));
+                bid.getAnnouncementId(), rematchEligible, statusBeforeReject));
 
         return toResponse(bid, userRepository.findById(bid.getSenderId()).orElse(null), traveler.getId());
     }
@@ -1216,7 +1217,7 @@ public class BidService {
                     || statusBeforeCancel == BidStatus.PAYMENT_ESCROWED);
         eventPublisher.publishEvent(new BidRejectedEvent(
                 bid.getId(), bid.getSenderId(), reason,
-                bid.getAnnouncementId(), rematchEligible));
+                bid.getAnnouncementId(), rematchEligible, statusBeforeCancel));
         // Fiabilité (FLUTTER-E4/E0/E6) : décidée côté cancellation/, qui a besoin du statut
         // d'avant l'annulation, connu de cette seule transaction.
         eventPublisher.publishEvent(new BidCancelledByParticipantEvent(
@@ -1298,6 +1299,7 @@ public class BidService {
 
         restoreCapacityIfNeeded(bid, announcement);
 
+        BidStatus statusBeforeCancel = bid.getStatus();
         bid.setStatus(BidStatus.CANCELLED);
         bidRepository.save(bid);
 
@@ -1306,7 +1308,7 @@ public class BidService {
 
         eventPublisher.publishEvent(new BidRejectedEvent(
                 bid.getId(), bid.getSenderId(), "SENDER_ACCOUNT_DELETED",
-                bid.getAnnouncementId(), false));
+                bid.getAnnouncementId(), false, statusBeforeCancel));
     }
 
     @Transactional

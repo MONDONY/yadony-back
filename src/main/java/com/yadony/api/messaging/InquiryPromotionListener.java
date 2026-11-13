@@ -2,7 +2,14 @@ package com.yadony.api.messaging;
 
 import com.yadony.api.matching.BidNegotiationMessageKind;
 import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.events.BidAwaitingPaymentAbandonedEvent;
+import com.yadony.api.matching.events.BidCancelledByParticipantEvent;
+import com.yadony.api.matching.events.BidCardAuthorizationExpiredEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
+import com.yadony.api.matching.events.BidExpiredOnDepartureEvent;
+import com.yadony.api.matching.events.BidNegotiationExpiredEvent;
+import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.BidMaterializedEvent;
 import com.yadony.api.matching.events.BidNegotiationMessagePostedEvent;
 import com.yadony.api.matching.events.CashBidCreatedEvent;
@@ -14,6 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -29,12 +38,28 @@ import java.util.UUID;
  *   <li>{@link BidMaterializedEvent} : bid issu d'un fil de négociation de demande de colis
  *       (l'événement ne porte ni expéditeur ni annonce, relus depuis le bid).</li>
  * </ul>
- * Aucune exception ne remonte au bus : la promotion est un bonus de la création du bid.
+ * <p>Inversement, quand la demande se termine SANS jamais avoir été acceptée, la conversation
+ * redevient une conversation de questions ({@link ConversationService#relockInquiry}) :
+ * <ul>
+ *   <li>{@link BidRejectedEvent} et {@link BidCancelledByParticipantEvent} : seulement si le
+ *       statut d'avant la transition, porté par l'événement, précède l'acceptation
+ *       ({@link #NEVER_ACCEPTED_STATUSES}) ; un statut absent n'est jamais deviné ;</li>
+ *   <li>{@link BidNegotiationExpiredEvent} (fil de prix éteint, jamais une réservation),
+ *       {@link BidExpiredOnDepartureEvent} (n'expire que PENDING, PAYMENT_ESCROWED ou
+ *       NEGOTIATING), {@link BidCardAuthorizationExpiredEvent} (seulement depuis
+ *       PAYMENT_ESCROWED) et {@link BidAwaitingPaymentAbandonedEvent} (seulement depuis
+ *       AWAITING_PAYMENT) : antérieurs à l'acceptation par construction de leur publicateur.</li>
+ * </ul>
+ * Aucune exception ne remonte au bus : la promotion et le reverrouillage sont des bonus.
  */
 @Component
 public class InquiryPromotionListener {
 
     private static final Logger log = LoggerFactory.getLogger(InquiryPromotionListener.class);
+
+    /** Statuts d'avant la transition pour lesquels le bid n'a jamais été accepté. */
+    static final Set<BidStatus> NEVER_ACCEPTED_STATUSES = EnumSet.of(
+            BidStatus.AWAITING_PAYMENT, BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.NEGOTIATING);
 
     private final ConversationService conversationService;
     private final BidRepository bidRepository;
@@ -67,6 +92,56 @@ public class InquiryPromotionListener {
     public void onNegotiationMessage(BidNegotiationMessagePostedEvent event) {
         if (event.kind() == BidNegotiationMessageKind.PROPOSAL && event.round() == 1) {
             promoteFromBid(event.bidId());
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onBidRejected(BidRejectedEvent event) {
+        if (event.getPreviousStatus() != null && NEVER_ACCEPTED_STATUSES.contains(event.getPreviousStatus())) {
+            relock(event.getBidId());
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onBidCancelledByParticipant(BidCancelledByParticipantEvent event) {
+        if (event.previousStatus() != null && NEVER_ACCEPTED_STATUSES.contains(event.previousStatus())) {
+            relock(event.bidId());
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onNegotiationExpired(BidNegotiationExpiredEvent event) {
+        relock(event.bidId());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onExpiredOnDeparture(BidExpiredOnDepartureEvent event) {
+        relock(event.getBidId());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onCardAuthorizationExpired(BidCardAuthorizationExpiredEvent event) {
+        relock(event.bidId());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void onAwaitingPaymentAbandoned(BidAwaitingPaymentAbandonedEvent event) {
+        relock(event.bidId());
+    }
+
+    private void relock(UUID bidId) {
+        try {
+            if (conversationService.relockInquiry(bidId)) {
+                log.info("Conversation de réservation du bid {} revenue en conversation de questions", bidId);
+            }
+        } catch (Exception e) {
+            log.error("Reverrouillage de la conversation impossible pour le bid {} : {}", bidId, e.getMessage());
         }
     }
 

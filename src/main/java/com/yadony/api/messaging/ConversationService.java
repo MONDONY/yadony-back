@@ -273,6 +273,57 @@ public class ConversationService {
         return true;
     }
 
+    /** Statuts d'un bid qui n'engagent plus personne : seuls ceux-là n'empêchent pas le reverrouillage. */
+    private static final List<BidStatus> NEVER_BOOKED_TERMINAL_STATUSES = List.of(
+        BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.EXPIRED, BidStatus.NEGOTIATION_CLOSED);
+
+    /**
+     * La demande rattachée à la conversation s'est terminée SANS avoir jamais été acceptée :
+     * la conversation redevient une conversation de questions (plafond de messages réappliqué,
+     * plus de bid). L'APPELANT garantit « jamais acceptée » (statut d'avant porté par
+     * l'événement, ou expiration antérieure à l'acceptation par construction) : ici, seules
+     * les gardes propres à la conversation. Sans effet (faux) si la conversation n'est pas une
+     * conversation promue ouverte (une conversation née à l'acceptation n'a pas d'{@code asker_id}),
+     * ou si le même demandeur a encore une autre demande vivante sur la même annonce. Le
+     * compteur {@code inquiryQuota/{convId}} n'est JAMAIS touché : un demandeur à 10 messages
+     * reste bloqué. L'échec Firestore est journalisé, la base fait foi.
+     *
+     * @return vrai si CET appel a reverrouillé le fil
+     */
+    @Transactional
+    public boolean relockInquiry(UUID bidId) {
+        Optional<ConversationEntity> found = conversationRepository.findByBidId(bidId);
+        if (found.isEmpty()) {
+            return false;
+        }
+        ConversationEntity conv = found.get();
+        if (conv.getKind() != ConversationKind.SENDER_TRAVELER || conv.isClosed()
+                || conv.getAskerId() == null || conv.getAnnouncementId() == null) {
+            return false;
+        }
+        if (bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                conv.getAnnouncementId(), conv.getAskerId(), NEVER_BOOKED_TERMINAL_STATUSES)) {
+            return false;
+        }
+        conv.relockToInquiry(LocalDateTime.now(ZoneOffset.UTC));
+        conversationRepository.save(conv);
+
+        auditService.log("conversation", conv.getId(), "INQUIRY_RELOCKED", conv.getAskerId(),
+            Map.of("bidId", bidId.toString(), "announcementId", conv.getAnnouncementId().toString()));
+
+        try {
+            Map<String, Object> fields = new java.util.HashMap<>();
+            fields.put("kind", ConversationKind.INQUIRY.name());
+            fields.put("quotaLifted", false);
+            fields.put("bidId", com.google.cloud.firestore.FieldValue.delete());
+            firestoreService.updateConversation(conv.getFirestoreConversationId(), fields);
+        } catch (Exception e) {
+            log.error("Firestore relock update failed for conversation {} (bid {}): {}",
+                conv.getFirestoreConversationId(), bidId, e.getMessage());
+        }
+        return true;
+    }
+
     private static YadonyBusinessException announcementNotFound() {
         return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
     }
