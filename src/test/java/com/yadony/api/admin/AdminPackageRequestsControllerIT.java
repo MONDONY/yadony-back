@@ -132,14 +132,14 @@ class AdminPackageRequestsControllerIT {
         var item = new AdminPackageRequestListItemResponse(ID, UUID.randomUUID(), "Awa Ndiaye", "Paris", "Dakar",
                 LocalDate.of(2026, 10, 1), new BigDecimal("5.00"), ParcelSize.SMALL, TransportMode.PLANE,
                 PackageRequestStatus.REMOVED_BY_ADMIN, "EUR", new BigDecimal("40.00"),
-                LocalDateTime.of(2026, 9, 1, 10, 0), 3, 0);
+                LocalDateTime.of(2026, 9, 1, 10, 0), 3, 0, 60, 40, 30, new BigDecimal("0.072"));
         when(queryService.list(eq(PackageRequestStatus.REMOVED_BY_ADMIN), eq("dakar"), eq(true),
-                eq("2026-09-01"), eq("2026-09-30"), eq(1), eq(50)))
+                eq("2026-09-01"), eq("2026-09-30"), eq("CAR"), eq(1), eq(50)))
                 .thenReturn(new PageImpl<>(List.of(item), PageRequest.of(1, 50), 51));
 
         mockMvc.perform(get("/admin/package-requests")
                         .param("status", "REMOVED_BY_ADMIN").param("query", "dakar").param("reportedOnly", "true")
-                        .param("from", "2026-09-01").param("to", "2026-09-30")
+                        .param("from", "2026-09-01").param("to", "2026-09-30").param("transportMode", "CAR")
                         .param("page", "1").param("size", "50")
                         .with(authentication(as(AdminRole.SUPPORT))))
                 .andExpect(status().isOk())
@@ -155,6 +155,10 @@ class AdminPackageRequestsControllerIT {
                 .andExpect(jsonPath("$.content[0].targetPrice").value(40.00))
                 .andExpect(jsonPath("$.content[0].reportCount").value(3))
                 .andExpect(jsonPath("$.content[0].openNegotiationCount").value(0))
+                .andExpect(jsonPath("$.content[0].lengthCm").value(60))
+                .andExpect(jsonPath("$.content[0].widthCm").value(40))
+                .andExpect(jsonPath("$.content[0].heightCm").value(30))
+                .andExpect(jsonPath("$.content[0].volumeM3").value(0.072))
                 .andExpect(jsonPath("$.totalElements").value(51));
     }
 
@@ -178,12 +182,12 @@ class AdminPackageRequestsControllerIT {
 
     @Test
     void list_parametresParDefaut() throws Exception {
-        when(queryService.list(isNull(), isNull(), eq(false), isNull(), isNull(), eq(0), eq(20)))
+        when(queryService.list(isNull(), isNull(), eq(false), isNull(), isNull(), isNull(), eq(0), eq(20)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
         mockMvc.perform(get("/admin/package-requests").with(authentication(as(AdminRole.ADMIN))))
                 .andExpect(status().isOk());
-        verify(queryService).list(isNull(), isNull(), eq(false), isNull(), isNull(), eq(0), eq(20));
+        verify(queryService).list(isNull(), isNull(), eq(false), isNull(), isNull(), isNull(), eq(0), eq(20));
     }
 
     @Test
@@ -191,7 +195,36 @@ class AdminPackageRequestsControllerIT {
         mockMvc.perform(get("/admin/package-requests").param("status", "NOPE")
                         .with(authentication(as(AdminRole.ADMIN))))
                 .andExpect(status().isBadRequest());
-        verify(queryService, never()).list(any(), any(), anyBoolean(), any(), any(), anyInt(), anyInt());
+        verify(queryService, never()).list(any(), any(), anyBoolean(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void list_peuImporte_nullTransportModeToujoursSerialise() throws Exception {
+        var item = new AdminPackageRequestListItemResponse(ID, UUID.randomUUID(), "Awa Ndiaye", "Paris", "Dakar",
+                LocalDate.of(2026, 10, 1), new BigDecimal("5.00"), ParcelSize.SMALL, null,
+                PackageRequestStatus.OPEN, "EUR", null, LocalDateTime.of(2026, 9, 1, 10, 0), 0, 0);
+        when(queryService.list(isNull(), isNull(), eq(false), isNull(), isNull(), eq("ANY"), eq(0), eq(20)))
+                .thenReturn(new PageImpl<>(List.of(item), PageRequest.of(0, 20), 1));
+
+        mockMvc.perform(get("/admin/package-requests").param("transportMode", "ANY")
+                        .with(authentication(as(AdminRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].transportMode").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.content[0]", org.hamcrest.Matchers.hasKey("transportMode")));
+    }
+
+    @Test
+    void list_modeInconnu_422ProblemDetail() throws Exception {
+        when(queryService.list(any(), any(), anyBoolean(), any(), any(), eq("ROCKET"), anyInt(), anyInt()))
+                .thenThrow(com.yadony.api.common.YadonyBusinessException.localized(
+                        org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, "invalid-transport-mode",
+                        "problem.invalid-transport-mode"));
+
+        mockMvc.perform(get("/admin/package-requests").param("transportMode", "ROCKET")
+                        .with(authentication(as(AdminRole.ADMIN))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .contentTypeCompatibleWith("application/problem+json"));
     }
 
     @Test

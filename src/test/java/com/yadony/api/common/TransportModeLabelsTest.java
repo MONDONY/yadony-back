@@ -26,6 +26,17 @@ class TransportModeLabelsTest {
     }
 
     @Test
+    void transportLabel_voitureEtBusFormentLaRoute_inconnuNul() {
+        assertThat(TransportModeLabels.transportLabel(TransportMode.PLANE)).isEqualTo("Avion");
+        assertThat(TransportModeLabels.transportLabel(TransportMode.BOAT)).isEqualTo("Bateau");
+        assertThat(TransportModeLabels.transportLabel(TransportMode.CAR)).isEqualTo("Route");
+        assertThat(TransportModeLabels.transportLabel(TransportMode.BUS)).isEqualTo("Route");
+        assertThat(TransportModeLabels.transportLabel(TransportMode.TRAIN)).isEqualTo("Train");
+        assertThat(TransportModeLabels.transportLabel(TransportMode.OTHER)).isEqualTo("Autre");
+        assertThat(TransportModeLabels.transportLabel(null)).isNull();
+    }
+
+    @Test
     void modeInconnuOuAutre_pasDeSymbole_jamaisLAvion() {
         assertThat(TransportModeLabels.label(null)).isNull();
         assertThat(TransportModeLabels.symbol(null)).isNull();

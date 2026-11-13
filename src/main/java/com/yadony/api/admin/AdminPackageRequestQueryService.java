@@ -100,13 +100,26 @@ public class AdminPackageRequestQueryService {
     public Page<AdminPackageRequestListItemResponse> list(PackageRequestStatus status, String query,
                                                           boolean reportedOnly, String from, String to,
                                                           int page, int size) {
+        return list(status, query, reportedOnly, from, to, null, page, size);
+    }
+
+    /**
+     * @param transportMode {@code ANY} : demandes « peu importe » (sans mode) ; un mode : demandes de ce
+     *                      mode, voiture et bus ensemble ; absent : toutes. Valeur inconnue : 422
+     *                      {@code invalid-transport-mode}.
+     */
+    @Transactional(readOnly = true)
+    public Page<AdminPackageRequestListItemResponse> list(PackageRequestStatus status, String query,
+                                                          boolean reportedOnly, String from, String to,
+                                                          String transportMode, int page, int size) {
+        AdminTransportModeFilter modeFilter = AdminTransportModeFilter.parse(transportMode);
         LocalDateTime fromBound = parseBound(from, false);
         LocalDateTime toBound = parseBound(to, true);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE),
                 Sort.by(Sort.Direction.DESC, "createdAt"));
 
         Page<PackageRequestEntity> requests = requestRepository.findAll(
-                filter(status, normalize(query), reportedOnly, fromBound, toBound), pageable);
+                filter(status, normalize(query), reportedOnly, fromBound, toBound, modeFilter), pageable);
 
         List<UUID> ids = requests.getContent().stream().map(PackageRequestEntity::getId).toList();
         Map<UUID, Long> reportCounts = reportCounts(ids);
@@ -123,7 +136,8 @@ public class AdminPackageRequestQueryService {
                 r.getDepartureCity(), r.getArrivalCity(), r.getDesiredDate(), r.getWeightKg(),
                 r.getParcelSize(), r.getTransportMode(), r.getStatus(), r.getCurrency(),
                 r.getTargetPriceEur(), r.getCreatedAt(),
-                reportCounts.getOrDefault(r.getId(), 0L), openCounts.getOrDefault(r.getId(), 0L)));
+                reportCounts.getOrDefault(r.getId(), 0L), openCounts.getOrDefault(r.getId(), 0L),
+                r.getLengthCm(), r.getWidthCm(), r.getHeightCm(), r.getVolumeM3()));
     }
 
     @Transactional(readOnly = true)
@@ -184,7 +198,8 @@ public class AdminPackageRequestQueryService {
 
     private Specification<PackageRequestEntity> filter(PackageRequestStatus status, String query,
                                                        boolean reportedOnly,
-                                                       LocalDateTime from, LocalDateTime to) {
+                                                       LocalDateTime from, LocalDateTime to,
+                                                       AdminTransportModeFilter modeFilter) {
         String phoneUid = query != null && query.startsWith("+")
                 ? firebaseContactService.findUidByPhone(query).orElse(null)
                 : null;
@@ -198,6 +213,11 @@ public class AdminPackageRequestQueryService {
             }
             if (to != null) {
                 predicates.add(cb.lessThan(root.get("createdAt"), to));
+            }
+            if (modeFilter != null) {
+                predicates.add(modeFilter.any()
+                        ? cb.isNull(root.get("transportMode"))
+                        : root.get("transportMode").in(modeFilter.modes()));
             }
             if (reportedOnly) {
                 Subquery<UUID> reported = cq.subquery(UUID.class);

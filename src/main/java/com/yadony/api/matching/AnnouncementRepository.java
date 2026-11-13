@@ -445,4 +445,21 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     org.springframework.data.domain.Page<AnnouncementEntity> searchAdmin(
             @org.springframework.data.repository.query.Param("like") String like,
             org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * {@link #searchAdmin} restreinte aux modes donnés (filtre « mode » du back-office ; la route
+     * passe CAR et BUS ensemble, voir {@link TransportMode#acceptedBy}).
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT a FROM AnnouncementEntity a
+            WHERE a.transportMode IN :modes
+              AND (LOWER(a.departureCity) LIKE :like OR LOWER(a.arrivalCity) LIKE :like
+                   OR a.travelerId IN (SELECT u.id FROM com.yadony.api.auth.UserEntity u
+                        WHERE LOWER(CONCAT(COALESCE(u.firstName, ''), ' ', COALESCE(u.lastName, ''))) LIKE :like))
+            ORDER BY a.createdAt DESC
+            """)
+    org.springframework.data.domain.Page<AnnouncementEntity> searchAdminByModes(
+            @org.springframework.data.repository.query.Param("like") String like,
+            @org.springframework.data.repository.query.Param("modes") java.util.Collection<TransportMode> modes,
+            org.springframework.data.domain.Pageable pageable);
 }

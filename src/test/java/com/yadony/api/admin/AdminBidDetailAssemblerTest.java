@@ -209,6 +209,21 @@ class AdminBidDetailAssemblerTest {
     }
 
     @Test
+    void extras_trajetBateau_volumesEtPrixAuM3() {
+        ann.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        ann.setVolumeCapacityM3(new BigDecimal("20.000"));
+        ann.setAvailableVolumeM3(new BigDecimal("8.750"));
+        ann.setPricePerM3(new BigDecimal("135.00"));
+
+        AdminBidDetailResponse.Trip trip = assembler.extras(bid, ann, AdminBidDetailAssembler.Access.ALL).trip();
+
+        assertThat(trip.transportMode()).isEqualTo("BOAT");
+        assertThat(trip.volumeCapacityM3()).isEqualByComparingTo("20");
+        assertThat(trip.availableVolumeM3()).isEqualByComparingTo("8.75");
+        assertThat(trip.pricePerM3()).isEqualByComparingTo("135");
+    }
+
+    @Test
     void extras_sansAnnonceNiPersonnes() {
         AdminBidDetailAssembler.Extras x = assembler.extras(bid, null, AdminBidDetailAssembler.Access.ALL);
 

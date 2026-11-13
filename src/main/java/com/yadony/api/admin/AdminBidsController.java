@@ -216,11 +216,16 @@ public class AdminBidsController {
     public ResponseEntity<Page<AdminAnnouncementListItemResponse>> listAnnouncements(
             @RequestParam(required = false) UUID id,
             @RequestParam(required = false) String query,
+            @RequestParam(required = false) String transportMode,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
 
         // ?id= : l'annonce d'un colis (lien « Voir l'annonce » de la fiche colis), seule.
         // ?query= : recherche globale de l'admin (ville ou nom du voyageur, ou identifiant).
+        // ?transportMode= : PLANE, BOAT, CAR (avec BUS)… ; ANY ou absent : tous. Ignoré avec ?id=.
+        // Valeur inconnue : 422 invalid-transport-mode.
+        AdminTransportModeFilter modeFilter = AdminTransportModeFilter.parse(transportMode);
+        TransportMode mode = modeFilter != null && !modeFilter.any() ? modeFilter.mode() : null;
         Page<AnnouncementEntity> annPage;
         UUID queryId = AdminSearchTerms.uuid(query);
         if (queryId != null && id == null) {
@@ -228,10 +233,15 @@ public class AdminBidsController {
         }
         String like = AdminSearchTerms.like(query);
         if (id == null && like != null) {
-            annPage = announcementRepo.searchAdmin(like, PageRequest.of(page, size));
+            annPage = mode != null
+                    ? announcementRepo.searchAdminByModes(like, TransportMode.acceptedBy(mode), PageRequest.of(page, size))
+                    : announcementRepo.searchAdmin(like, PageRequest.of(page, size));
         } else if (id != null) {
             List<AnnouncementEntity> one = announcementRepo.findById(id).map(List::of).orElse(List.of());
             annPage = new org.springframework.data.domain.PageImpl<>(one, PageRequest.of(0, Math.max(1, size)), one.size());
+        } else if (mode != null) {
+            annPage = announcementRepo.findAll(AnnouncementSpecification.hasTransportMode(mode),
+                    PageRequest.of(page, size, Sort.by("createdAt").descending()));
         } else {
             annPage = announcementRepo.findAll(PageRequest.of(page, size, Sort.by("createdAt").descending()));
         }
@@ -299,7 +309,8 @@ public class AdminBidsController {
                 b.getTrackingNumber(), b.getCommissionRate(), b.getRefusalReason(),
                 item.currency(),
                 b.getDescription(), x.trip(), x.sender(), x.traveler(), x.recipient(), x.money(), x.links(),
-                x.confirmationCodePresent(), x.photoUrls(), x.milestones(), x.incidents(), alert);
+                x.confirmationCodePresent(), x.photoUrls(), x.milestones(), x.incidents(), alert,
+                b.getVolumeM3());
     }
 
     private AdminAnnouncementListItemResponse toAnnouncementListItem(AnnouncementEntity a,

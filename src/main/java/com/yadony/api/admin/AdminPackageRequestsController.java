@@ -46,9 +46,11 @@ public class AdminPackageRequestsController {
             @RequestParam(defaultValue = "false") boolean reportedOnly,
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
+            @RequestParam(required = false) String transportMode,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return queryService.list(status, query, reportedOnly, from, to, page, size);
+        // transportMode : PLANE, BOAT, CAR (avec BUS)… ; ANY = demandes « peu importe » (sans mode).
+        return queryService.list(status, query, reportedOnly, from, to, transportMode, page, size);
     }
 
     @PreAuthorize("hasRole('ADMIN') and hasAuthority('BID_VIEW')")

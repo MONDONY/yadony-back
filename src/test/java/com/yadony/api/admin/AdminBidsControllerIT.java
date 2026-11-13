@@ -11,6 +11,7 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.TransportMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -180,6 +181,84 @@ class AdminBidsControllerIT {
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].id").value(ANN.toString()))
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    // ---- mode de transport (lot 4) ----
+
+    private static AnnouncementEntity annonce(TransportMode mode, String arrival) {
+        AnnouncementEntity a = new AnnouncementEntity();
+        setField(a, "id", UUID.randomUUID());
+        a.setStatus(AnnouncementStatus.ACTIVE);
+        a.setDepartureCity("Paris");
+        a.setArrivalCity(arrival);
+        a.setDepartureDate(LocalDate.of(2026, 12, 12));
+        a.setTransportMode(mode);
+        return a;
+    }
+
+    @Test
+    void listAnnouncements_exposesTransportMode() throws Exception {
+        AnnouncementEntity boat = annonce(TransportMode.BOAT, "Dakar");
+        boat.setVolumeCapacityM3(new BigDecimal("12.000"));
+        boat.setAvailableVolumeM3(new BigDecimal("7.500"));
+        boat.setPricePerM3(new BigDecimal("140.00"));
+        boat.setArrivalDateMax(LocalDate.of(2027, 1, 30));
+        when(announcementRepo.findAll(any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(boat)));
+
+        mockMvc.perform(get("/admin/announcements").with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].transportMode").value("BOAT"))
+                .andExpect(jsonPath("$.content[0].volumeCapacityM3").value(12.0))
+                .andExpect(jsonPath("$.content[0].availableVolumeM3").value(7.5))
+                .andExpect(jsonPath("$.content[0].pricePerM3").value(140.0))
+                .andExpect(jsonPath("$.content[0].arrivalDateMax").value("2027-01-30"));
+    }
+
+    @Test
+    void listAnnouncements_roadFilterReturnsCarAndBus() throws Exception {
+        when(announcementRepo.findAll(org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<AnnouncementEntity>>any(),
+                any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(
+                        annonce(TransportMode.CAR, "Bamako"), annonce(TransportMode.BUS, "Dakar"))));
+
+        mockMvc.perform(get("/admin/announcements").param("transportMode", "CAR")
+                        .with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].transportMode",
+                        org.hamcrest.Matchers.containsInAnyOrder("CAR", "BUS")));
+    }
+
+    @Test
+    void listAnnouncements_unknownModeIs422() throws Exception {
+        mockMvc.perform(get("/admin/announcements").param("transportMode", "ROCKET")
+                        .with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(result -> assertThat(result.getResponse().getContentType()).contains("application/problem+json"))
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString()).contains("invalid-transport-mode"));
+    }
+
+    @Test
+    void detail_bateau_volumeDuColisEtM3DuTrajet() throws Exception {
+        BidEntity b = bid();
+        b.setVolumeM3(new BigDecimal("1.250"));
+        when(bidRepo.findById(BID)).thenReturn(Optional.of(b));
+        when(announcementRepo.findById(ANN)).thenReturn(Optional.of(annonce(TransportMode.BOAT, "Dakar")));
+        var trip = new AdminBidDetailResponse.Trip(ANN, "ACTIVE", "Marseille", "Dakar", "FR", "SN",
+                LocalDate.of(2026, 12, 1), null, null, LocalDate.of(2026, 12, 20), null, "Europe/Paris",
+                "Port de Marseille", null, "BOAT", null, null, null, null, null, null, null, null, 0,
+                new BigDecimal("20.000"), new BigDecimal("8.750"), new BigDecimal("135.00"));
+        when(assembler.extras(any(), any(), any())).thenReturn(new AdminBidDetailAssembler.Extras(
+                trip, null, null, null, null, new AdminBidDetailResponse.Links(null, null, null, null, null),
+                false, List.of(), null, null));
+
+        mockMvc.perform(get("/admin/bids/{id}", BID).with(authentication(as(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.volumeM3").value(1.25))
+                .andExpect(jsonPath("$.trip.transportMode").value("BOAT"))
+                .andExpect(jsonPath("$.trip.volumeCapacityM3").value(20.0))
+                .andExpect(jsonPath("$.trip.availableVolumeM3").value(8.75))
+                .andExpect(jsonPath("$.trip.pricePerM3").value(135.0));
     }
 
     @Test

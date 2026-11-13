@@ -294,4 +294,66 @@ class AdminPackageRequestQueryServiceDbTest {
         assertThat(requestRepository.findExpired(LocalDate.now(ZoneOffset.UTC).plusDays(30)))
                 .extracting(PackageRequestEntity::getId).containsExactly(open.getId());
     }
+
+    // ---- mode de transport (lot 4) ----
+
+    private PackageRequestEntity requestWithMode(TransportMode mode) {
+        PackageRequestEntity e = request(awa.getId(), "Paris", "Dakar", PackageRequestStatus.OPEN);
+        e.setTransportMode(mode);
+        return requestRepository.saveAndFlush(e);
+    }
+
+    private List<TransportMode> modes(String filter) {
+        return service.list(null, null, false, null, null, filter, 0, 20).getContent().stream()
+                .map(AdminPackageRequestListItemResponse::transportMode).toList();
+    }
+
+    @Test
+    void list_anyFilterKeepsOnlyRequestsWithoutMode() {
+        requestWithMode(null);
+        requestWithMode(TransportMode.PLANE);
+        requestWithMode(TransportMode.BOAT);
+
+        assertThat(modes("ANY")).hasSize(1).containsOnlyNulls();
+    }
+
+    @Test
+    void list_carFilterIncludesBus_otherModesStrict_absentKeepsAll() {
+        requestWithMode(TransportMode.CAR);
+        requestWithMode(TransportMode.BUS);
+        requestWithMode(TransportMode.PLANE);
+        requestWithMode(null);
+
+        assertThat(modes("CAR")).containsExactlyInAnyOrder(TransportMode.CAR, TransportMode.BUS);
+        assertThat(modes("plane")).containsExactly(TransportMode.PLANE);
+        assertThat(modes(null)).hasSize(4);
+        assertThat(service.list(null, null, false, null, null, 0, 20).getTotalElements()).isEqualTo(4);
+    }
+
+    @Test
+    void list_unknownMode_is422() {
+        assertThatThrownBy(() -> modes("ROCKET"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("invalid-transport-mode");
+                });
+    }
+
+    @Test
+    void list_exposesDimensionsAndVolume() {
+        PackageRequestEntity boat = requestWithMode(TransportMode.BOAT);
+        boat.setLengthCm(60);
+        boat.setWidthCm(40);
+        boat.setHeightCm(40);
+        boat.setVolumeM3(new BigDecimal("0.096"));
+        requestRepository.saveAndFlush(boat);
+
+        AdminPackageRequestListItemResponse row = service.list(null, null, false, null, null, "BOAT", 0, 20)
+                .getContent().get(0);
+
+        assertThat(row.lengthCm()).isEqualTo(60);
+        assertThat(row.widthCm()).isEqualTo(40);
+        assertThat(row.heightCm()).isEqualTo(40);
+        assertThat(row.volumeM3()).isEqualByComparingTo("0.096");
+    }
 }
