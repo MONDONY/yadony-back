@@ -327,6 +327,28 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Champs du document parent {@code conversations/{conversationId}}, pour le rattrapage base ↔
+     * Firestore d'un fil de questions. Vide si le document n'existe pas, ou si Firestore est
+     * désactivé ({@link #createConversation} est alors lui-même sans effet). Lève sur un échec de
+     * lecture : un échec ne doit jamais passer pour un document absent (on le recréerait).
+     */
+    public java.util.Optional<Map<String, Object>> readConversation(String conversationId) {
+        if (firestore == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var snap = firestore.collection("conversations").document(conversationId).get().get();
+            if (!snap.exists()) {
+                return java.util.Optional.empty();
+            }
+            Map<String, Object> data = snap.getData();
+            return java.util.Optional.of(data == null ? Map.of() : data);
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore readConversation failed", e);
+        }
+    }
+
     public void clearConversationDeleted(String conversationId) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping clearConversationDeleted");

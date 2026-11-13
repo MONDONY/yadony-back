@@ -118,6 +118,56 @@ class FirestoreServiceTest {
         verify(document).update(fields);
     }
 
+    // ── readConversation : rattrapage base ↔ Firestore des fils de questions ────
+
+    @Test
+    void readConversation_isEmpty_whenFirestoreIsDisabled() {
+        assertThat(new FirestoreService(null).readConversation("conv_x")).isEmpty();
+    }
+
+    private static Firestore parentDocument(boolean exists, Map<String, Object> data) {
+        Firestore firestore = mock(Firestore.class);
+        CollectionReference collection = mock(CollectionReference.class);
+        DocumentReference document = mock(DocumentReference.class);
+        com.google.cloud.firestore.DocumentSnapshot snap = mock(com.google.cloud.firestore.DocumentSnapshot.class);
+        when(firestore.collection("conversations")).thenReturn(collection);
+        when(collection.document("conv_r")).thenReturn(document);
+        when(document.get()).thenReturn(ApiFutures.immediateFuture(snap));
+        when(snap.exists()).thenReturn(exists);
+        if (exists) {
+            when(snap.getData()).thenReturn(data);
+        }
+        return firestore;
+    }
+
+    @Test
+    void readConversation_returnsTheParentFields() {
+        Map<String, Object> data = Map.of("kind", "INQUIRY", "quotaLifted", false);
+
+        assertThat(new FirestoreService(parentDocument(true, data)).readConversation("conv_r")).contains(data);
+    }
+
+    @Test
+    void readConversation_isEmpty_whenTheParentIsAbsent() {
+        assertThat(new FirestoreService(parentDocument(false, null)).readConversation("conv_r")).isEmpty();
+    }
+
+    @Test
+    void readConversation_existingParentWithoutData_isAnEmptyMap_notAbsent() {
+        assertThat(new FirestoreService(parentDocument(true, null)).readConversation("conv_r")).contains(Map.of());
+    }
+
+    @Test
+    void readConversation_failure_isRaised_neverMistakenForAnAbsentParent() {
+        Firestore firestore = mock(Firestore.class);
+        when(firestore.collection("conversations")).thenThrow(new IllegalStateException("down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> new FirestoreService(firestore).readConversation("conv_r"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("readConversation");
+    }
+
     @Test
     void updateConversation_failure_isRaised() {
         Firestore firestore = mock(Firestore.class);

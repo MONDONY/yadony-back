@@ -170,6 +170,8 @@ public class ConversationService {
         if (existing.isPresent()) {
             // Un fil dont la contrepartie est masquée n'existe plus pour l'appelant : 404 silencieux.
             blockVisibility.assertVisible(askerId, otherUserId(existing.get(), askerId));
+            // L'app écrira son compteur d'après cette réponse (état base) : Firestore doit dire pareil.
+            reconcileInquiryFirestore(existing.get());
             return existing.get();
         }
 
@@ -239,8 +241,9 @@ public class ConversationService {
      * d'être créée : elle devient la conversation de réservation du bid (même identifiant
      * Firestore, historique conservé) et le plafond de messages est levé. Sans effet (faux) s'il
      * n'y a pas de fil INQUIRY ouvert pour le couple, s'il est déjà promu, ou si le bid a déjà
-     * son propre fil. L'échec Firestore est journalisé : la base reste à jour, et la réparation
-     * {@link #ensureFirestoreDocument} réécrit des champs cohérents si le document manque.
+     * son propre fil. L'échec Firestore est journalisé : la base reste à jour, et le rattrapage
+     * {@link #reconcileInquiryFirestore} réaligne le parent Firestore au prochain message, au
+     * prochain appel de la route ou à l'acceptation.
      *
      * @return vrai si CET appel a promu le fil
      */
@@ -346,7 +349,12 @@ public class ConversationService {
         // isHidden rend faux et la conversation se crée normalement.
         blockVisibility.assertVisible(senderId, travelerId);
 
-        return conversationRepository.findByBidId(bidId).orElseGet(() -> {
+        Optional<ConversationEntity> existing = conversationRepository.findByBidId(bidId);
+        // Fil de questions promu à la demande : si l'écriture Firestore de la promotion a échoué,
+        // l'acceptation est le moment de lever enfin le plafond côté règles.
+        existing.filter(c -> c.getAskerId() != null).ifPresent(this::reconcileInquiryFirestore);
+
+        return existing.orElseGet(() -> {
             String firestoreId = "conv_" + bidId;
 
             // Un compte supprimé est filtré par @Where : son fil ne peut plus naître.
@@ -406,6 +414,9 @@ public class ConversationService {
      *
      * <p>Ne propage aucune erreur : la réparation est un bonus, jamais une
      * condition de l'envoi d'une notification.
+     *
+     * <p>Fil de questions (demandeur renseigné) : délègue à {@link #reconcileInquiryFirestore}, qui
+     * recrée aussi le parent absent et rattrape en plus les champs du plafond.
      */
     // Pas de transaction : Firestore est interrogé à chaque message de chat, et une
     // transaction ouverte ici tenait une connexion JDBC pendant cet appel. Les deux
@@ -416,53 +427,121 @@ public class ConversationService {
         if (conv.getDeletedAt() != null) {
             return;
         }
+        // Fil de questions (promu ou non) : une seule lecture du parent sert à la fois à le recréer
+        // s'il manque et à rattraper kind / quotaLifted / bidId s'il diverge de la base.
+        if (conv.getAskerId() != null) {
+            reconcileInquiryFirestore(conv);
+            return;
+        }
         String firestoreId = conv.getFirestoreConversationId();
         try {
             if (firestoreService.conversationExists(firestoreId)) {
                 return;
             }
-
-            UserEntity sender   = userRepository.findById(conv.participantAId()).orElse(null);
-            UserEntity traveler = userRepository.findById(conv.getTravelerId()).orElse(null);
-            if (sender == null || traveler == null) {
-                log.warn("Firestore document repair skipped for {} — participant missing", firestoreId);
-                return;
-            }
-
-            Map<String, Object> data = new java.util.HashMap<>();
-            // Conversation destinataire fermée : le destinataire révoqué ne doit pas
-            // retrouver son accès Firestore par une réparation (cf. revoke).
-            if (conv.isRecipientConversation() && conv.isClosed()) {
-                data.put("senderId", null);
-                data.put("revokedRecipientId", sender.getFirebaseUid());
-            } else {
-                data.put("senderId", sender.getFirebaseUid());
-            }
-            data.put("travelerId", traveler.getFirebaseUid());
-            if (conv.getAskerId() != null) {
-                // Fil de questions : sans ces champs, les règles Firestore le traiteraient comme
-                // une conversation ordinaire (plafond de 10 messages perdu).
-                data.put("kind", conv.getKind().name());
-                data.put("askerId", sender.getFirebaseUid());
-                data.put("quotaLifted", conv.isQuotaLifted());
-                if (conv.getAnnouncementId() != null) {
-                    data.put("announcementId", conv.getAnnouncementId().toString());
-                }
-            } else if (conv.isRecipientConversation()) {
-                data.put("kind", ConversationKind.RECIPIENT_TRAVELER.name());
-            }
-            data.put("senderName",   fullName(sender));
-            data.put("travelerName", fullName(traveler));
-            data.put("createdAt", conv.getCreatedAt() != null ? conv.getCreatedAt().toString() : Instant.now().toString());
-            if (conv.getBidId() != null) {
-                data.put("bidId", conv.getBidId().toString());
-            }
-
-            firestoreService.createConversation(firestoreId, data);
-            log.info("Firestore document repaired for conversation {}", firestoreId);
+            createParentDocument(conv);
         } catch (Exception e) {
             log.warn("Firestore document repair failed for {}: {}", firestoreId, e.getMessage());
         }
+    }
+
+    /**
+     * Rattrapage idempotent du document parent d'un fil de questions sur la base, qui fait foi.
+     *
+     * <p>Création, promotion et reverrouillage n'écrivent Firestore qu'au mieux-effort : un échec y
+     * est seulement journalisé. Or l'app choisit d'écrire le compteur d'après la réponse du back
+     * (état base) et les règles Firestore décident d'après le parent : une divergence sur
+     * {@code kind}, {@code quotaLifted} ou {@code bidId} refuserait pour de bon les messages du
+     * demandeur. Le parent est donc relu ; seuls les champs qui diffèrent de la base sont réécrits
+     * (aucune écriture sans écart), et un parent absent est recréé avec les champs du fil.
+     *
+     * <p>Appelé au retour d'un fil existant ({@link #getOrCreateInquiry}), à l'acceptation d'un fil
+     * promu ({@link #createConversationForBid}) et à chaque message ({@link #ensureFirestoreDocument}).
+     * Sans effet sur un fil sans demandeur ou une ligne supprimée. Ne propage aucune erreur : un
+     * échec de lecture n'écrit rien (jamais pris pour un parent absent), le prochain appel réessaie.
+     */
+    public void reconcileInquiryFirestore(ConversationEntity conv) {
+        if (conv.getAskerId() == null || conv.getDeletedAt() != null) {
+            return;
+        }
+        String firestoreId = conv.getFirestoreConversationId();
+        try {
+            Optional<Map<String, Object>> parent = firestoreService.readConversation(firestoreId);
+            if (parent.isEmpty()) {
+                createParentDocument(conv);
+                return;
+            }
+            Map<String, Object> drift = inquiryFieldsDrift(conv, parent.get());
+            if (!drift.isEmpty()) {
+                firestoreService.updateConversation(firestoreId, drift);
+                log.info("Firestore inquiry fields realigned on the database for {}: {}", firestoreId, drift.keySet());
+            }
+        } catch (Exception e) {
+            log.warn("Firestore inquiry reconciliation failed for {}: {}", firestoreId, e.getMessage());
+        }
+    }
+
+    /** Champs du parent Firestore à réécrire pour refléter la base (vide : aucun écart). */
+    private static Map<String, Object> inquiryFieldsDrift(ConversationEntity conv, Map<String, Object> parent) {
+        Map<String, Object> drift = new java.util.HashMap<>();
+        String kind = conv.getKind().name();
+        if (!kind.equals(parent.get("kind"))) {
+            drift.put("kind", kind);
+        }
+        Boolean quotaLifted = conv.isQuotaLifted();
+        if (!quotaLifted.equals(parent.get("quotaLifted"))) {
+            drift.put("quotaLifted", quotaLifted);
+        }
+        String bidId = conv.getBidId() == null ? null : conv.getBidId().toString();
+        Object parentBidId = parent.get("bidId");
+        if (bidId == null && parentBidId != null) {
+            drift.put("bidId", com.google.cloud.firestore.FieldValue.delete());
+        } else if (bidId != null && !bidId.equals(parentBidId)) {
+            drift.put("bidId", bidId);
+        }
+        return drift;
+    }
+
+    /** Recrée le document parent d'après la base (participants, champs du fil de questions, bid). */
+    private void createParentDocument(ConversationEntity conv) {
+        String firestoreId = conv.getFirestoreConversationId();
+        UserEntity sender   = userRepository.findById(conv.participantAId()).orElse(null);
+        UserEntity traveler = userRepository.findById(conv.getTravelerId()).orElse(null);
+        if (sender == null || traveler == null) {
+            log.warn("Firestore document repair skipped for {} — participant missing", firestoreId);
+            return;
+        }
+
+        Map<String, Object> data = new java.util.HashMap<>();
+        // Conversation destinataire fermée : le destinataire révoqué ne doit pas
+        // retrouver son accès Firestore par une réparation (cf. revoke).
+        if (conv.isRecipientConversation() && conv.isClosed()) {
+            data.put("senderId", null);
+            data.put("revokedRecipientId", sender.getFirebaseUid());
+        } else {
+            data.put("senderId", sender.getFirebaseUid());
+        }
+        data.put("travelerId", traveler.getFirebaseUid());
+        if (conv.getAskerId() != null) {
+            // Fil de questions : sans ces champs, les règles Firestore le traiteraient comme
+            // une conversation ordinaire (plafond de 10 messages perdu).
+            data.put("kind", conv.getKind().name());
+            data.put("askerId", sender.getFirebaseUid());
+            data.put("quotaLifted", conv.isQuotaLifted());
+            if (conv.getAnnouncementId() != null) {
+                data.put("announcementId", conv.getAnnouncementId().toString());
+            }
+        } else if (conv.isRecipientConversation()) {
+            data.put("kind", ConversationKind.RECIPIENT_TRAVELER.name());
+        }
+        data.put("senderName",   fullName(sender));
+        data.put("travelerName", fullName(traveler));
+        data.put("createdAt", conv.getCreatedAt() != null ? conv.getCreatedAt().toString() : Instant.now().toString());
+        if (conv.getBidId() != null) {
+            data.put("bidId", conv.getBidId().toString());
+        }
+
+        firestoreService.createConversation(firestoreId, data);
+        log.info("Firestore document repaired for conversation {}", firestoreId);
     }
 
     @Transactional

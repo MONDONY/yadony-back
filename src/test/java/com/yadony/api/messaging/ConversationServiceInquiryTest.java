@@ -113,12 +113,171 @@ class ConversationServiceInquiryTest {
         ConversationEntity first = service.getOrCreateInquiry(askerId, announcementId);
         when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
                 .thenReturn(Optional.of(first));
+        when(firestoreService.readConversation(first.getFirestoreConversationId()))
+                .thenReturn(Optional.of(Map.of("kind", "INQUIRY", "quotaLifted", false)));
 
         ConversationEntity second = service.getOrCreateInquiry(askerId, announcementId);
 
         assertThat(second).isSameAs(first);
         verify(conversationRepository, times(1)).saveAndFlush(any(ConversationEntity.class));
         verify(firestoreService, times(1)).createConversation(anyString(), anyMap());
+        verify(firestoreService, never()).updateConversation(anyString(), anyMap());
+    }
+
+    // ── Rattrapage base ↔ Firestore (kind, quotaLifted, bidId) ──────────────
+
+    private ConversationEntity inquiryConv(String firestoreId) {
+        ConversationEntity c = ConversationEntity.forInquiry(askerId, announcementId, ownerId, firestoreId);
+        ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+        return c;
+    }
+
+    @Test
+    void reconcile_afterAFailedPromotion_writesTheThreeFieldsOfTheDatabase() {
+        UUID bidId = UUID.randomUUID();
+        ConversationEntity conv = InquiryTestFixtures.promoted(inquiryConv("conv_inq_p"), bidId,
+                java.time.LocalDateTime.now());
+        when(firestoreService.readConversation("conv_inq_p"))
+                .thenReturn(Optional.of(Map.of("kind", "INQUIRY", "quotaLifted", false, "senderId", "uid-asker")));
+
+        service.reconcileInquiryFirestore(conv);
+
+        verify(firestoreService).updateConversation("conv_inq_p",
+                Map.of("kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", bidId.toString()));
+        verify(firestoreService, never()).createConversation(anyString(), anyMap());
+    }
+
+    @Test
+    void reconcile_afterAFailedRelock_relocksFirestoreAndRemovesTheBid() {
+        ConversationEntity conv = inquiryConv("conv_inq_r2");
+        when(firestoreService.readConversation("conv_inq_r2")).thenReturn(Optional.of(Map.of(
+                "kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", UUID.randomUUID().toString())));
+
+        service.reconcileInquiryFirestore(conv);
+
+        verify(firestoreService).updateConversation("conv_inq_r2", Map.of(
+                "kind", "INQUIRY", "quotaLifted", false,
+                "bidId", com.google.cloud.firestore.FieldValue.delete()));
+    }
+
+    @Test
+    void reconcile_writesOnlyTheDriftingField() {
+        UUID bidId = UUID.randomUUID();
+        ConversationEntity conv = InquiryTestFixtures.promoted(inquiryConv("conv_inq_q"), bidId,
+                java.time.LocalDateTime.now());
+        when(firestoreService.readConversation("conv_inq_q")).thenReturn(Optional.of(Map.of(
+                "kind", "SENDER_TRAVELER", "quotaLifted", false, "bidId", bidId.toString())));
+
+        service.reconcileInquiryFirestore(conv);
+
+        verify(firestoreService).updateConversation("conv_inq_q", Map.of("quotaLifted", true));
+    }
+
+    @Test
+    void reconcile_withoutDrift_writesNothing() {
+        UUID bidId = UUID.randomUUID();
+        ConversationEntity open = inquiryConv("conv_inq_ok1");
+        ConversationEntity promoted = InquiryTestFixtures.promoted(inquiryConv("conv_inq_ok2"), bidId,
+                java.time.LocalDateTime.now());
+        when(firestoreService.readConversation("conv_inq_ok1"))
+                .thenReturn(Optional.of(Map.of("kind", "INQUIRY", "quotaLifted", false)));
+        when(firestoreService.readConversation("conv_inq_ok2")).thenReturn(Optional.of(Map.of(
+                "kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", bidId.toString())));
+
+        service.reconcileInquiryFirestore(open);
+        service.reconcileInquiryFirestore(promoted);
+        service.reconcileInquiryFirestore(open); // ré-appel : toujours rien
+
+        verify(firestoreService, never()).updateConversation(anyString(), anyMap());
+        verify(firestoreService, never()).createConversation(anyString(), anyMap());
+    }
+
+    @Test
+    void reconcile_parentMissingAtCreation_recreatesItWithTheInquiryFields() {
+        ConversationEntity conv = inquiryConv("conv_inq_absent");
+        when(firestoreService.readConversation("conv_inq_absent")).thenReturn(Optional.empty());
+
+        service.reconcileInquiryFirestore(conv);
+
+        ArgumentCaptor<Map<String, Object>> data = ArgumentCaptor.forClass(Map.class);
+        verify(firestoreService).createConversation(eq("conv_inq_absent"), data.capture());
+        assertThat(data.getValue())
+                .containsEntry("kind", "INQUIRY")
+                .containsEntry("quotaLifted", false)
+                .containsEntry("askerId", "uid-asker")
+                .doesNotContainKey("bidId");
+        verify(firestoreService, never()).updateConversation(anyString(), anyMap());
+    }
+
+    @Test
+    void reconcile_readFailure_isSwallowed_andWritesNothing() {
+        ConversationEntity conv = inquiryConv("conv_inq_down");
+        when(firestoreService.readConversation("conv_inq_down")).thenThrow(new RuntimeException("firestore down"));
+
+        service.reconcileInquiryFirestore(conv);
+
+        verify(firestoreService, never()).updateConversation(anyString(), anyMap());
+        verify(firestoreService, never()).createConversation(anyString(), anyMap());
+    }
+
+    @Test
+    void reconcile_ignoresThreadsWithoutAskerAndDeletedRows() {
+        ConversationEntity plain = new ConversationEntity(UUID.randomUUID(), askerId, ownerId, "conv_plain");
+        ConversationEntity deleted = inquiryConv("conv_inq_deleted");
+        deleted.setDeletedAt(java.time.LocalDateTime.now());
+
+        service.reconcileInquiryFirestore(plain);
+        service.reconcileInquiryFirestore(deleted);
+
+        verifyNoInteractions(firestoreService);
+    }
+
+    @Test
+    void existingThread_isReconciledWhenReturned() {
+        UUID bidId = UUID.randomUUID();
+        ConversationEntity promoted = InquiryTestFixtures.promoted(inquiryConv("conv_inq_e"), bidId,
+                java.time.LocalDateTime.now());
+        when(conversationRepository.findByAskerAndAnnouncement(askerId, announcementId))
+                .thenReturn(Optional.of(promoted));
+        when(firestoreService.readConversation("conv_inq_e"))
+                .thenReturn(Optional.of(Map.of("kind", "INQUIRY", "quotaLifted", false)));
+
+        assertThat(service.getOrCreateInquiry(askerId, announcementId)).isSameAs(promoted);
+
+        verify(firestoreService).updateConversation("conv_inq_e",
+                Map.of("kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", bidId.toString()));
+    }
+
+    @Test
+    void acceptanceOfAPromotedThread_reconcilesIt_withoutCreatingASecondThread() {
+        UUID bidId = UUID.randomUUID();
+        ConversationEntity promoted = InquiryTestFixtures.promoted(inquiryConv("conv_inq_acc"), bidId,
+                java.time.LocalDateTime.now());
+        when(conversationRepository.findByBidId(bidId)).thenReturn(Optional.of(promoted));
+        when(firestoreService.readConversation("conv_inq_acc"))
+                .thenReturn(Optional.of(Map.of("kind", "INQUIRY", "quotaLifted", false)));
+
+        assertThat(service.createConversationForBid(bidId, askerId, ownerId)).isSameAs(promoted);
+
+        verify(firestoreService).updateConversation("conv_inq_acc",
+                Map.of("kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", bidId.toString()));
+        verify(conversationRepository, never()).save(any());
+        verify(firestoreService, never()).addSystemMessage(anyString(), anyString());
+    }
+
+    @Test
+    void notifyRepair_ofAnAskerThreadWhoseParentExists_reconcilesWithASingleRead() {
+        ConversationEntity conv = inquiryConv("conv_inq_n");
+        when(firestoreService.readConversation("conv_inq_n")).thenReturn(Optional.of(Map.of(
+                "kind", "SENDER_TRAVELER", "quotaLifted", true, "bidId", "b")));
+
+        service.ensureFirestoreDocument(conv);
+
+        verify(firestoreService).updateConversation("conv_inq_n", Map.of(
+                "kind", "INQUIRY", "quotaLifted", false,
+                "bidId", com.google.cloud.firestore.FieldValue.delete()));
+        verify(firestoreService, never()).conversationExists(anyString());
+        verify(firestoreService, never()).createConversation(anyString(), anyMap());
     }
 
     @Test
@@ -210,7 +369,7 @@ class ConversationServiceInquiryTest {
     @Test
     void repairRecreatesInquiryFieldsInFirestore() {
         ConversationEntity conv = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_inq_r");
-        when(firestoreService.conversationExists("conv_inq_r")).thenReturn(false);
+        when(firestoreService.readConversation("conv_inq_r")).thenReturn(Optional.empty());
 
         service.ensureFirestoreDocument(conv);
 

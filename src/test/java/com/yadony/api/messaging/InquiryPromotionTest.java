@@ -164,7 +164,7 @@ class InquiryPromotionTest {
         UserEntity owner = user("uid-owner");
         when(userRepository.findById(askerId)).thenReturn(Optional.of(asker));
         when(userRepository.findById(ownerId)).thenReturn(Optional.of(owner));
-        when(firestoreService.conversationExists("conv_inq_abc")).thenReturn(false);
+        when(firestoreService.readConversation("conv_inq_abc")).thenReturn(Optional.empty());
 
         service.ensureFirestoreDocument(inquiry);
 
