@@ -14,6 +14,7 @@ import com.yadony.api.payments.hold.PayoutHoldStatus;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
+import com.yadony.api.tracking.events.ParcelDepositedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -132,10 +133,68 @@ public class DeliveryEventListener {
         this.netCalculator = new ReleaseNetCalculator(voucherService);
     }
 
+    /**
+     * Livraison confirmée. Un colis payé au dépôt ({@code DEPOSIT}) n'est jamais versé ici : son versement part au
+     * dépôt ({@link #handleParcelDeposited}) ou par les rattrapages ({@link DeliveredEscrowReleaser}, libération forcée
+     * admin). Audit {@code DELIVERY_RELEASE_SKIPPED_DEPOSIT}.
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async
     public void handleDeliveryConfirmed(DeliveryConfirmedEvent event) {
         release(new ReleaseTrigger(event.getBidId(), event.getSenderId(), event.getTravelerId(), SOURCE_DELIVERY));
+    }
+
+    /**
+     * Colis payé au dépôt, déposé chez le transporteur (scan DEPART, publié une seule fois par {@code TrackingService}) :
+     * le transporteur est payé maintenant, par exactement le même chemin que la livraison (mêmes gardes dans le même
+     * ordre, même claim atomique ESCROW → RELEASED, même clé Stripe {@code transfer-<paymentId>-r<n>}, même payout
+     * pawaPay). Un colis en espèces n'a aucun argent plateforme : rien ne part. Un événement rejoué ne trouve plus le
+     * paiement en séquestre : rien ne part.
+     *
+     * <p>Échec technique (exception, capture refusée, aucun paiement) : l'argent reste en séquestre et l'alerte
+     * {@code DEPOSIT_RELEASE_FAILED_<bidId>} est levée (une seule) ; le rattrapage passe par
+     * {@link DeliveredEscrowReleaser} (séquestre tardif, resynchronisation, auto-réparation après livraison) ou par la
+     * libération forcée admin. L'alerte J+48 de {@link EscrowScheduler} couvre un dépôt jamais versé.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void handleParcelDeposited(ParcelDepositedEvent event) {
+        releaseAtDeposit(event);
+    }
+
+    /** Versement au dépôt, issue rendue (tests). Ne lève jamais : un échec technique alerte et laisse le séquestre. */
+    EscrowReleaseOutcome releaseAtDeposit(ParcelDepositedEvent event) {
+        EscrowReleaseOutcome outcome;
+        try {
+            outcome = release(new ReleaseTrigger(event.bidId(), event.senderId(), event.travelerId(), SOURCE_DEPOSIT));
+        } catch (RuntimeException e) {
+            log.error("Versement au dépôt du colis {} en échec : le paiement reste en séquestre", event.bidId(), e);
+            reportDepositFailure(event, "versement refusé (" + DeliveredEscrowReleaser.rootMessage(e) + ")");
+            return EscrowReleaseOutcome.TRANSFER_FAILED;
+        }
+        if (outcome == EscrowReleaseOutcome.CAPTURE_FAILED) {
+            reportDepositFailure(event, "capture du séquestre impossible (voir l'alerte ESCROW_CAPTURE_FAILED)");
+        } else if (outcome == EscrowReleaseOutcome.NO_PAYMENT) {
+            reportDepositFailure(event, "aucun paiement retrouvé pour ce colis");
+        }
+        return outcome;
+    }
+
+    /** Préfixe (23) + UUID du colis (36) = 59, sous la limite de 60 de {@code admin_alerts.type}. */
+    public static final String DEPOSIT_FAILED_ALERT_PREFIX = "DEPOSIT_RELEASE_FAILED_";
+
+    private void reportDepositFailure(ParcelDepositedEvent event, String reason) {
+        try {
+            alertEscalator.raiseOnce(DEPOSIT_FAILED_ALERT_PREFIX + event.bidId(),
+                    "Colis déposé mais versement au transporteur impossible pour le colis " + event.bidId() + " ("
+                            + reason + ") : l'argent reste en séquestre, utilisez « Forcer le versement » après correction",
+                    Map.of("bidId", event.bidId().toString(),
+                            "travelerId", String.valueOf(event.travelerId()),
+                            "reason", reason,
+                            "source", SOURCE_DEPOSIT));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {}{} non levée", DEPOSIT_FAILED_ALERT_PREFIX, event.bidId(), alertFailure);
+        }
     }
 
     /**
@@ -191,6 +250,8 @@ public class DeliveryEventListener {
     static final String SOURCE_DELIVERY = "delivery";
     static final String SOURCE_UNCLAIMED = "unclaimed";
     static final String SOURCE_LATE_ESCROW = "late-escrow";
+    /** Dépôt d'un colis payé au dépôt ({@link #handleParcelDeposited}). */
+    static final String SOURCE_DEPOSIT = "deposit";
 
     /**
      * Alerte « colis livré, paiement jamais passé en séquestre ». {@code admin_alerts.type} est
@@ -209,10 +270,32 @@ public class DeliveryEventListener {
         java.util.UUID getSenderId() { return senderId; }
         java.util.UUID getTravelerId() { return travelerId; }
         boolean unclaimed() { return SOURCE_UNCLAIMED.equals(source); }
+        boolean deposit() { return SOURCE_DEPOSIT.equals(source); }
     }
 
     private EscrowReleaseOutcome release(ReleaseTrigger event) {
         BidEntity bid = bidRepository.findById(event.getBidId()).orElse(null);
+        // Défense en profondeur : seul un colis payé au dépôt ET déposé (DEPART enregistré, encore dans le parcours)
+        // se verse au dépôt. Jamais un colis payé à la livraison, quel que soit l'émetteur de l'événement.
+        if (event.deposit() && !DepositRelease.depositedAndPayable(bid, bidRepository)) {
+            boolean deliveryTrigger = !DepositRelease.paidAtDeposit(bid);
+            log.warn("Déclencheur dépôt ignoré pour le colis {} : {}", event.getBidId(),
+                    deliveryTrigger ? "colis payé à la livraison" : "colis non déposé ou sorti du parcours");
+            auditService.log("BID", event.getBidId(), deliveryTrigger
+                            ? "DEPOSIT_RELEASE_IGNORED_DELIVERY_TRIGGER" : "DEPOSIT_RELEASE_IGNORED_NOT_DEPOSITED",
+                    event.getTravelerId(), Map.of("bidId", event.getBidId().toString(),
+                            "bidStatus", bid != null ? bid.getStatus().name() : "UNKNOWN",
+                            "payoutTrigger", bid != null && bid.getPayoutTrigger() != null
+                                    ? bid.getPayoutTrigger().name() : "UNKNOWN"));
+            return EscrowReleaseOutcome.NOT_DEPOSITED;
+        }
+        // Livraison d'un colis payé au dépôt : rien de financier ici (versé au dépôt, ou rattrapé ailleurs).
+        if (SOURCE_DELIVERY.equals(event.source()) && DepositRelease.paidAtDeposit(bid)) {
+            log.info("Livraison du colis {} payé au dépôt : aucun versement à la livraison", event.getBidId());
+            auditService.log("BID", event.getBidId(), "DELIVERY_RELEASE_SKIPPED_DEPOSIT", event.getTravelerId(),
+                    Map.of("bidId", event.getBidId().toString()));
+            return EscrowReleaseOutcome.PAID_AT_DEPOSIT;
+        }
         if (bid != null && bid.getPaymentMethod() == PaymentMethod.CASH) {
             log.debug("CASH bid {} — no Stripe escrow to release", event.getBidId());
             return EscrowReleaseOutcome.CASH;
@@ -247,7 +330,8 @@ public class DeliveryEventListener {
                 auditService.log("PAYMENT", payment.getId(), "DELIVERY_PAYMENT_NOT_IN_ESCROW",
                         event.getBidId(), Map.of("bidId", event.getBidId().toString()));
                 alertEscalator.raiseOnce(NOT_IN_ESCROW_ALERT_PREFIX + payment.getId(),
-                        "Colis livré mais paiement " + payment.getId() + " jamais passé en séquestre (PENDING) : "
+                        (event.deposit() ? "Colis déposé" : "Colis livré") + " mais paiement " + payment.getId()
+                                + " jamais passé en séquestre (PENDING) : "
                                 + "le voyageur ne sera pas payé, l'autorisation carte expire à J+7",
                         Map.of("paymentId", payment.getId().toString(), "bidId", event.getBidId().toString(),
                                 "amount", String.valueOf(payment.getAmount())));
@@ -450,7 +534,9 @@ public class DeliveryEventListener {
                 ? "ESCROW_RELEASED_UNCLAIMED"
                 : payment.isLegacyDestinationCharge()
                         ? "ESCROW_RELEASED_LEGACY"
-                        : "ESCROW_RELEASED_TRANSFER";
+                        : event.deposit()
+                                ? "ESCROW_RELEASED_DEPOSIT"
+                                : "ESCROW_RELEASED_TRANSFER";
         if (payment.isLegacyDestinationCharge()) {
             // Destination charge historique : la capture du PaymentIntent verse au voyageur
             // (transfer_data posé à la création). Faite en phase 2, clé capture-<paymentId>.

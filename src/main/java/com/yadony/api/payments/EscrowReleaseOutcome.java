@@ -47,6 +47,10 @@ public enum EscrowReleaseOutcome {
     CASH(false, "Colis payé en espèces : pas de séquestre"),
     /** Aucun paiement trouvé pour ce colis. */
     NO_PAYMENT(false, "Aucun paiement trouvé pour ce colis"),
+    /** Déclencheur « dépôt » sur un colis qui n'est pas payé au dépôt, ou pas (plus) déposé : rien ne part. */
+    NOT_DEPOSITED(false, "Colis non versable au dépôt (payé à la livraison, ou pas déposé) : aucun versement"),
+    /** Livraison d'un colis payé au dépôt : son versement part au dépôt, jamais à la livraison. */
+    PAID_AT_DEPOSIT(false, "Colis payé au dépôt : la livraison ne déclenche aucun versement"),
     /** Le colis n'est pas livré : le versement partira à la livraison. */
     NOT_DELIVERED(false, "");
 

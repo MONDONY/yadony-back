@@ -790,16 +790,26 @@ public class NotificationDispatcher {
     public void onPaymentReleased(PaymentReleasedEvent event) {
         Map<String, String> data = Map.of("type", "PAYMENT_RELEASED", "bidId", event.getBidId().toString());
         if (event.isMobileMoney()) {
-            var text = NotificationTexts.mobileMoneyPayoutSent(messagesFor(event.getTravelerId()),
-                    NotificationTexts.mobileMoneyAmount(event.getAmount(), event.getCurrency()));
+            String amount = NotificationTexts.mobileMoneyAmount(event.getAmount(), event.getCurrency());
+            var text = event.isDeposit()
+                    ? NotificationTexts.mobileMoneyPayoutSentAtDeposit(messagesFor(event.getTravelerId()), amount)
+                    : NotificationTexts.mobileMoneyPayoutSent(messagesFor(event.getTravelerId()), amount);
             notifyUser(event.getTravelerId(), text.title(), text.body(), data);
-            return;
+        } else {
+            // Le voyageur voit ce qu'il touche (net), dans la devise du paiement.
+            BigDecimal shown = event.getTravelerNet() != null ? event.getTravelerNet() : event.getAmount();
+            String amount = NotificationTexts.amount(shown, event.getCurrency());
+            var text = event.isDeposit()
+                    ? NotificationTexts.paymentReleasedAtDeposit(messagesFor(event.getTravelerId()), amount)
+                    : NotificationTexts.paymentReleased(messagesFor(event.getTravelerId()), amount);
+            notifyCritical(event.getTravelerId(), text.title(), text.body(), data);
         }
-        // Le voyageur voit ce qu'il touche (net), dans la devise du paiement.
-        BigDecimal shown = event.getTravelerNet() != null ? event.getTravelerNet() : event.getAmount();
-        var text = NotificationTexts.paymentReleased(messagesFor(event.getTravelerId()),
-                NotificationTexts.amount(shown, event.getCurrency()));
-        notifyCritical(event.getTravelerId(), text.title(), text.body(), data);
+        // Colis payé au dépôt : l'expéditeur apprend que son colis est déposé et que le transporteur est payé. Un
+        // seul PaymentReleasedEvent par versement (finalisation unique) : une seule notification.
+        if (event.isDeposit() && event.getSenderId() != null) {
+            var forSender = NotificationTexts.depositPaidForSender(messagesFor(event.getSenderId()));
+            notifyUser(event.getSenderId(), forSender.title(), forSender.body(), data);
+        }
     }
 
     @EventListener @Async

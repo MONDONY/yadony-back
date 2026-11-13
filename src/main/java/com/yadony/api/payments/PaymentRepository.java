@@ -171,6 +171,27 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
                                                 @Param("windowStart") LocalDateTime windowStart,
                                                 org.springframework.data.domain.Pageable page);
 
+    /**
+     * Séquestres (tous rails) d'un colis payé au dépôt ({@code DEPOSIT}), hors espèces, déposé (étape DEPART) avant
+     * {@code depositedBefore} et toujours pas versé : le versement au dépôt n'est pas parti (garde, compte Connect,
+     * échec technique). Par {@code bid_id} ou par le colis rattaché au fil de négociation. Pour l'alerte J+48 du
+     * dépôt ({@link EscrowScheduler}) : rien n'est versé automatiquement.
+     */
+    @Query("""
+            SELECT p FROM PaymentEntity p, com.yadony.api.matching.BidEntity b
+             WHERE p.status = com.yadony.api.payments.PaymentStatus.ESCROW
+               AND b.payoutTrigger = com.yadony.api.matching.PayoutTrigger.DEPOSIT
+               AND (b.paymentMethod IS NULL OR b.paymentMethod <> com.yadony.api.payments.cash.PaymentMethod.CASH)
+               AND ((p.bidId IS NOT NULL AND b.id = p.bidId)
+                    OR (p.bidId IS NULL AND p.negotiationThreadId IS NOT NULL
+                        AND b.linkedNegotiationThreadId = p.negotiationThreadId))
+               AND EXISTS (SELECT 1 FROM com.yadony.api.tracking.TrackingEventEntity t
+                            WHERE t.bidId = b.id
+                              AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART
+                              AND t.scannedAt < :depositedBefore)
+            """)
+    List<PaymentEntity> findDepositedUnreleasedEscrows(@Param("depositedBefore") LocalDateTime depositedBefore);
+
     List<PaymentEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(LocalDateTime from, LocalDateTime to);
 
     /** Story 9.8 — GDPR: check active escrow payments for given bid IDs. */

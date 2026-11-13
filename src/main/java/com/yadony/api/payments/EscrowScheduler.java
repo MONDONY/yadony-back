@@ -38,12 +38,48 @@ public class EscrowScheduler {
         this.adminAlertRepository = adminAlertRepository;
     }
 
+    /**
+     * Colis payé au dépôt, déposé depuis plus de 48 h, transporteur toujours pas payé (séquestre en place) : alerte
+     * dédiée, une seule ouverte par paiement. Le versement au dépôt aurait dû partir au scan ; rien n'est versé ici.
+     */
+    static final String DEPOSIT_ALERT_TYPE = "DEPOSIT_J48_NOT_PAID";
+
     /** Every hour at minute 0. */
     @Scheduled(cron = "0 0 * * * *", zone = "UTC")
     @Transactional
     public void checkEscrowTimeouts() {
         LocalDateTime threshold = LocalDateTime.now(ZoneOffset.UTC).minusHours(ESCROW_TIMEOUT_HOURS);
+        alertTimedOutEscrows(threshold);
+        alertUnpaidDeposits(threshold);
+    }
 
+    private void alertUnpaidDeposits(LocalDateTime threshold) {
+        List<PaymentEntity> unpaid = paymentRepository.findDepositedUnreleasedEscrows(threshold);
+        if (unpaid == null || unpaid.isEmpty()) {
+            return;
+        }
+        List<AdminAlertEntity> existingAlerts = adminAlertRepository.findByTypeAndResolved(DEPOSIT_ALERT_TYPE, false);
+        java.util.Set<java.util.UUID> seen = new java.util.HashSet<>();
+        for (PaymentEntity payment : unpaid) {
+            String paymentIdStr = payment.getId().toString();
+            if (!seen.add(payment.getId()) || existingAlerts.stream()
+                    .anyMatch(a -> a.getPayload() != null && a.getPayload().contains(paymentIdStr))) {
+                continue;
+            }
+            AdminAlertEntity alert = new AdminAlertEntity();
+            alert.setType(DEPOSIT_ALERT_TYPE);
+            alert.setPayload(buildPayload(payment));
+            alert.setSeverity("WARN");
+            alert.setDetail("Colis payé au dépôt, déposé depuis plus de " + ESCROW_TIMEOUT_HOURS
+                    + " h, mais transporteur non payé : le paiement " + paymentIdStr + " reste en séquestre (bid "
+                    + payment.getBidId() + "). Voir les alertes de versement du colis, puis « Forcer le versement »");
+            alert.setResolved(false);
+            adminAlertRepository.save(alert);
+            log.warn("Deposit J+48 unpaid alert created for payment {}", paymentIdStr);
+        }
+    }
+
+    private void alertTimedOutEscrows(LocalDateTime threshold) {
         List<PaymentEntity> timedOut = paymentRepository
                 .findByStatusAndCreatedAtBefore(PaymentStatus.ESCROW, threshold);
 
