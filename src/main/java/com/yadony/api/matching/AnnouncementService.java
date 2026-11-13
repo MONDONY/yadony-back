@@ -153,6 +153,12 @@ public class AnnouncementService {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-volume-required",
                     "problem.boat-volume-required");
         }
+        // Un trajet au m³ n'a pas de kilos : le « kilo libre » (aucune limite de poids) le ferait passer dans les
+        // filtres et les recherches en kilos.
+        if (perM3 && request.capacityUnit() == CapacityUnit.KG_FREE) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-volume-unit-invalid",
+                    "problem.boat-volume-unit-invalid");
+        }
     }
 
     /**
@@ -1910,6 +1916,9 @@ public class AnnouncementService {
         }
         if (request.capacityUnit() != null) {
             announcement.setCapacityUnit(request.capacityUnit());
+        } else if (pricedPerM3 && announcement.getCapacityUnit() == CapacityUnit.KG_FREE) {
+            // Trajet passé au m³ qui était en kilo libre : l'unité en kilos n'a plus de sens.
+            announcement.setCapacityUnit(ParcelFitRules.defaultCapacityUnit(TransportMode.BOAT));
         }
         // Le mode validé plus haut est celui qu'on enregistre : sans cette écriture, un trajet resté
         // en mode KG recevait le prix 0 d'une demande en mode grille et la base refusait la ligne
@@ -2065,7 +2074,9 @@ public class AnnouncementService {
                 && com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(announcement.getPublishedAt())
                         .equals(com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(
                                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
-        // Un brouillon bateau ne sort que d'un compte encore vérifié (badge retiré depuis la création).
+        // Un brouillon bateau ne sort que si le mode est encore proposé (interrupteur d'abord, comme à la création),
+        // puis d'un compte encore vérifié (badge retiré depuis la création).
+        transportModeGuard.assertTripModeAllowed(announcement.getTransportMode(), null);
         transportModeGuard.assertBoatCarrierAllowed(announcement.getTransportMode(), null, user);
         assertCanPublish(user, !alreadyCountedThisMonth);
         assertStripeCapability(user, announcement.getAcceptedPaymentMethods());

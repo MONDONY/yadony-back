@@ -93,9 +93,12 @@ public final class ParcelFitRules {
         return value == null ? null : BigDecimal.valueOf(value);
     }
 
-    /** Route : kilo exact (le voyageur donne un nombre de kilos) ; sinon valise de 23 kg. */
+    /**
+     * Route et bateau : kilo exact (le voyageur donne un nombre de kilos, ou le volume au m³ pour un bateau
+     * vendu au m³) ; sinon valise de 23 kg. La valise est une règle d'avion : un bateau n'en reçoit jamais.
+     */
     public static CapacityUnit defaultCapacityUnit(TransportMode mode) {
-        return mode == TransportMode.CAR || mode == TransportMode.BUS
+        return mode == TransportMode.CAR || mode == TransportMode.BUS || mode == TransportMode.BOAT
                 ? CapacityUnit.KG_EXACT
                 : CapacityUnit.SUITCASE_23KG;
     }
@@ -119,7 +122,8 @@ public final class ParcelFitRules {
     /**
      * Le volume d'un colis tient dans le volume restant d'un trajet au m³ ; un côté inconnu (trajet sans volume,
      * demande sans dimensions) ne bloque rien (spec §5.6). Logique pure : la mise en relation reste fermée aux
-     * trajets au m³ jusqu'à la réservation au volume (BB2), qui s'en servira.
+     * trajets au m³ jusqu'à la réservation au volume (BB2), qui s'en servira. Câblé en BB2 : aucun appelant en
+     * production avant (testée seule).
      */
     public static boolean fitsVolume(BigDecimal availableVolumeM3, BigDecimal volumeM3) {
         return availableVolumeM3 == null || volumeM3 == null || volumeM3.compareTo(availableVolumeM3) <= 0;

@@ -4229,6 +4229,29 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("brouillon bateau, interrupteur éteint → 422 transport-mode-disabled, avant le contrôle du profil")
+        void publishAnnouncement_boatDraft_switchOff_throws422BeforeTheProfileGuard() {
+            UserEntity user = verifiedProUser();
+            // Profil non vérifié : si le profil passait avant l'interrupteur, ce serait un 403.
+            user.setProAccount(false);
+            user.setGpPro(false);
+            AnnouncementEntity draft = draftEntityOwnedBy(user);
+            draft.setTransportMode(TransportMode.BOAT);
+            org.mockito.Mockito.lenient().when(transportSettings.transportBoatEnabled()).thenReturn(false);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findById(draft.getId())).thenReturn(Optional.of(draft));
+
+            assertThatThrownBy(() -> announcementService.publishAnnouncement(draft.getId(), FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                        assertThat(ex.getErrorCode()).isEqualTo("transport-mode-disabled");
+                    });
+
+            assertThat(draft.getStatus()).isEqualTo(AnnouncementStatus.DRAFT);
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("brouillon bateau d'un GP Pro → publié")
         void publishAnnouncement_boatDraft_gpPro_publishes() {
             UserEntity user = verifiedProUser();

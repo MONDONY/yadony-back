@@ -55,6 +55,7 @@ class AnnouncementBoatValidationTest {
         LocalDate arrivalDateMax = DEP.plusDays(30);
         BigDecimal volume = new BigDecimal("2.5");
         BigDecimal pricePerM3 = new BigDecimal("600");
+        CapacityUnit capacityUnit;
 
         Req mode(TransportMode m) { mode = m; return this; }
         Req kg(String kg, String price) {
@@ -65,12 +66,13 @@ class AnnouncementBoatValidationTest {
         Req pricingMode(PricingMode p) { pricingMode = p; return this; }
         Req arrival(LocalDate min, LocalDate max) { arrivalDate = min; arrivalDateMax = max; return this; }
         Req volume(String v) { volume = v == null ? null : new BigDecimal(v); return this; }
+        Req unit(CapacityUnit u) { capacityUnit = u; return this; }
         Req pricePerM3(String p) { pricePerM3 = p == null ? null : new BigDecimal(p); return this; }
 
         AnnouncementRequest build() {
             return new AnnouncementRequest("Marseille", "Dakar", DEP, LocalTime.of(10, 0), null,
                     new AddressDto("Port", 43.3, 5.37), new AddressDto("Port", 14.69, -17.44),
-                    availableKg, pricePerKg, mode, null, null, null, null, null, pricingMode,
+                    availableKg, pricePerKg, mode, null, null, null, null, capacityUnit, pricingMode,
                     null, null, DEP.atTime(7, 30), false, false, null, arrivalDate, null, null, null,
                     arrivalDateMax, volume, pricePerM3);
         }
@@ -127,6 +129,15 @@ class AnnouncementBoatValidationTest {
     @DisplayName("au m³ sans volume : 422 boat-volume-required")
     void boatPerM3WithoutVolume_422() {
         assertProblem(boat().volume(null), "boat-volume-required");
+    }
+
+    @Test
+    @DisplayName("au m³ en kilo libre : 422 boat-volume-unit-invalid ; autres unités et bateau au kilo acceptés")
+    void boatPerM3WithFreeKiloUnit_422() {
+        assertProblem(boat().unit(CapacityUnit.KG_FREE), "boat-volume-unit-invalid");
+        assertValid(boat().unit(CapacityUnit.KG_EXACT));
+        assertValid(boat());
+        assertValid(boat().pricePerM3(null).volume(null).kg("500", "4").unit(CapacityUnit.KG_FREE));
     }
 
     @Test

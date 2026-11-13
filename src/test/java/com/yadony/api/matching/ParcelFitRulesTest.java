@@ -111,7 +111,7 @@ class ParcelFitRulesTest {
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.CAR)).isEqualTo(CapacityUnit.KG_EXACT);
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.BUS)).isEqualTo(CapacityUnit.KG_EXACT);
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.PLANE)).isEqualTo(CapacityUnit.SUITCASE_23KG);
-        assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.BOAT)).isEqualTo(CapacityUnit.SUITCASE_23KG);
+        assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.BOAT)).isEqualTo(CapacityUnit.KG_EXACT);
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.TRAIN)).isEqualTo(CapacityUnit.SUITCASE_23KG);
         assertThat(ParcelFitRules.defaultCapacityUnit(TransportMode.OTHER)).isEqualTo(CapacityUnit.SUITCASE_23KG);
         assertThat(ParcelFitRules.defaultCapacityUnit(null)).isEqualTo(CapacityUnit.SUITCASE_23KG);
