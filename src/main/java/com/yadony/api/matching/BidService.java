@@ -1563,7 +1563,36 @@ public class BidService {
                 amendmentSummary.prefetch(bids));
         prefetch.setLatestDelays(TripDelays.latestByAnnouncement(tripDelayRepository,
                 announcements.stream().map(AnnouncementEntity::getId).toList()));
+        List<UUID> departedIds = bids.stream().filter(b -> MAY_HAVE_DEPART.contains(b.getStatus()))
+                .map(BidEntity::getId).toList();
+        Map<UUID, LocalDateTime> departScans = new HashMap<>();
+        if (!departedIds.isEmpty()) {
+            BidResponsePrefetch.loadInChunks(departedIds, bidRepository::findDepartScannedAtByBidIdIn)
+                    .stream().filter(s -> s.getBidId() != null && s.getScannedAt() != null)
+                    .forEach(s -> departScans.put(s.getBidId(), s.getScannedAt()));
+        }
+        prefetch.setDepartScans(departScans);
         return prefetch;
+    }
+
+    /**
+     * Statuts où un DEPART peut exister : seul ce scan fait passer un colis ACCEPTED à HANDED_OVER, et un colis
+     * déposé peut ensuite être annulé, refusé ou déclaré absent. Les autres (en attente, accepté, refusé avant
+     * remise...) n'en ont jamais : aucune lecture pour eux.
+     */
+    private static final java.util.Set<BidStatus> MAY_HAVE_DEPART = java.util.EnumSet.of(
+            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED,
+            BidStatus.CANCELLED, BidStatus.NO_SHOW, BidStatus.PARCEL_REFUSED);
+
+    /** Heure (UTC) du dépôt du colis ({@link BidResponse#depositedAt}), null sans étape DEPART. */
+    private java.time.OffsetDateTime depositedAt(BidEntity bid, BidResponsePrefetch prefetch) {
+        if (bid.getId() == null || !MAY_HAVE_DEPART.contains(bid.getStatus())) {
+            return null;
+        }
+        LocalDateTime at = prefetch != null
+                ? prefetch.departScannedAt(bid.getId(), () -> bidRepository.findDepartScannedAt(bid.getId()))
+                : bidRepository.findDepartScannedAt(bid.getId());
+        return at != null ? at.atOffset(ZoneOffset.UTC) : null;
     }
 
     /** Colis auxquels le dernier retard du trajet est servi (ceux dont l'expéditeur a été prévenu). */
@@ -1903,7 +1932,8 @@ public class BidService {
                 latestTripDelay(announcement, bid, prefetch),
                 announcement != null ? announcement.getArrivalDateMax() : null,
                 (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name(),
-                bid.getVolumeM3()
+                bid.getVolumeM3(),
+                depositedAt(bid, prefetch)
         );
     }
 

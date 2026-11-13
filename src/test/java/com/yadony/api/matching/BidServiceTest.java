@@ -2969,6 +2969,54 @@ class BidServiceTest {
     }
 
     @Test
+    @DisplayName("depositedAt : null avant le dépôt (aucune lecture), heure UTC du DEPART ensuite")
+    void getBidById_depositedAt_nullBeforeDeposit_departTimeAfter() {
+        BidEntity bid = buildBid();
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+        java.time.LocalDateTime depart = java.time.LocalDateTime.of(2026, 11, 26, 9, 30);
+
+        bid.setStatus(BidStatus.ACCEPTED);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).depositedAt()).isNull();
+        verify(bidRepository, never()).findDepartScannedAt(any());
+
+        bid.setStatus(BidStatus.HANDED_OVER);
+        when(bidRepository.findDepartScannedAt(BID_ID)).thenReturn(depart);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).depositedAt())
+                .isEqualTo(depart.atOffset(java.time.ZoneOffset.UTC));
+    }
+
+    @Test
+    @DisplayName("depositedAt d'une liste : une lecture groupée, chaque colis reçoit son DEPART, aucune lecture à l'unité")
+    void getMyBids_depositedAt_prefetchedOnce() {
+        UserEntity sender = buildSender();
+        BidEntity deposited = buildBid();
+        deposited.setStatus(BidStatus.IN_TRANSIT);
+        BidEntity accepted = buildBid();
+        setId(accepted, UUID.randomUUID());
+        accepted.setStatus(BidStatus.ACCEPTED);
+        java.time.LocalDateTime depart = java.time.LocalDateTime.of(2026, 11, 26, 9, 30);
+        BidRepository.DepartScan scan = new BidRepository.DepartScan() {
+            public UUID getBidId() { return BID_ID; }
+            public java.time.LocalDateTime getScannedAt() { return depart; }
+        };
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(bidRepository.findBySenderId(SENDER_ID)).thenReturn(List.of(deposited, accepted));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(bidRepository.findDepartScannedAtByBidIdIn(List.of(BID_ID))).thenReturn(List.of(scan));
+
+        List<BidResponse> result = bidService.getMyBids(SENDER_UID);
+
+        assertThat(result).filteredOn(r -> r.id().equals(BID_ID)).singleElement()
+                .extracting(BidResponse::depositedAt).isEqualTo(depart.atOffset(java.time.ZoneOffset.UTC));
+        assertThat(result).filteredOn(r -> r.id().equals(accepted.getId())).singleElement()
+                .extracting(BidResponse::depositedAt).isNull();
+        verify(bidRepository, never()).findDepartScannedAt(any());
+    }
+
+    @Test
     @DisplayName("voyageur : téléphone du destinataire masqué jusqu'au retrait, servi à partir de HANDED_OVER")
     void getBidById_traveler_recipientPhoneOnlyAfterHandover() {
         BidEntity bid = buildBid();

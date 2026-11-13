@@ -183,7 +183,10 @@ class GuestDataExposureIT {
             "promoCode",
             // Regle de versement d'un colis accepte (BidResponse, V383) : moment ou l'argent part vers le
             // transporteur. Servie aux seules parties du colis, jamais sur une surface invite.
-            "payoutTrigger");
+            "payoutTrigger",
+            // Heure du depot du colis chez le transporteur (BidResponse, etape DEPART) : servie aux seules
+            // parties du colis, jamais sur une surface invite.
+            "depositedAt");
 
     /**
      * Toute cle JSON servie a un invite, a n'importe quelle profondeur.

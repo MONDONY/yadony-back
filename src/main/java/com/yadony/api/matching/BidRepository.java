@@ -629,6 +629,26 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("UPDATE BidEntity b SET b.status = b.status WHERE b.id = :id")
     int lockForUpdate(@Param("id") UUID id);
 
+    /**
+     * Heure serveur (UTC) de l'étape DEPART du colis (dépôt ou remise au transporteur), null tant qu'elle n'est pas
+     * enregistrée. Un seul DEPART par colis (index unique V48) ; {@code MIN} rend une ligne même sans DEPART.
+     */
+    @Query("SELECT MIN(t.scannedAt) FROM TrackingEventEntity t WHERE t.bidId = :bidId "
+            + "AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART")
+    LocalDateTime findDepartScannedAt(@Param("bidId") UUID bidId);
+
+    /** Heure de l'étape DEPART de chaque colis donné qui en a une (lecture groupée d'une liste). */
+    @Query("SELECT t.bidId AS bidId, MIN(t.scannedAt) AS scannedAt FROM TrackingEventEntity t "
+            + "WHERE t.bidId IN :bidIds AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART "
+            + "GROUP BY t.bidId")
+    List<DepartScan> findDepartScannedAtByBidIdIn(@Param("bidIds") java.util.Collection<UUID> bidIds);
+
+    /** Heure de l'étape DEPART d'un colis. */
+    interface DepartScan {
+        UUID getBidId();
+        LocalDateTime getScannedAt();
+    }
+
     /** Expéditeur et voyageur d'un colis. */
     interface BidParties {
         UUID getSenderId();

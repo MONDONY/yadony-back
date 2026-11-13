@@ -27,7 +27,9 @@ import com.yadony.api.tracking.events.ConfirmationCodeBlockedEvent;
 import com.yadony.api.tracking.events.DeliveryConfirmedEvent;
 import com.yadony.api.tracking.events.LateHandoverScanEvent;
 import com.yadony.api.tracking.events.ParcelDepartedEvent;
+import com.yadony.api.tracking.events.ParcelDepositedEvent;
 import com.yadony.api.tracking.events.ParcelInTransitEvent;
+import com.yadony.api.matching.PayoutTrigger;
 import com.yadony.api.matching.reception.BidRecipientLinkRepository;
 import com.yadony.api.matching.reception.ReceptionLinkStatus;
 import com.google.zxing.BarcodeFormat;
@@ -253,7 +255,8 @@ public class TrackingService {
                 stepLabel,
                 paymentStatus,
                 announcement.getArrivalInstructions(),
-                announcement.getTransportMode() != null ? announcement.getTransportMode().name() : null
+                announcement.getTransportMode() != null ? announcement.getTransportMode().name() : null,
+                (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name()
         );
     }
 
@@ -337,6 +340,14 @@ public class TrackingService {
 
         String photoKey = validatedPhotoKey(bid, request.photoUrl());
 
+        // Colis payé au dépôt : le transporteur est payé à ce scan, sans retour possible. La photo du
+        // colis déposé en est la preuve : obligatoire, contrôlée avant toute écriture.
+        if (request.eventType() == TrackingEventType.DEPART && bid.getStatus() == BidStatus.ACCEPTED
+                && bid.getPayoutTrigger() == PayoutTrigger.DEPOSIT && photoKey == null) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "boat-deposit-photo-required", "problem.boat-deposit-photo-required");
+        }
+
         // Le scan TRANSIT est facultatif, le DEPART ne l'est pas : c'est lui qui
         // génère le code de confirmation du destinataire. Un TRANSIT scanné avant
         // tout DEPART sautait cette génération et laissait la livraison
@@ -391,6 +402,17 @@ public class TrackingService {
                         traveler.getId(), Map.of("bidId", bid.getId().toString()));
                 // Le destinataire qui suit le colis dans l'app voit désormais son code.
                 eventPublisher.publishEvent(new ParcelDepartedEvent(bid.getId()));
+            }
+            // Colis payé au dépôt : DEPART créé + passage HANDED_OVER = dépôt chez le transporteur, une
+            // seule fois (un rejeu est renvoyé plus haut sans arriver ici). Hors du bloc du code de
+            // retrait : un code déjà présent ne doit pas retenir le versement. payments verse après le
+            // commit du scan, jamais dans cette transaction.
+            if (bid.getPayoutTrigger() == PayoutTrigger.DEPOSIT) {
+                auditService.log("BID", bid.getId(), "PARCEL_DEPOSITED", traveler.getId(), Map.of(
+                        "bidId", bid.getId().toString(),
+                        "trackingEventId", String.valueOf(event.getId()),
+                        "offline", String.valueOf(request.offlineTimestamp() != null)));
+                eventPublisher.publishEvent(new ParcelDepositedEvent(bid.getId(), bid.getSenderId(), traveler.getId()));
             }
             bidRepository.save(bid);
         }

@@ -50,6 +50,8 @@ final class BidResponsePrefetch {
     private final BidAmendmentSummaryPort.Prefetch amendments;
     /** Dernier retard annoncé de chaque trajet de la liste ({@link TripDelays}), null tant que non chargé. */
     private Map<UUID, com.yadony.api.matching.dto.TripDelayInfo> latestDelays;
+    /** Heure de l'étape DEPART des colis de la liste qui en ont une, null tant que non chargée. */
+    private Map<UUID, java.time.LocalDateTime> departScans;
     /** Taux de commission résolus pendant la conversion, par couple voyageur/expéditeur. */
     private final Map<String, BigDecimal> commissionRates = new HashMap<>();
 
@@ -95,6 +97,15 @@ final class BidResponsePrefetch {
 
     void setLatestDelays(Map<UUID, com.yadony.api.matching.dto.TripDelayInfo> latestDelays) {
         this.latestDelays = latestDelays;
+    }
+
+    void setDepartScans(Map<UUID, java.time.LocalDateTime> departScans) {
+        this.departScans = departScans;
+    }
+
+    /** Heure de l'étape DEPART du colis : lue dans la table chargée avec la liste, sinon par {@code fallback}. */
+    java.time.LocalDateTime departScannedAt(UUID bidId, Supplier<java.time.LocalDateTime> fallback) {
+        return departScans != null ? departScans.get(bidId) : fallback.get();
     }
 
     /** Dernier retard du trajet : lu dans la table chargée avec la liste, sinon par {@code fallback}. */

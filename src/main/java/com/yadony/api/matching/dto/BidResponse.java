@@ -189,5 +189,11 @@ public record BidResponse(
          * réservation d'un trajet vendu au m³ ; null pour tout autre colis. Servi aux deux parties. Toujours
          * sérialisé (null explicite), champ ajouté : les anciennes apps l'ignorent. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        java.math.BigDecimal volumeM3
+        java.math.BigDecimal volumeM3,
+        /** Heure (UTC) du dépôt du colis chez le transporteur, c'est-à-dire de l'étape {@code DEPART} enregistrée par
+         * le serveur ; null tant que le colis n'est pas déposé. Pour un colis {@code DEPOSIT}, c'est le moment où le
+         * versement au transporteur est lancé. Servi aux deux parties. Toujours sérialisé (null explicite), champ
+         * ajouté : les anciennes apps l'ignorent. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        java.time.OffsetDateTime depositedAt
 ) {}
