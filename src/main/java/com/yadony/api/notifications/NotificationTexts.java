@@ -191,6 +191,12 @@ public final class NotificationTexts {
                 m.get("notification.handover-deadline-passed.body"));
     }
 
+    /** Autorisation carte expirée avant la réponse du voyageur : demande éteinte, rien de débité. */
+    public static NotificationText cardAuthorizationExpired(Messages m) {
+        return new NotificationText(m.get("notification.card-authorization-expired.title"),
+                m.get("notification.card-authorization-expired.body"));
+    }
+
     /** Variante expéditeur quand un paiement en séquestre lui est rendu intégralement. */
     public static NotificationText handoverDeadlinePassedRefunded(Messages m) {
         return new NotificationText(m.get("notification.handover-deadline-passed.title"),

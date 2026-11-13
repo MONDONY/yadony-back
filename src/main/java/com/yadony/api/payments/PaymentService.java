@@ -29,6 +29,7 @@ import com.yadony.api.matching.BidGridItemEntity;
 import com.yadony.api.matching.BidGridItemRepository;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.events.BidCardAuthorizationExpiredEvent;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.payments.dto.ConnectAccountResponse;
 import com.yadony.api.payments.dto.CreatePaymentRequest;
@@ -78,6 +79,11 @@ import java.util.UUID;
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+
+    /** Durée de vie d'une autorisation carte non capturée chez Stripe. */
+    static final java.time.Duration CARD_AUTHORIZATION_TTL = java.time.Duration.ofDays(7);
+    /** Motif posé par Stripe quand il libère seul une autorisation expirée. */
+    static final String CANCELLATION_REASON_AUTOMATIC = "automatic";
 
     /**
      * Comptes Connect vus complets chez Stripe depuis moins d'une heure. L'app appelle
@@ -1810,13 +1816,64 @@ public class PaymentService {
         paymentRepository.findByStripePaymentIntentId(pi.getId()).ifPresent(payment -> {
             if (payment.getStatus() == PaymentStatus.ESCROW
                     || payment.getStatus() == PaymentStatus.PENDING) {
+                boolean wasHeld = payment.getStatus() == PaymentStatus.ESCROW
+                        && payment.getCapturedAt() == null;
                 payment.setStatus(PaymentStatus.CANCELLED);
                 paymentRepository.save(payment);
                 auditService.log("PAYMENT", payment.getId(), "PAYMENT_INTENT_CANCELED",
                         payment.getBidId(), Map.of("piId", pi.getId()));
                 log.info("PaymentIntent {} canceled — payment {} set CANCELLED", pi.getId(), payment.getId());
+                if (wasHeld && payment.getBidId() != null
+                        && CANCELLATION_REASON_AUTOMATIC.equals(pi.getCancellationReason())) {
+                    expireBidOnLostAuthorization(payment.getBidId(), pi.getId());
+                }
             }
         });
+    }
+
+    /**
+     * Stripe libère seul une autorisation carte non capturée au bout d'environ 7 jours (motif
+     * {@code automatic}, jamais posé par nos propres annulations). Si le voyageur n'a pas encore
+     * accepté, la demande n'a plus d'argent derrière elle : elle est éteinte (EXPIRED) et
+     * l'expéditeur prévenu, au lieu de rester acceptable puis d'être transportée sans paiement.
+     * Rien à rembourser : la carte n'a jamais été débitée. Une demande déjà sortie de
+     * {@code PAYMENT_ESCROWED} (acceptée, refusée, annulée) n'est pas touchée.
+     */
+    private void expireBidOnLostAuthorization(UUID bidId, String piId) {
+        BidEntity bid = bidRepository.findByIdForUpdate(bidId).orElse(null);
+        if (bid == null || bid.getStatus() != BidStatus.PAYMENT_ESCROWED) {
+            return;
+        }
+        bid.setStatus(BidStatus.EXPIRED);
+        bid.setRejectionReason(BidCardAuthorizationExpiredEvent.REASON);
+        bidRepository.save(bid);
+        auditService.log("BID", bid.getId(), "BID_EXPIRED_CARD_AUTHORIZATION", null,
+                Map.of("reason", BidCardAuthorizationExpiredEvent.REASON, "piId", piId));
+        UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
+                .map(AnnouncementEntity::getTravelerId).orElse(null);
+        eventPublisher.publishEvent(new BidCardAuthorizationExpiredEvent(
+                bid.getId(), bid.getAnnouncementId(), bid.getSenderId(), travelerId));
+        log.warn("Bid {} expiré : autorisation carte {} expirée avant l'acceptation du voyageur", bidId, piId);
+    }
+
+    /**
+     * Vrai si l'argent d'une demande carte n'est plus garanti : paiement annulé (autorisation
+     * libérée), ou autorisation non capturée vieille de plus de 7 jours (webhook pas encore
+     * reçu). Garde de l'acceptation : un voyageur ne doit jamais accepter, puis transporter, un
+     * colis dont la capture échouera. Un paiement absent ou déjà capturé n'est pas « perdu ».
+     */
+    @Transactional(readOnly = true)
+    public boolean isCardAuthorizationLost(UUID bidId) {
+        return paymentRepository.findByBidId(bidId).map(payment -> {
+            if (payment.getStatus() == PaymentStatus.CANCELLED) {
+                return true;
+            }
+            return payment.getStatus() == PaymentStatus.ESCROW
+                    && payment.getCapturedAt() == null
+                    && payment.getCreatedAt() != null
+                    && payment.getCreatedAt().isBefore(
+                            java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minus(CARD_AUTHORIZATION_TTL));
+        }).orElse(false);
     }
 
     void handleTransferReversed(Event event) {

@@ -1011,6 +1011,17 @@ public class BidService {
 
         requireBidStatus(bid, BidStatus.PAYMENT_ESCROWED);
 
+        // L'autorisation carte ne vit qu'environ 7 jours : passé ce délai, la capture de
+        // l'acceptation échouerait et le colis serait transporté sans argent derrière lui.
+        // On refuse ici ; l'expéditeur est prévenu et peut repayer (la demande est éteinte par
+        // le webhook payment_intent.canceled, ou ici par l'âge si le webhook tarde).
+        if (bid.getPaymentMethod() == null || bid.getPaymentMethod().isCardEscrow()) {
+            if (paymentService.isCardAuthorizationLost(bid.getId())) {
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT,
+                        "payment-authorization-expired", "problem.payment-authorization-expired");
+            }
+        }
+
         // FLUTTER-GA : la date limite de dépôt n'était vérifiée qu'à la création de la
         // demande. Acceptée après coup, la demande devenait un colis à remettre à un
         // voyageur qui n'en attendait plus. HandoverDeadlineExpiryScheduler l'éteindra

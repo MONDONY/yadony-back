@@ -1719,6 +1719,29 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("autorisation carte expirée → 409, demande non acceptée, aucune capacité prise")
+        void acceptBid_cardAuthorizationLost_throwsConflict() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(paymentService.isCardAuthorizationLost(BID_ID)).thenReturn(true);
+
+            assertThatThrownBy(() -> bidService.acceptBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                            .isEqualTo("payment-authorization-expired"));
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PAYMENT_ESCROWED);
+            assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.valueOf(20));
+            verify(eventPublisher, never()).publishEvent(any(BidAcceptedEvent.class));
+            // Refus avant le passage à ACCEPTED : la règle de versement n'est jamais figée.
+            org.mockito.Mockito.verifyNoInteractions(payoutTriggerPolicy);
+        }
+
+        @Test
         @DisplayName("capacité insuffisante → 409 CONFLICT")
         void acceptBid_insufficientCapacity_throwsConflict() {
             UserEntity traveler = buildTraveler();
