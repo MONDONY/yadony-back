@@ -9,8 +9,10 @@ import java.util.List;
 import com.yadony.api.messaging.dto.BatchConversationRequest;
 import com.yadony.api.messaging.dto.BatchConversationResponse;
 import com.yadony.api.messaging.dto.ConversationResponse;
+import com.yadony.api.messaging.dto.InquiryRequest;
 import com.yadony.api.messaging.dto.LastMessageRequest;
 import jakarta.validation.Valid;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -120,6 +122,23 @@ public class ConversationController {
 
         UserEntity currentUser = resolveCurrentUser();
         ConversationEntity conv = conversationService.getOrCreateByBidId(bidId, currentUser.getId());
+        return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
+    }
+
+    // POST /conversations/inquiry — conversation de questions avant réservation (get or create).
+    // Deux premiers appels simultanés du même couple (demandeur, annonce) : le second viole
+    // conversations_inquiry_active_idx. getOrCreateInquiry est transactionnelle, la violation ne
+    // s'y rattrape pas ; on la reprend ici, hors transaction, d'un seul nouvel appel qui trouve
+    // alors la conversation du gagnant.
+    @PostMapping("/inquiry")
+    public ResponseEntity<ConversationResponse> openInquiry(@Valid @RequestBody InquiryRequest body) {
+        UserEntity currentUser = resolveCurrentUser();
+        ConversationEntity conv;
+        try {
+            conv = conversationService.getOrCreateInquiry(currentUser.getId(), body.announcementId());
+        } catch (DataIntegrityViolationException race) {
+            conv = conversationService.getOrCreateInquiry(currentUser.getId(), body.announcementId());
+        }
         return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
     }
 

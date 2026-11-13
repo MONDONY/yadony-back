@@ -563,11 +563,14 @@ public class ConversationService {
         userRepository.findAllById(userIds);
         List<UUID> bidIds = page.stream().map(ConversationEntity::getBidId)
             .filter(java.util.Objects::nonNull).distinct().toList();
-        if (bidIds.isEmpty()) {
-            return;
+        java.util.Set<UUID> announcementIds = new java.util.HashSet<>();
+        if (!bidIds.isEmpty()) {
+            bidRepository.findAllById(bidIds).stream()
+                .map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull)
+                .forEach(announcementIds::add);
         }
-        List<UUID> announcementIds = bidRepository.findAllById(bidIds).stream()
-            .map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull).distinct().toList();
+        page.stream().map(ConversationEntity::getAnnouncementId).filter(java.util.Objects::nonNull)
+            .forEach(announcementIds::add);
         if (!announcementIds.isEmpty()) {
             announcementRepository.findAllById(announcementIds);
         }
@@ -611,7 +614,13 @@ public class ConversationService {
                             java.time.LocalDateTime.now(java.time.ZoneOffset.UTC))
                     && other != null && !other.isHidePhoneNumber();
 
-            Optional<AnnouncementEntity> annOpt = announcementRepository.findById(bid.getAnnouncementId());
+        }
+
+        // Aperçu du trajet : annonce du bid, ou annonce visée par une conversation de questions
+        // (sans bid). Une conversation promue garde les deux, le bid fait foi.
+        UUID tripAnnouncementId = bidOpt.map(BidEntity::getAnnouncementId).orElse(conv.getAnnouncementId());
+        if (tripAnnouncementId != null) {
+            Optional<AnnouncementEntity> annOpt = announcementRepository.findById(tripAnnouncementId);
             if (annOpt.isPresent()) {
                 AnnouncementEntity ann = annOpt.get();
                 tripOrigin      = ann.getDepartureCity();
@@ -659,7 +668,10 @@ public class ConversationService {
                 deliveredAt,
                 deliveredAt == null ? null : deliveredAt.plusDays(messagePurgeAfterDays),
                 conv.isMessagesPurged())
-            .withTripTransportMode(tripTransportMode);
+            .withTripTransportMode(tripTransportMode)
+            .withInquiry(conv.getAnnouncementId(),
+                conv.isInquiry() && !conv.isQuotaLifted() ? InquiryPolicy.MESSAGE_LIMIT : null,
+                conv.isQuotaLifted());
     }
 
     /**

@@ -36,7 +36,7 @@ import java.util.UUID;
 public class ConversationMediaPolicy {
 
     /** Raison d'un refus, journalisée et utile aux tests ; le client ne reçoit que {@code media-not-allowed}. */
-    public enum Denial { CONVERSATION_UNAVAILABLE, OUT_OF_WINDOW, BLOCKED, MESSAGING_MUTED }
+    public enum Denial { CONVERSATION_UNAVAILABLE, OUT_OF_WINDOW, BLOCKED, MESSAGING_MUTED, INQUIRY_TEXT_ONLY }
 
     public static final String ERROR_CODE = "media-not-allowed";
 
@@ -82,6 +82,10 @@ public class ConversationMediaPolicy {
      */
     public Optional<Denial> check(ConversationEntity conv, UUID userId, BidEntity bid, UserEntity user,
                                   boolean visibilityChecked) {
+        // Messagerie avant réservation : texte seul, aucune photo tant qu'il n'y a pas de bid.
+        if (conv != null && conv.isInquiry()) {
+            return Optional.of(Denial.INQUIRY_TEXT_ONLY);
+        }
         LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
         // Le retour ne concerne que l'expéditeur et le voyageur : la conversation destinataire
         // garde la fenêtre du seul statut.

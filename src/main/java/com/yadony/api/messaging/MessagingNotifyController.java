@@ -91,6 +91,21 @@ public class MessagingNotifyController {
             }
         }
 
+        // Messagerie avant réservation : dernière activité à chaque message, et le premier message
+        // du demandeur rend le fil visible du créateur. Best-effort comme la preuve de contact.
+        if (conv.isInquiry()) {
+            try {
+                java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+                conversationRepository.markInquiryActivity(conv.getId(), now);
+                if (sender != null && sender.getId() != null && sender.getId().equals(conv.getAskerId())) {
+                    conversationRepository.markInquiryFirstMessage(conv.getId(), now);
+                }
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(MessagingNotifyController.class)
+                        .warn("markInquiryActivity a échoué pour la conversation {} : {}", conv.getId(), e.toString());
+            }
+        }
+
         String preview = request.messagePreview() != null ? request.messagePreview() : "[Image]";
 
         // Sourdine (FLUTTER-CM) : seule celle du DESTINATAIRE compte, celle de l'expéditeur

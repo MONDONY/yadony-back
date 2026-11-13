@@ -76,6 +76,25 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     int markTravelerMessaged(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
 
     /**
+     * Message d'une conversation INQUIRY : date la dernière activité. Écriture ciblée (comme
+     * {@link #markTravelerMessaged}) pour ne pas réécrire une entité lue plus tôt.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.lastActivityAt = :at WHERE c.id = :id")
+    int markInquiryActivity(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
+
+    /**
+     * Premier message du demandeur d'une INQUIRY : rend le fil visible du créateur. Idempotent,
+     * la date n'est posée que si elle est encore nulle.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.inquiryFirstMessageAt = :at " +
+           "WHERE c.id = :id AND c.inquiryFirstMessageAt IS NULL")
+    int markInquiryFirstMessage(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
+
+    /**
      * Le voyageur a écrit au moins une fois depuis {@code since} dans une conversation du bid
      * (expéditeur ou destinataire, ouverte ou fermée) : preuve de tentative de contact.
      */
@@ -88,7 +107,8 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     @Query("SELECT c FROM ConversationEntity c WHERE " +
            "c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))")
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     Page<ConversationEntity> findByParticipant(@Param("userId") UUID userId, Pageable pageable);
 
     /**
@@ -107,7 +127,8 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "c.messagesPurgedAt IS NULL AND " +
            "((c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)) " +
-           "AND c.senderId NOT IN :hiddenIds AND c.travelerId NOT IN :hiddenIds")
+           "AND c.senderId NOT IN :hiddenIds AND c.travelerId NOT IN :hiddenIds" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     Page<ConversationEntity> findByParticipantExcludingHidden(@Param("userId") UUID userId,
                                                               @Param("hiddenIds") Collection<UUID> hiddenIds,
                                                               Pageable pageable);
@@ -153,7 +174,8 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     @Query("SELECT COUNT(c) FROM ConversationEntity c WHERE " +
            "c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))")
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     long countActiveByParticipant(@Param("userId") UUID userId);
 
     /**
