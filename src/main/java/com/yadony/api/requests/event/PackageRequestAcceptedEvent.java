@@ -53,8 +53,34 @@ public record PackageRequestAcceptedEvent(
      * Taille du colis de la demande (S, M, L, XL), {@code null} sans taille : écrite sur le bid
      * matérialisé par {@code ThreadAcceptedBidListener} (le bid d'une négociation n'est créé que là).
      */
-    com.yadony.api.matching.ItemSize itemSize
+    com.yadony.api.matching.ItemSize itemSize,
+    /**
+     * Volume du colis de la demande (m³, calculé par le serveur depuis ses dimensions), {@code null} sans
+     * dimensions : écrit sur le bid matérialisé quand le trajet lié est vendu au m³, où il prend la place.
+     */
+    java.math.BigDecimal volumeM3
 ) {
+    /** Sans volume : la forme d'avant le bateau au m³ (anciens appelants de test). */
+    public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
+                                       UUID travelerId, BigDecimal agreedPriceEur,
+                                       UUID travelerAnnouncementId, BigDecimal weightKg,
+                                       String description, String contentCategory,
+                                       String paymentIntentId, String recipientName,
+                                       String recipientPhone, LocalDateTime disclaimerSignedAt,
+                                       String disclaimerSignedIp,
+                                       com.yadony.api.payments.cash.PaymentMethod paymentMethod,
+                                       java.util.List<String> photoObjectKeys,
+                                       String commissionChargedVia, String promoCode,
+                                       BigDecimal commissionRate, String currency,
+                                       UUID commissionGridId, BigDecimal senderGross,
+                                       com.yadony.api.matching.ItemSize itemSize) {
+        this(threadId, packageRequestId, senderId, travelerId, agreedPriceEur,
+                travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
+                recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
+                paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
+                currency, commissionGridId, senderGross, itemSize, null);
+    }
+
     /** Sans taille : la forme d'avant la taille du colis (anciens appelants de test). */
     public PackageRequestAcceptedEvent(UUID threadId, UUID packageRequestId, UUID senderId,
                                        UUID travelerId, BigDecimal agreedPriceEur,
@@ -72,7 +98,7 @@ public record PackageRequestAcceptedEvent(
                 travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
                 recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
                 paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
-                currency, commissionGridId, senderGross, null);
+                currency, commissionGridId, senderGross, (com.yadony.api.matching.ItemSize) null);
     }
 
     /** Sans devise : euros (anciens appelants de test). */
@@ -91,6 +117,6 @@ public record PackageRequestAcceptedEvent(
                 travelerAnnouncementId, weightKg, description, contentCategory, paymentIntentId,
                 recipientName, recipientPhone, disclaimerSignedAt, disclaimerSignedIp,
                 paymentMethod, photoObjectKeys, commissionChargedVia, promoCode, commissionRate,
-                null, null, null, null);
+                null, null, null, (com.yadony.api.matching.ItemSize) null);
     }
 }

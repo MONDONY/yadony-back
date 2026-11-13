@@ -4,6 +4,7 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementSpecification;
+import com.yadony.api.matching.ParcelFitRules;
 import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import org.springframework.data.jpa.domain.Specification;
@@ -73,7 +74,7 @@ public class RematchService {
             CancellationEntity cancellation = cancellations.get(i);
 
             List<AnnouncementEntity> alternatives = findAlternatives(
-                    cancelled, bid.getSenderId(), bid.getWeightKg(), today, to);
+                    cancelled, bid.getSenderId(), bid.getWeightKg(), bid.getVolumeM3(), today, to);
 
             for (AnnouncementEntity alt : alternatives) {
                 RematchSuggestionEntity suggestion = new RematchSuggestionEntity();
@@ -99,14 +100,15 @@ public class RematchService {
      * {@code UserRepository.findAllById}).
      */
     private List<AnnouncementEntity> findAlternatives(AnnouncementEntity cancelled,
-                                                        UUID senderId, BigDecimal weightKg,
+                                                        UUID senderId, BigDecimal weightKg, BigDecimal volumeM3,
                                                         LocalDate from, LocalDate to) {
         Specification<AnnouncementEntity> spec = buildAlternativesSpec(cancelled, senderId, weightKg, from, to);
 
-        // Jusqu'à la réservation au m³ (BB2), un trajet vendu au m³ ne se réserve pas (422) : même exclusion que
-        // le matching, par le même prédicat de l'entité (le poids nul d'un colis à la grille ne l'écarte pas en SQL).
+        // Trajet vendu au m³ (laissé passer par la borne en kilos du SQL) : le colis doit avoir un volume qui tient
+        // dans le volume restant, même prédicat que le matching (ParcelFitRules.fitsTripVolume). Un colis au kilo
+        // n'a pas de volume : aucun trajet au m³ ne lui est proposé. Sans effet sur un trajet au kilo.
         List<AnnouncementEntity> candidates = announcementRepository.findAll(spec).stream()
-                .filter(a -> !a.isPricedPerM3())
+                .filter(a -> ParcelFitRules.fitsTripVolume(a, volumeM3))
                 .toList();
 
         Map<UUID, BigDecimal> ratings = userRepository
@@ -156,7 +158,9 @@ public class RematchService {
                 .and((root, query, cb) -> cb.notEqual(root.get("travelerId"), cancelled.getTravelerId()));
 
         if (weightKg != null) {
-            spec = spec.and(AnnouncementSpecification.minAvailableKg(weightKg));
+            // Un trajet au m³ n'a pas de kilos (« NULL >= x » est faux) : il passe la borne en kilos, son volume
+            // est comparé ensuite (findAlternatives), le poids d'un tel colis n'étant pas sa capacité.
+            spec = spec.and(AnnouncementSpecification.minAvailableKgOrPricedPerM3(weightKg));
         }
         return spec;
     }

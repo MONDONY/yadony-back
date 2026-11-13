@@ -189,6 +189,102 @@ class ThreadAcceptedBidListenerTest {
             assertThat(captor.getValue().getWeightKg()).isEqualByComparingTo("1200");
         }
 
+        private PackageRequestAcceptedEvent eventWithVolume(String volumeM3) {
+            return new PackageRequestAcceptedEvent(
+                    THREAD_ID, PACKAGE_REQUEST_ID, SENDER_ID, TRAVELER_ID,
+                    BigDecimal.valueOf(45), ANNOUNCEMENT_ID, BigDecimal.valueOf(5),
+                    "Vêtements", "CLOTHING", "pi_test", "Fatou Diop", "+221771234567",
+                    DISCLAIMER_AT, "1.2.3.4",
+                    com.yadony.api.payments.cash.PaymentMethod.STRIPE, java.util.List.of(),
+                    null, null, null, "EUR", null, null, null, new BigDecimal(volumeM3));
+        }
+
+        private AnnouncementEntity boatPerM3Trip(String availableVolumeM3) {
+            AnnouncementEntity trip = new AnnouncementEntity();
+            trip.setTravelerId(TRAVELER_ID);
+            trip.setTransportMode(TransportMode.BOAT);
+            trip.setAvailableKg(null);
+            trip.setPricePerM3(new BigDecimal("600"));
+            trip.setVolumeCapacityM3(new BigDecimal("2.5"));
+            trip.setAvailableVolumeM3(new BigDecimal(availableVolumeM3));
+            return trip;
+        }
+
+        @Test
+        @DisplayName("trajet lié vendu au m³ : colis au volume de la demande, volume pris, prix = accord du fil")
+        void threadAccepted_linkedPerM3Trip_takesRequestVolume() {
+            AnnouncementEntity trip = boatPerM3Trip("2.5");
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+
+            listener.onPackageRequestAccepted(eventWithVolume("0.050"));
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getVolumeM3()).isEqualByComparingTo("0.050");
+            assertThat(captor.getValue().getNegotiatedNetEur()).isEqualByComparingTo("45");
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("2.450");
+            assertThat(trip.getAvailableKg()).isNull();
+            // Trajet verrouillé AVANT sa lecture : la place prise ne peut pas être écrasée par une acceptation simultanée.
+            org.mockito.InOrder order = inOrder(announcementRepository);
+            order.verify(announcementRepository).lockForUpdate(ANNOUNCEMENT_ID);
+            order.verify(announcementRepository).findById(ANNOUNCEMENT_ID);
+        }
+
+        @Test
+        @DisplayName("trajet dédié au m³ : colis au volume de la demande, rien n'est pris (tout lui est réservé)")
+        void threadAccepted_dedicatedPerM3Trip_volumeKeptReserved() {
+            AnnouncementEntity trip = boatPerM3Trip("0.050");
+            trip.setVolumeCapacityM3(new BigDecimal("0.050"));
+            trip.setLinkedPackageRequestId(PACKAGE_REQUEST_ID);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+
+            listener.onPackageRequestAccepted(eventWithVolume("0.050"));
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getVolumeM3()).isEqualByComparingTo("0.050");
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("0.050");
+            assertThat(trip.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+        }
+
+        @Test
+        @DisplayName("bateau AU KILO avec volume facultatif : le colis n'a pas de volume, seuls les kilos sont pris")
+        void threadAccepted_boatPerKgTrip_noVolume() {
+            AnnouncementEntity trip = new AnnouncementEntity();
+            trip.setTravelerId(TRAVELER_ID);
+            trip.setTransportMode(TransportMode.BOAT);
+            trip.setCapacityUnit(CapacityUnit.KG_EXACT);
+            trip.setAvailableKg(new BigDecimal("30"));
+            trip.setVolumeCapacityM3(new BigDecimal("2"));
+            trip.setAvailableVolumeM3(new BigDecimal("2"));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+
+            listener.onPackageRequestAccepted(eventWithVolume("0.050"));
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getVolumeM3()).isNull();
+            assertThat(trip.getAvailableKg()).isEqualByComparingTo("25");
+            assertThat(trip.getAvailableVolumeM3()).isEqualByComparingTo("2");
+        }
+
+        @Test
+        @DisplayName("trajet annulé (hors marché) : kilos pris mais jamais de résurrection en FULL")
+        void threadAccepted_cancelledTrip_neverResurrectedFull() {
+            AnnouncementEntity trip = new AnnouncementEntity();
+            trip.setTravelerId(TRAVELER_ID);
+            trip.setTransportMode(TransportMode.PLANE);
+            trip.setCapacityUnit(CapacityUnit.KG_EXACT);
+            trip.setAvailableKg(new BigDecimal("5"));
+            trip.setStatus(AnnouncementStatus.CANCELLED);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
+
+            listener.onPackageRequestAccepted(buildEvent());
+
+            assertThat(trip.getAvailableKg()).isEqualByComparingTo("0");
+            assertThat(trip.getStatus()).isEqualTo(AnnouncementStatus.CANCELLED);
+        }
+
         @Test
         @DisplayName("demande sans taille (ou événement d'avant) → bid sans taille")
         void threadAccepted_requestWithoutItemSize_bidWithoutItemSize() {

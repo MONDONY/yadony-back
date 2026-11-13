@@ -55,7 +55,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * depuis un fil de négociation payé, colis en espèces accepté avec la commission, colis mobile
  * money dont le dépôt est confirmé.
  *
- * <p>Les trajets bateau sont au kilo : un trajet au m³ ne peut pas encore porter de colis (BB2).
+ * <p>Les trajets bateau sont au kilo ; la place prise au m³ (même chemins) est couverte par BoatCheckoutIT.
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
@@ -145,7 +145,7 @@ class PayoutTriggerFrozenIT {
         return id;
     }
 
-    /** Trajet au kilo (un trajet au m³ ne porte pas encore de colis), toutes méthodes de paiement. */
+    /** Trajet au kilo, toutes méthodes de paiement. */
     private AnnouncementEntity trip(TransportMode mode, Traveler owner) {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setTravelerId(owner.id());

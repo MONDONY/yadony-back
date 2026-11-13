@@ -281,6 +281,49 @@ class MobileMoneyBidPaymentServiceTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("mobile-money-account-required");
     }
 
+    private void asBoatPerM3(String availableVolumeM3, String bidVolumeM3) {
+        announcement.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        announcement.setAvailableKg(null);
+        announcement.setTotalKg(null);
+        announcement.setPricePerKg(null);
+        announcement.setPricePerM3(new BigDecimal("150000"));
+        announcement.setVolumeCapacityM3(new BigDecimal("2.5"));
+        announcement.setAvailableVolumeM3(new BigDecimal(availableVolumeM3));
+        bid.setVolumeM3(new BigDecimal(bidVolumeM3));
+    }
+
+    @Test
+    void acceptBid_boatPerM3_reservesVolume_notKg() {
+        stubLocks();
+        asBoatPerM3("0.100", "0.096");
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+        when(pricing.price(bid, announcement)).thenReturn(quote(new PriceBreakdown(new BigDecimal("14400"), new BigDecimal("1728"), new BigDecimal("16128"))));
+        when(paymentRepository.save(any())).thenAnswer(inv -> { PaymentEntity p = inv.getArgument(0); ReflectionTestUtils.setField(p, "id", UUID.randomUUID()); return p; });
+
+        service.acceptBid(bid.getId(), traveler.getId());
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.AWAITING_PAYMENT);
+        assertThat(announcement.getAvailableVolumeM3()).isEqualByComparingTo("0.004");
+        assertThat(announcement.getAvailableKg()).isNull();
+    }
+
+    @Test
+    void acceptBid_boatPerM3_volumeNoLongerFits_is409_insufficientVolume() {
+        stubLocks();
+        asBoatPerM3("0.095", "0.096");
+        when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.acceptBid(bid.getId(), traveler.getId()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(ex.getErrorCode()).isEqualTo("insufficient-volume");
+                });
+        verify(paymentRepository, never()).save(any());
+        assertThat(announcement.getAvailableVolumeM3()).isEqualByComparingTo("0.095");
+    }
+
     @Test
     void acceptBid_capacityInsufficient_is409() {
         stubLocks();

@@ -19,7 +19,6 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.currency.ActiveCurrencyResolver;
@@ -342,14 +341,12 @@ public class CashCommissionService {
     }
 
     /**
-     * Base de commission = part kilo (poids × prix/kg, null en mode GRID pur)
-     * + part grille (somme des articles du bid). Aligné sur le calcul net de
-     * BidService — sans quoi un bid grille (weightKg null) provoquait un NPE.
+     * Base de commission = part au barème (poids × prix/kg, nulle en mode GRID pur ; volume × prix au m³
+     * pour un bateau vendu au m³) + part grille (somme des articles du bid). Aligné sur le calcul net de
+     * BidService ({@code BidNetTotal.scheduleNet}) — sans quoi un bid grille (weightKg null) provoquait un NPE.
      */
     private BigDecimal cashBase(BidEntity bid, AnnouncementEntity announcement) {
-        BigDecimal kgNet = (bid.getWeightKg() != null && announcement.getPricePerKg() != null)
-                ? bid.getWeightKg().multiply(announcement.getPricePerKg())
-                : BigDecimal.ZERO;
+        BigDecimal kgNet = com.yadony.api.matching.BidNetTotal.scheduleNet(bid, announcement);
         BigDecimal gridNet = bidGridItemRepository.findByBidId(bid.getId()).stream()
                 .map(i -> i.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -1284,14 +1281,9 @@ public class CashCommissionService {
         // FLUTTER-GA : même garde avant tout débit — une demande acceptée après la date
         // limite de dépôt deviendrait un colis que le voyageur ne peut plus recevoir.
         com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
-        // « Kilo libre » (KG_FREE) : capacité non bornée — pas de rejet de capacité.
-        // Un bid grille pure n'a pas de poids (weightKg null) → aucun contrôle de
-        // capacité kilo à faire (sinon NPE).
-        if (announcement.getCapacityUnit() != CapacityUnit.KG_FREE
-                && bid.getWeightKg() != null
-                && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
-        }
+        // Place restante (règle unique TripCapacity) : kilos, sauf « kilo libre » (KG_FREE, capacité non
+        // bornée) et bid grille pure sans poids ; volume pour un bateau vendu au m³ (409 insufficient-volume).
+        com.yadony.api.matching.TripCapacity.assertAcceptable(announcement, bid);
 
         BidCommissionQuote quote = quoteBidCommission(bid, announcement);
         BigDecimal commission = quote.commission();
@@ -1738,26 +1730,12 @@ public class CashCommissionService {
         if (bid.getTrackingToken() == null) bid.setTrackingToken(UUID.randomUUID().toString());
         if (bid.getTrackingNumber() == null) bid.setTrackingNumber(generateTrackingNumber());
 
-        // « Kilo libre » (KG_FREE) : capacité non bornée — on ne décrémente pas
-        // availableKg et l'annonce ne passe jamais FULL (cohérent avec BidService).
-        final boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        // Un bid grille pure n'a pas de poids (weightKg null) → ne décrémente pas
-        // la capacité kilo et ne passe pas l'annonce FULL (cohérent avec BidService).
-        if (!isKgFree && bid.getWeightKg() != null) {
-            announcement.setAvailableKg(announcement.getAvailableKg().subtract(bid.getWeightKg()));
-            // Lot B (correction 2) : ne jamais réécrire le statut d'une annonce retirée
-            // par la modération — sinon cette finalisation (déclenchée par un paiement déjà
-            // engagé, qu'on ne bloque pas ici) ressusciterait le trajet en FULL, qui réapparaît
-            // dans les allowlists ACTIVE/FULL (recherche par corridor, alertes, etc.).
-            // Lot C : élargi à tout OUT_OF_MARKET. confirmCommissionAcceptance (chemin 3DS)
-            // atteint cette méthode SANS repasser par la garde d'entrée d'acceptCashBid :
-            // restreinte à REMOVED_BY_ADMIN, elle laissait un trajet CANCELLED/COMPLETED
-            // ressusciter en FULL.
-            if (announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0
-                    && !AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())) {
-                announcement.setStatus(AnnouncementStatus.FULL);
-            }
-        }
+        // Place prise par TripCapacity (règle unique, cohérente avec BidService) : « kilo libre » (KG_FREE)
+        // jamais décrémenté ni FULL, bid grille pure sans poids sans effet, volume pour un bateau au m³.
+        // Lot B (correction 2) puis lot C : jamais de bascule FULL sur un trajet hors marché (retiré par la
+        // modération, annulé, livré) — confirmCommissionAcceptance (chemin 3DS) atteint cette méthode SANS
+        // repasser par la garde d'entrée d'acceptCashBid, et le trajet ressusciterait en FULL.
+        com.yadony.api.matching.TripCapacity.reserve(announcement, bid);
         announcementRepo.save(announcement);
         bid.applyHandoverFrom(announcement);
         bidRepo.save(bid);

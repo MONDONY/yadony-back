@@ -24,7 +24,7 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.matching.CapacityUnit;
+import com.yadony.api.matching.TripCapacity;
 import com.yadony.api.matching.HandoverDeadlineRules;
 import com.yadony.api.payments.cash.CommissionProperties;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
@@ -725,15 +725,10 @@ public class CancellationService {
                 ? CancellationReason.SENDER_CANCEL_AFTER_HANDOVER
                 : CancellationReason.TRAVELER_CANCEL_AFTER_HANDOVER;
 
-        // Restaurer le kilo au voyageur (sauf KG_FREE) + rouvrir l'annonce si FULL.
+        // Rendre la place au voyageur (kilos sauf KG_FREE, volume d'un bateau au m³) + rouvrir l'annonce si
+        // FULL : règle unique TripCapacity (un colis sans poids ni volume ne rouvre rien, il n'a rien pris).
         if (announcement != null) {
-            boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-            if (!isKgFree && bid.getWeightKg() != null) {
-                announcement.setAvailableKg(announcement.getAvailableKg().add(bid.getWeightKg()));
-            }
-            if (!isKgFree && announcement.getStatus() == AnnouncementStatus.FULL) {
-                announcement.setStatus(AnnouncementStatus.ACTIVE);
-            }
+            TripCapacity.release(announcement, bid);
             announcementRepository.save(announcement);
         }
 

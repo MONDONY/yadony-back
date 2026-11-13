@@ -118,6 +118,25 @@ class RescheduleDecisionServiceTest {
     }
 
     @Test
+    void withdraw_boatPerM3Parcel_freesItsVolume_noKiloRead() {
+        announcement.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        announcement.setAvailableKg(null);
+        announcement.setPricePerM3(new BigDecimal("600"));
+        announcement.setVolumeCapacityM3(new BigDecimal("2.5"));
+        announcement.setAvailableVolumeM3(BigDecimal.ZERO);
+        bid.setVolumeM3(new BigDecimal("0.096"));
+        lenient().when(rematchService.generateForCancellations(eq(announcement), anyList(), anyList()))
+                .thenReturn(Map.of());
+
+        service.decide("uid-sender", bidId, RescheduleDecision.WITHDRAW);
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(announcement.getAvailableVolumeM3()).isEqualByComparingTo("0.096");
+        assertThat(announcement.getAvailableKg()).isNull();
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+    }
+
+    @Test
     void withdraw_acceptedParcel_refundsFreesTheKilosAndCountsAgainstTheTraveler() {
         UUID rematchCancellationId = UUID.randomUUID();
         when(rematchService.generateForCancellations(eq(announcement), anyList(), anyList()))

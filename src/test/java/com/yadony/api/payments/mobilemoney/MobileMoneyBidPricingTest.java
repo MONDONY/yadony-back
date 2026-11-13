@@ -93,6 +93,25 @@ class MobileMoneyBidPricingTest {
     }
 
     @Test
+    void boatPerM3Bid_inXof_netIsVolumeTimesRate_weightNotPriced() {
+        AnnouncementEntity a = xof(null);
+        a.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        a.setPricePerM3(new BigDecimal("123457"));
+        BidEntity b = bid(new BigDecimal("12"));
+        b.setVolumeM3(new BigDecimal("0.096"));
+        when(gridItems.findByBidId(b.getId())).thenReturn(List.of());
+        when(rates.resolve(eq(a.getTravelerId()), eq(b.getSenderId()), isNull(), isNull(), eq(b.getId())))
+                .thenReturn(new BigDecimal("0.12"));
+
+        PriceBreakdown p = pricing.price(b, a).price();
+
+        // 0,096 m³ × 123 457 F CFA = 11 851,872 → 11 852 ; même part au barème que l'affichage et la carte.
+        assertThat(p.net()).isEqualByComparingTo("11852");
+        assertThat(p.net().scale()).isZero();
+        assertThat(p.gross()).isEqualByComparingTo(p.net().add(p.commission()));
+    }
+
+    @Test
     void gridItems_areAdded_andCommissionRoundsHalfUpToUnit() {
         AnnouncementEntity a = xof(null);
         BidEntity b = bid(null);

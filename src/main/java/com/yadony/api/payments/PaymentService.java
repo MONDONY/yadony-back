@@ -599,10 +599,9 @@ public class PaymentService {
                 gridNet = gridNet.add(
                     item.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(item.getQuantity())));
             }
-            BigDecimal kgNet = (bid.getWeightKg() != null && announcement.getPricePerKg() != null)
-                    ? bid.getWeightKg().multiply(announcement.getPricePerKg())
-                    : BigDecimal.ZERO;
-            totalNet = gridNet.add(kgNet).setScale(2, RoundingMode.HALF_UP);
+            // Part au barème : poids × prix au kilo, ou volume × prix au m³ (bateau vendu au m³).
+            BigDecimal scheduleNet = com.yadony.api.matching.BidNetTotal.scheduleNet(bid, announcement);
+            totalNet = gridNet.add(scheduleNet).setScale(2, RoundingMode.HALF_UP);
         }
         if (totalNet.compareTo(BigDecimal.ZERO) <= 0) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-amount", "problem.invalid-amount");

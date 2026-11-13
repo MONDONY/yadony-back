@@ -91,7 +91,7 @@ public class NoShowService {
         // pleine de colis qui n'existent plus. Après le départ, rien à rendre.
         if (announcement != null
                 && !com.yadony.api.cancellation.CancellationGuard.hasDeparted(announcement)
-                && announcement.releaseCapacity(bid.getWeightKg())) {
+                && TripCapacity.release(announcement, bid)) {
             announcementRepository.save(announcement);
         }
 

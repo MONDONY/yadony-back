@@ -10,11 +10,10 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
-import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.matching.CapacityUnit;
+import com.yadony.api.matching.TripCapacity;
 import com.yadony.api.matching.TripRescheduleRules;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -110,13 +109,8 @@ public class RescheduleDecisionService {
         }
         boolean handedOver = bid.getStatus() == BidStatus.HANDED_OVER;
 
-        boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!isKgFree && bid.getWeightKg() != null) {
-            announcement.setAvailableKg(announcement.getAvailableKg().add(bid.getWeightKg()));
-        }
-        if (!isKgFree && announcement.getStatus() == AnnouncementStatus.FULL) {
-            announcement.setStatus(AnnouncementStatus.ACTIVE);
-        }
+        // Place rendue (kilos sauf KG_FREE, volume d'un bateau au m³), FULL → ACTIVE : règle unique TripCapacity.
+        TripCapacity.release(announcement, bid);
         announcementRepository.save(announcement);
 
         if (handedOver) {

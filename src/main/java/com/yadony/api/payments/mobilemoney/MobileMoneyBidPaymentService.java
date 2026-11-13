@@ -14,7 +14,6 @@ import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.BidStatus;
-import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.events.BidAcceptedEvent;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
@@ -226,10 +225,8 @@ public class MobileMoneyBidPaymentService {
         }
         // FLUTTER-GA : acceptation refusée après la date limite de dépôt (fuseau du trajet).
         com.yadony.api.matching.HandoverDeadlineRules.assertNotPassed(announcement);
-        boolean kgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!kgFree && bid.getWeightKg() != null && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
-        }
+        // Place restante (règle unique) : 409 capacity-insufficient (kilos) ou insufficient-volume (bateau au m³).
+        com.yadony.api.matching.TripCapacity.assertAcceptable(announcement, bid);
 
         MobileMoneyBidPricing.Quote quote = pricing.price(bid, announcement);
         PriceBreakdown price = quote.price();
@@ -253,8 +250,8 @@ public class MobileMoneyBidPaymentService {
         // détient aucun bon actif.
         voucherService.consume(bid.getSenderId(), bidId);
 
-        // Capacité réservée dès l'acceptation, rendue par expire() ou cancelBid.
-        if (announcement.reserveCapacity(bid.getWeightKg())) {
+        // Capacité (kilos ou volume au m³) réservée dès l'acceptation, rendue par expire() ou cancelBid.
+        if (com.yadony.api.matching.TripCapacity.reserve(announcement, bid)) {
             announcementRepository.save(announcement);
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -777,9 +774,9 @@ public class MobileMoneyBidPaymentService {
      * sait rien du paiement réel.
      *
      * <p>Restitution de capacité : inverse exact de la réservation faite par {@link #acceptBid}
-     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même méthode
-     * d'entité ({@code AnnouncementEntity#releaseCapacity}, condition COMBINÉE portée une seule
-     * fois) : un bid sans poids ne rend jamais une annonce complète, et si elle l'est, c'est un
+     * — même verrou pessimiste {@link AnnouncementRepository#findByIdForUpdate}, même règle
+     * ({@code TripCapacity#release} : {@code AnnouncementEntity#releaseCapacity} au kilo, condition
+     * COMBINÉE portée une seule fois ; volume pour un bateau au m³) : un bid sans poids ne rend jamais une annonce complète, et si elle l'est, c'est un
      * autre bid qui l'a remplie — la rebasculer {@code ACTIVE} sans avoir rendu le moindre kilo
      * ferait réapparaître en recherche un trajet réellement encore à zéro kilo disponible.
      */
@@ -824,7 +821,7 @@ public class MobileMoneyBidPaymentService {
         }
 
         AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(bid.getAnnouncementId()).orElse(null);
-        if (announcement != null && announcement.releaseCapacity(bid.getWeightKg())) {
+        if (com.yadony.api.matching.TripCapacity.release(announcement, bid)) {
             announcementRepository.save(announcement);
         }
         bid.setStatus(BidStatus.CANCELLED);

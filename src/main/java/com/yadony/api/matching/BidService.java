@@ -201,15 +201,20 @@ public class BidService {
         UserEntity sender = findUserByFirebaseUid(firebaseUid);
         AnnouncementEntity ann = announcementRepository.findById(request.announcementId())
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
-        // Trajet bateau au m³ : pas de devis au kilo (même refus que la réservation).
-        BoatVolumeBooking.assertBookableByKg(ann);
+        // Trajet vendu au m³ : même volume et mêmes refus que la réservation (dimensions obligatoires, 422
+        // insufficient-volume au-delà du volume restant), prix = volume × prix au m³. Hors m³ : dimensions ignorées.
+        BigDecimal volumeM3 = ParcelFitRules.resolveBidVolume(ann,
+                request.lengthCm(), request.widthCm(), request.heightCm());
+        ParcelFitRules.assertVolumeFits(ann, volumeM3);
 
-        // Même détermination de mode que createBid/checkout : au moins poids OU article.
+        // Même détermination de mode que createBid/checkout : au moins poids OU article (OU volume au m³).
         List<BidGridItemRequest> gridItems = request.gridItems() != null ? request.gridItems() : List.of();
         boolean hasGrid = !gridItems.isEmpty();
-        boolean hasKg   = request.weightKg() != null && request.weightKg().compareTo(BigDecimal.ZERO) > 0;
+        // Le poids d'un colis au m³ n'est pas tarifé (le trajet n'a pas de prix au kilo).
+        boolean hasKg   = !ann.isPricedPerM3()
+                && request.weightKg() != null && request.weightKg().compareTo(BigDecimal.ZERO) > 0;
 
-        if (!hasGrid && !hasKg) {
+        if (!hasGrid && !hasKg && volumeM3 == null) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-empty", "problem.bid-empty");
         }
 
@@ -231,8 +236,10 @@ public class BidService {
             }
             kgNet = ann.getPricePerKg().multiply(request.weightKg()).setScale(2, java.math.RoundingMode.HALF_UP);
         }
+        // Net au volume (trajet au m³) : arrondi à l'unité mineure de la devise, comme à la réservation.
+        BigDecimal volumeNet = volumeM3 != null ? BidNetTotal.bookableVolumeNet(ann, volumeM3) : BigDecimal.ZERO;
 
-        BigDecimal netEur = gridNet.add(kgNet).setScale(2, java.math.RoundingMode.HALF_UP);
+        BigDecimal netEur = gridNet.add(kgNet).add(volumeNet).setScale(2, java.math.RoundingMode.HALF_UP);
 
         // Résolution du taux — promo validé strictement (exceptions propagées en RFC 7807).
         // Le promo est résolu EN PREMIER : s'il est invalide, on propage avant même de
@@ -247,7 +254,8 @@ public class BidService {
         // que les rails appliqueront au paiement.
         Optional<CommissionGrid> grid = commissionGridService.current();
         if (grid.isPresent()) {
-            return quoteWithGrid(grid.get(), ann, sender.getId(), netEur, gridNet, kgNet, promoCode, currencyCode);
+            return quoteWithGrid(grid.get(), ann, sender.getId(), netEur, gridNet, kgNet, volumeNet, promoCode,
+                    currencyCode);
         }
         boolean promoApplied = false;
         String promoLabel = null;
@@ -275,7 +283,7 @@ public class BidService {
         }
 
         return new BidQuoteResponse(netEur, gridNet, kgNet, rate, commissionEur, totalEur, promoApplied, promoLabel,
-                currencyCode, false, null, null, null);
+                currencyCode, false, null, null, null, volumeNet);
     }
 
     /**
@@ -291,7 +299,7 @@ public class BidService {
      */
     private BidQuoteResponse quoteWithGrid(CommissionGrid grid, AnnouncementEntity ann, UUID senderId,
                                            BigDecimal netEur, BigDecimal gridNet, BigDecimal kgNet,
-                                           String promoCode, String currencyCode) {
+                                           BigDecimal volumeNet, String promoCode, String currencyCode) {
         SupportedCurrency currency = SupportedCurrency.fromCodeOrDefault(ann.getCurrency());
         if (netEur.setScale(currency.minorUnit(), java.math.RoundingMode.HALF_UP).signum() <= 0) {
             // Même refus que les rails : la grille ne tarife pas un net nul.
@@ -310,7 +318,7 @@ public class BidService {
         return new BidQuoteResponse(result.net(), gridNet, kgNet, base.effectiveRate(), base.commission(),
                 result.gross(), promoApplied, promoLabel, currencyCode, result.minimumApplied(),
                 grid.minimum(currency), grid.id(),
-                withCode && !promoApplied && result.minimumApplied() ? "COMMISSION_MINIMUM" : null);
+                withCode && !promoApplied && result.minimumApplied() ? "COMMISSION_MINIMUM" : null, volumeNet);
     }
 
     @Transactional
@@ -332,11 +340,14 @@ public class BidService {
         String normalizedContentCategory =
                 assertCanBidOn(sender, announcement, request.contentCategory());
 
-        boolean isKgFreeCreate = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!isKgFreeCreate && request.weightKg() != null
-                && request.weightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
-        }
+        TripCapacity.assertWeightBookable(announcement, request.weightKg());
+
+        // Trajet vendu au m³ : volume calculé par le serveur depuis les dimensions (422
+        // boat-dimensions-required sans elles), puis comparé au volume restant (422 insufficient-volume).
+        // Hors trajet au m³ : dimensions ignorées, aucun volume.
+        BigDecimal volumeM3 = ParcelFitRules.resolveBidVolume(announcement,
+                request.lengthCm(), request.widthCm(), request.heightCm());
+        ParcelFitRules.assertVolumeFits(announcement, volumeM3);
 
         // Taille et poids max par colis du trajet (route, bateau) : refus 422 AVANT toute écriture.
         // Taille ou poids absent (ancienne app, grille seule) ou limite absente ne bloque rien.
@@ -350,11 +361,17 @@ public class BidService {
         List<BidGridItemRequest> gridItems = request.gridItems() != null ? request.gridItems() : List.of();
         boolean hasGrid = !gridItems.isEmpty();
         boolean hasKg   = request.weightKg() != null && request.weightKg().compareTo(BigDecimal.ZERO) > 0;
+        if (volumeM3 != null) {
+            // Prix au volume : le net est connu (et borné) dès la réservation, comme le prix au kilo.
+            BidNetTotal.bookableVolumeNet(announcement, volumeM3);
+        }
 
-        if (!hasGrid && !hasKg) {
+        if (!hasGrid && !hasKg && volumeM3 == null) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-empty", "problem.bid-empty");
         }
 
+        // Colis au volume (trajet au m³) : KG, le mode « au barème unitaire » (la colonne n'a pas de valeur
+        // VOLUME, chk_bids_pricing_mode) ; le prix vient du volume, jamais du poids (BidNetTotal.scheduleNet).
         BidPricingMode bidMode = hasGrid && hasKg ? BidPricingMode.MIXED
                                : hasGrid          ? BidPricingMode.GRID
                                :                    BidPricingMode.KG;
@@ -368,6 +385,7 @@ public class BidService {
         bid.setSenderId(sender.getId());
         bid.setWeightKg(request.weightKg());  // peut être null pour GRID mode
         bid.setItemSize(itemSize);
+        bid.setVolumeM3(volumeM3);
         bid.setPricingMode(bidMode);
         bid.setDescription(request.description());
         bid.setContentCategory(normalizedContentCategory);
@@ -397,6 +415,7 @@ public class BidService {
                         "announcementId", announcementId.toString(),
                         "weightKg", saved.getWeightKg() != null ? saved.getWeightKg().toString() : "null",
                         "pricingMode", bidMode.name(),
+                        "volumeM3", String.valueOf(saved.getVolumeM3()),
                         "contentCategory", String.valueOf(saved.getContentCategory()),
                         "disclaimerSignedAt", saved.getDisclaimerSignedAt().toString(),
                         "disclaimerSignedIp", clientIp
@@ -467,9 +486,6 @@ public class BidService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
-
-        // Trajet bateau au m³ : pas encore réservable (prix et capacité en kilos seulement).
-        BoatVolumeBooking.assertBookableByKg(announcement);
 
         // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
         // garde, la demande naissait déjà « fenêtre dépassée » et l'expéditeur n'avait
@@ -996,11 +1012,9 @@ public class BidService {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-accepting", "problem.announcement-not-accepting");
         }
 
-        boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!isKgFree && bid.getWeightKg() != null
-                && bid.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "capacity-insufficient", "problem.capacity-insufficient");
-        }
+        // Place restante relue sous le verrou du trajet : 409 capacity-insufficient (kilos) ou
+        // insufficient-volume (trajet au m³) si un autre colis l'a prise depuis la réservation.
+        TripCapacity.assertAcceptable(announcement, bid);
 
         // Règle de versement figée à cet instant (bateau, interrupteur, transporteur vérifié).
         payoutTriggerPolicy.freeze(bid, announcement, traveler);
@@ -1014,12 +1028,7 @@ public class BidService {
         if (bid.getTrackingToken() == null) {
             bid.setTrackingToken(java.util.UUID.randomUUID().toString());
         }
-        if (!isKgFree && bid.getWeightKg() != null) {
-            announcement.setAvailableKg(announcement.getAvailableKg().subtract(bid.getWeightKg()));
-        }
-        if (!isKgFree && announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0) {
-            announcement.setStatus(AnnouncementStatus.FULL);
-        }
+        TripCapacity.reserve(announcement, bid);
         announcementRepository.save(announcement);
         bid.applyHandoverFrom(announcement);
         bidRepository.save(bid);
@@ -1227,8 +1236,8 @@ public class BidService {
         // Condition combinée portée par l'entité (voir AnnouncementEntity#releaseCapacity) :
         // deux gardes séparées permettaient à un bid de grille SANS poids sur une annonce FULL
         // de la rebasculer ACTIVE sans qu'aucun kilo ne soit rendu — un trajet réellement à
-        // zéro kilo disponible réapparaissait alors en recherche.
-        if (announcement.releaseCapacity(bid.getWeightKg())) {
+        // zéro kilo disponible réapparaissait alors en recherche. Trajet au m³ : son volume (TripCapacity).
+        if (TripCapacity.release(announcement, bid)) {
             announcementRepository.save(announcement);
         }
     }
@@ -1610,7 +1619,7 @@ public class BidService {
         // négocié, pour ne pas dériver si l'annonce dédiée ouvre son surplus (réécrit
         // son pricePerKg) ou si le trajet lié a un tarif catalogue différent.
         if (bid.getNegotiatedNetEur() != null && bid.getWeightKg() != null
-                && bid.getWeightKg().signum() > 0) {
+                && bid.getWeightKg().signum() > 0 && (announcement == null || !announcement.isPricedPerM3())) {
             pricePerKg = bid.getNegotiatedNetEur()
                     .divide(bid.getWeightKg(), 2, java.math.RoundingMode.HALF_UP);
         }
@@ -1746,9 +1755,11 @@ public class BidService {
         java.math.BigDecimal totalSenderAmountEur = bid.getCommissionGridId() != null
                 ? gridSenderAmount(bid, announcement, totalNetAmountEur)
                 : legacySenderAmount(bid, announcement, totalNetAmountEur, prefetch);
-        // Tarif/kg affiché à l'expéditeur (brut), dérivé du total brut.
+        // Tarif/kg affiché à l'expéditeur (brut), dérivé du total brut. Aucun tarif au kilo pour un trajet
+        // vendu au m³ : son prix vient du volume, le poids éventuel du colis ne le divise pas.
+        boolean pricedPerM3 = announcement != null && announcement.isPricedPerM3();
         java.math.BigDecimal pricePerKgSenderEur =
-                (totalSenderAmountEur != null && bid.getWeightKg() != null
+                (!pricedPerM3 && totalSenderAmountEur != null && bid.getWeightKg() != null
                         && bid.getWeightKg().signum() > 0)
                         ? totalSenderAmountEur.divide(bid.getWeightKg(), 2, java.math.RoundingMode.HALF_UP)
                         : null;
@@ -1891,7 +1902,8 @@ public class BidService {
                 bid.getItemSize() != null ? bid.getItemSize().name() : null,
                 latestTripDelay(announcement, bid, prefetch),
                 announcement != null ? announcement.getArrivalDateMax() : null,
-                (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name()
+                (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name(),
+                bid.getVolumeM3()
         );
     }
 

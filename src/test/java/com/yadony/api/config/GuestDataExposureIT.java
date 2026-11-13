@@ -172,6 +172,8 @@ class GuestDataExposureIT {
             // Argent et secrets de paiement
             "stripeAccountId", "paymentIntentId", "paymentIntentClientSecret", "clientSecret",
             "totalNetEur", "netEur", "commissionRate",
+            // Part nette au volume d'un devis au m³ (BidQuoteResponse, bateau) : un net voyageur comme netEur.
+            "volumeNetEur",
             // Net voyageur : ce que touche le transporteur. Le brut (*Display) reste servi.
             "pricePerKg", "unitPriceNet", "convertedPricePerKg",
             // Numero et pays d'immatriculation du voyageur professionnel : visibles des seuls

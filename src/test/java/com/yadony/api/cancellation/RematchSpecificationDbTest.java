@@ -146,6 +146,27 @@ class RematchSpecificationDbTest {
     }
 
     @Test
+    @DisplayName("bateau vendu au m³ (aucun kilo) : passe la borne en kilos du SQL, son volume est comparé ensuite")
+    void perM3Alternative_passesKgBound() {
+        AnnouncementEntity cancelled = persistCancelled(UUID.randomUUID());
+        AnnouncementEntity perM3 = persist(UUID.randomUUID(),
+                LocalDate.now(ZoneOffset.UTC).plusDays(1), BigDecimal.ONE, AnnouncementStatus.ACTIVE);
+        perM3.setTransportMode(TransportMode.BOAT);
+        perM3.setAvailableKg(null);
+        perM3.setTotalKg(null);
+        perM3.setPricePerKg(null);
+        perM3.setPricePerM3(new BigDecimal("600"));
+        perM3.setVolumeCapacityM3(new BigDecimal("2.500"));
+        perM3.setAvailableVolumeM3(new BigDecimal("2.500"));
+        perM3.setArrivalDateMax(perM3.getDepartureDate().plusDays(30));
+        repository.saveAndFlush(perM3);
+
+        List<AnnouncementEntity> results = runSpec(cancelled);
+
+        assertThat(results).extracting(AnnouncementEntity::getId).contains(perM3.getId());
+    }
+
+    @Test
     @DisplayName("annonce (autre) du voyageur qui annule → exclue")
     void otherAnnouncementFromCancellingTraveler_isExcluded() {
         UUID cancellingTraveler = UUID.randomUUID();

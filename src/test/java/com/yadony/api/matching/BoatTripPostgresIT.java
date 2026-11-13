@@ -4,12 +4,6 @@ import com.yadony.api.config.PlatformSettingKey;
 import com.yadony.api.config.PlatformSettingsService;
 import com.yadony.api.matching.dto.AddressDto;
 import com.yadony.api.matching.dto.AnnouncementRequest;
-import com.yadony.api.matching.dto.BidCheckoutRequest;
-import com.yadony.api.matching.dto.BidNegotiationStartRequest;
-import com.yadony.api.matching.dto.BidQuoteRequest;
-import com.yadony.api.matching.dto.BidRequest;
-import com.yadony.api.common.YadonyBusinessException;
-import org.springframework.mock.web.MockHttpServletRequest;
 import com.yadony.api.matching.dto.TripRescheduleRequest;
 import com.yadony.api.payments.cash.PaymentMethod;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
@@ -34,7 +28,6 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Trajet bateau (lot 3, BA3) écrit par le service sur PostgreSQL embarqué, toutes migrations Flyway
@@ -53,10 +46,6 @@ class BoatTripPostgresIT {
 
     @Autowired AnnouncementService announcementService;
     @Autowired TripRescheduleService rescheduleService;
-    @Autowired BidService bidService;
-    @Autowired BidCheckoutService bidCheckoutService;
-    @Autowired BidNegotiationService bidNegotiationService;
-    @Autowired BidRepository bidRepository;
     @Autowired PlatformSettingsService platformSettings;
     @Autowired JdbcTemplate jdbc;
 
@@ -233,53 +222,5 @@ class BoatTripPostgresIT {
         assertThat(r.get("arrival_date_max")).isNull();
         assertThat((BigDecimal) r.get("available_kg")).isEqualByComparingTo("12");
         assertThat(r.get("arrival_date").toString()).isEqualTo(DEP.plusDays(25).toString());
-    }
-
-    private String sender() {
-        UUID id = UUID.randomUUID();
-        String senderUid = "uid-boat-pg-sender-" + id;
-        jdbc.update("""
-                INSERT INTO users (id, firebase_uid, username, status, kyc_status)
-                VALUES (?, ?, ?, 'ACTIVE', 'VERIFIED')
-                """, id, senderUid, ("s" + id.toString().replace("-", "")).substring(0, 20));
-        jdbc.update("INSERT INTO user_roles (user_id, role) VALUES (?, 'SENDER')", id);
-        return senderUid;
-    }
-
-    private static void assertVolumeBookingRefused(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
-        assertThatThrownBy(call).isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
-            assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
-            assertThat(ex.getErrorCode()).isEqualTo(BoatVolumeBooking.ERROR_CODE);
-        });
-    }
-
-    @Test
-    @DisplayName("trajet au m³ : offre, paiement carte, devis et proposition de prix refusés en 422, aucun colis créé")
-    void bookingPerM3Trip_refusedEverywhereBeforeKg() {
-        AnnouncementRequest negotiable = new AnnouncementRequest("Marseille", "Dakar", DEP, LocalTime.of(10, 0), null,
-                new AddressDto("Port de Marseille", 43.3, 5.37), new AddressDto("Port de Dakar", 14.69, -17.44),
-                null, null, TransportMode.BOAT, null, null, null, Set.of(PaymentMethod.CASH), CapacityUnit.KG_EXACT,
-                null, "FR", "SN", DEP.atTime(7, 30), false, true, "EUR", DEP.plusDays(20), null, null, null,
-                DEP.plusDays(30), new BigDecimal("2.5"), new BigDecimal("600"));
-        UUID tripId = announcementService.createAnnouncement(uid, negotiable).id();
-        String senderUid = sender();
-        BigDecimal two = new BigDecimal("2");
-
-        assertVolumeBookingRefused(() -> bidService.createBid(tripId, senderUid,
-                new BidRequest(two, "Vêtements", "OTHER", "Awa", "+221771234567", true,
-                        null, null, null, null, null, null),
-                new MockHttpServletRequest()));
-        assertVolumeBookingRefused(() -> bidCheckoutService.checkout(senderUid,
-                new BidCheckoutRequest(tripId, two, "Vêtements", "OTHER", "Awa", "+221771234567", true,
-                        null, null),
-                new MockHttpServletRequest()));
-        assertVolumeBookingRefused(() -> bidService.quote(senderUid, new BidQuoteRequest(tripId, two, null, null)));
-        assertVolumeBookingRefused(() -> bidNegotiationService.propose(tripId, senderUid,
-                new BidNegotiationStartRequest(two, "Vêtements", "OTHER", "Awa", "+221771234567", true,
-                        null, null, null, null, new BigDecimal("50"), null, null),
-                new MockHttpServletRequest()));
-
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM bids WHERE announcement_id = ?", Long.class, tripId))
-                .isZero();
     }
 }

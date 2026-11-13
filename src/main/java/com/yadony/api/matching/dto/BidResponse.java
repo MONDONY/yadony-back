@@ -184,5 +184,10 @@ public record BidResponse(
          * colis n'est pas accepté. Servi aux deux parties. Toujours sérialisé, champ ajouté : les anciennes apps
          * l'ignorent, une valeur absente ou inconnue se lit {@code DELIVERY}. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        String payoutTrigger
+        String payoutTrigger,
+        /** Volume réservé du colis en m³ (3 décimales), calculé par le serveur depuis les dimensions à la
+         * réservation d'un trajet vendu au m³ ; null pour tout autre colis. Servi aux deux parties. Toujours
+         * sérialisé (null explicite), champ ajouté : les anciennes apps l'ignorent. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        java.math.BigDecimal volumeM3
 ) {}

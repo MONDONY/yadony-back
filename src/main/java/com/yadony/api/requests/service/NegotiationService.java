@@ -301,7 +301,7 @@ public class NegotiationService {
             availableMethods = computeAvailableMethods(request, traveler);
             assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
             linkedTripAnn = announcementRepo.save(
-                buildBookableDedicatedTrip(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
+                buildDedicatedTripAnnouncement(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
             resolvedTravelDate = linkedTripAnn.getDepartureDate();
             auditService.log("ANNOUNCEMENT", linkedTripAnn.getId(), "DEDICATED_TRIP_CREATED_AT_OFFER", travelerId,
                 Map.of("packageRequestId", request.getId().toString()));
@@ -892,14 +892,19 @@ public class NegotiationService {
         if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/not-active");
         }
-        // Trajet bateau au m³ : sans kilos, il ne se lie pas encore à une demande (capacité et prix
-        // en kilos seulement) ; 422 boat-volume-booking-unavailable avant la lecture de availableKg.
-        com.yadony.api.matching.BoatVolumeBooking.assertBookableByKg(ann);
-        // Kilo libre : availableKg est une valeur technique (~1) sans signification, la capacité
-        // n'est pas bornée (même exemption que BidService, BidCheckoutService, BidNegotiationService et
-        // le matching) : sans elle une demande matchée serait refusée « insufficient-capacity ».
-        if (ann.getCapacityUnit() != com.yadony.api.matching.CapacityUnit.KG_FREE
+        if (ann.isPricedPerM3()) {
+            // Trajet bateau vendu au m³ (aucun kilo) : la demande doit connaître son volume (422
+            // boat-dimensions-required, même règle que l'offre ferme) et il doit tenir dans le volume restant
+            // (422 insufficient-volume) ; il prendra la place à la matérialisation du colis payé. Le prix reste
+            // celui du fil, jamais volume × prix au m³.
+            com.yadony.api.matching.ParcelFitRules.assertBoatDimensionsPresent(
+                com.yadony.api.matching.TransportMode.BOAT, request.getVolumeM3());
+            com.yadony.api.matching.ParcelFitRules.assertVolumeFits(ann, request.getVolumeM3());
+        } else if (ann.getCapacityUnit() != com.yadony.api.matching.CapacityUnit.KG_FREE
             && ann.getAvailableKg().compareTo(request.getWeightKg()) < 0) {
+            // Kilo libre : availableKg est une valeur technique (~1) sans signification, la capacité
+            // n'est pas bornée (même exemption que BidService, BidCheckoutService, BidNegotiationService et
+            // le matching) : sans elle une demande matchée serait refusée « insufficient-capacity ».
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "announcement/insufficient-capacity");
         }
@@ -994,21 +999,6 @@ public class NegotiationService {
                 .toLocalDateTime();
     }
 
-    /**
-     * Trajet dédié prêt à être enregistré : construit par {@link #buildDedicatedTripAnnouncement}, puis
-     * refusé en 422 {@code boat-volume-booking-unavailable} s'il est vendu au m³ (bateau). Tant que la
-     * réservation au volume n'existe pas (tâche BB2), un tel trajet ne peut ni être payé ni donner de
-     * colis : le refuser ICI, avant toute écriture, évite un fil qui avancerait vers un paiement
-     * impossible (en AWAITING_TRIP, le fil reste tel quel). BB2 retire ce seul appel.
-     */
-    private com.yadony.api.matching.AnnouncementEntity buildBookableDedicatedTrip(
-            PackageRequestEntity request, UserEntity traveler, BigDecimal agreedPriceEur,
-            NegotiationCreateDedicatedTripRequest req) {
-        com.yadony.api.matching.AnnouncementEntity ann =
-            buildDedicatedTripAnnouncement(request, traveler, agreedPriceEur, req);
-        com.yadony.api.matching.BoatVolumeBooking.assertBookableByKg(ann);
-        return ann;
-    }
 
     /**
      * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
@@ -1091,6 +1081,9 @@ public class NegotiationService {
             if (derivedPricePerM3.signum() <= 0) {
                 derivedPricePerM3 = new BigDecimal("0.01");
             }
+            // Très petit volume (1 litre) et prix convenu élevé : le prix au m³ dérivé dépasserait NUMERIC(10,2)
+            // (price_per_m3) ; 422 volume-price-too-high, avant toute écriture, au lieu d'une erreur SQL.
+            com.yadony.api.matching.BidNetTotal.assertWithinTechnicalBound(derivedPricePerM3);
             ann.setPricePerM3(derivedPricePerM3);
             ann.setPricePerKg(null);
             ann.setPricePerKgEur(null);
@@ -1169,7 +1162,7 @@ public class NegotiationService {
 
         // Build the dedicated announcement with all locked fields derived server-side.
         com.yadony.api.matching.AnnouncementEntity ann =
-            buildBookableDedicatedTrip(request, traveler, thread.getCurrentPriceEur(), req);
+            buildDedicatedTripAnnouncement(request, traveler, thread.getCurrentPriceEur(), req);
 
         com.yadony.api.matching.AnnouncementEntity savedAnn = announcementRepo.save(ann);
 
@@ -1873,7 +1866,8 @@ public class NegotiationService {
             thread.getCommissionGridId(),
             // Espèces : la commission est due par le voyageur, l'expéditeur paie le net.
             thread.getPaymentMethod() != PaymentMethod.CASH ? thread.getSealedGrossEur() : null,
-            request.getItemSize()
+            request.getItemSize(),
+            request.getVolumeM3()
         ));
         // paymentIntentId est null pour un accord cash scellé par settleCommission/
         // confirmCommission (aucun escrow Stripe pour ce fil) — Map.of() rejette les

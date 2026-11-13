@@ -12,6 +12,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.TripCapacity;
 import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRepository;
@@ -206,7 +207,7 @@ public class AdminBidCancellationService {
                 && bid.getPaymentMethod() == PaymentMethod.MOBILE_MONEY;
         boolean reserved = bid.getStatus() == BidStatus.ACCEPTED || bid.getStatus() == BidStatus.HANDED_OVER
                 || awaitingMobileMoney;
-        if (reserved && announcement.releaseCapacity(bid.getWeightKg())) {
+        if (reserved && TripCapacity.release(announcement, bid)) {
             announcementRepository.save(announcement);
         }
     }

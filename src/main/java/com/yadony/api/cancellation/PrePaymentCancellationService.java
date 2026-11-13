@@ -11,6 +11,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.TripCapacity;
 import com.yadony.api.payments.cash.PaymentMethod;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -187,7 +188,7 @@ public class PrePaymentCancellationService {
         }
         AnnouncementEntity announcement =
                 announcementRepository.findByIdForUpdate(bid.getAnnouncementId()).orElse(null);
-        if (announcement == null || !announcement.releaseCapacity(bid.getWeightKg())) {
+        if (announcement == null || !TripCapacity.release(announcement, bid)) {
             return null;
         }
         announcementRepository.save(announcement);
