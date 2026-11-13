@@ -57,9 +57,23 @@ public record NegotiationCreateDedicatedTripRequest(
         LocalDate arrivalDate,
 
         // Mode du trajet dédié quand la demande de colis ne fixe pas le sien (« peu importe ») ;
-        // ignoré dès que la demande en porte un. Absent : avion.
-        TransportMode transportMode
+        // ignoré dès que la demande en porte un. Absent : avion (anciennes apps ; la colonne est NOT NULL).
+        TransportMode transportMode,
+
+        // Fin de la fourchette d'arrivée estimée (bateau, lot 3) : obligatoire pour un trajet dédié bateau
+        // (422 arrival-range-invalid), avec arrivalDate comme début ; ignorée pour tout autre mode.
+        LocalDate arrivalDateMax
 ) {
+    public NegotiationCreateDedicatedTripRequest(
+            LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
+            AddressDto pickupAddress, AddressDto deliveryAddress, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes,
+            boolean useCardForCommission, LocalDate arrivalDate, TransportMode transportMode) {
+        this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
+             description, acceptedContentTypes, refusedTypes, useCardForCommission, arrivalDate,
+             transportMode, null);
+    }
+
     public NegotiationCreateDedicatedTripRequest(
             LocalDate departureDate, LocalTime departureTime, LocalTime arrivalTime,
             AddressDto pickupAddress, AddressDto deliveryAddress, String description,
@@ -74,7 +88,7 @@ public record NegotiationCreateDedicatedTripRequest(
             List<String> acceptedContentTypes, List<String> refusedTypes,
             boolean useCardForCommission) {
         this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
-             description, acceptedContentTypes, refusedTypes, useCardForCommission, null, null);
+             description, acceptedContentTypes, refusedTypes, useCardForCommission, null, null, null);
     }
 
     public NegotiationCreateDedicatedTripRequest(
@@ -83,6 +97,6 @@ public record NegotiationCreateDedicatedTripRequest(
             List<String> acceptedContentTypes, List<String> refusedTypes,
             boolean useCardForCommission, LocalDate arrivalDate) {
         this(departureDate, departureTime, arrivalTime, pickupAddress, deliveryAddress,
-             description, acceptedContentTypes, refusedTypes, useCardForCommission, arrivalDate, null);
+             description, acceptedContentTypes, refusedTypes, useCardForCommission, arrivalDate, null, null);
     }
 }

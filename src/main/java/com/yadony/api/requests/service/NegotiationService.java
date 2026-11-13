@@ -301,7 +301,7 @@ public class NegotiationService {
             availableMethods = computeAvailableMethods(request, traveler);
             assertNonEmptyOrThrow(availableMethods, request.getAcceptedPaymentMethods());
             linkedTripAnn = announcementRepo.save(
-                buildDedicatedTripAnnouncement(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
+                buildBookableDedicatedTrip(request, traveler, req.proposedPriceEur(), req.dedicatedTrip()));
             resolvedTravelDate = linkedTripAnn.getDepartureDate();
             auditService.log("ANNOUNCEMENT", linkedTripAnn.getId(), "DEDICATED_TRIP_CREATED_AT_OFFER", travelerId,
                 Map.of("packageRequestId", request.getId().toString()));
@@ -990,13 +990,29 @@ public class NegotiationService {
     }
 
     /**
+     * Trajet dédié prêt à être enregistré : construit par {@link #buildDedicatedTripAnnouncement}, puis
+     * refusé en 422 {@code boat-volume-booking-unavailable} s'il est vendu au m³ (bateau). Tant que la
+     * réservation au volume n'existe pas (tâche BB2), un tel trajet ne peut ni être payé ni donner de
+     * colis : le refuser ICI, avant toute écriture, évite un fil qui avancerait vers un paiement
+     * impossible (en AWAITING_TRIP, le fil reste tel quel). BB2 retire ce seul appel.
+     */
+    private com.yadony.api.matching.AnnouncementEntity buildBookableDedicatedTrip(
+            PackageRequestEntity request, UserEntity traveler, BigDecimal agreedPriceEur,
+            NegotiationCreateDedicatedTripRequest req) {
+        com.yadony.api.matching.AnnouncementEntity ann =
+            buildDedicatedTripAnnouncement(request, traveler, agreedPriceEur, req);
+        com.yadony.api.matching.BoatVolumeBooking.assertBookableByKg(ann);
+        return ann;
+    }
+
+    /**
      * Construit (sans sauvegarder) l'AnnouncementEntity d'un trajet dédié à un
      * seul package_request : corridor, poids et prix dérivés et verrouillés,
      * capacité réservée intégralement au sender jusqu'à openSurplus(). Partagée
      * par {@link #createDedicatedTrip} (thread AWAITING_TRIP existant) et
      * {@link #start} (création dédiée dès la première offre).
      */
-    private com.yadony.api.matching.AnnouncementEntity buildDedicatedTripAnnouncement(
+    com.yadony.api.matching.AnnouncementEntity buildDedicatedTripAnnouncement(
             PackageRequestEntity request, UserEntity traveler, BigDecimal agreedPriceEur,
             NegotiationCreateDedicatedTripRequest req) {
         com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
@@ -1028,11 +1044,23 @@ public class NegotiationService {
                 : (req.transportMode() != null ? req.transportMode() : com.yadony.api.matching.TransportMode.PLANE);
         transportModeGuard.assertTripModeAllowed(mode, null);
         transportModeGuard.assertBoatCarrierAllowed(mode, null, traveler);
+        boolean boat = mode == com.yadony.api.matching.TransportMode.BOAT;
+        if (boat) {
+            // Un trajet dédié bateau se vend au m³ : il porte le volume de la demande, qui doit donc le
+            // connaître (une demande bateau ne se publie pas sans dimensions, mais une demande « peu
+            // importe » sans dimensions peut recevoir une offre bateau).
+            com.yadony.api.matching.ParcelFitRules.assertBoatDimensionsPresent(mode, request.getVolumeM3());
+        }
         com.yadony.api.matching.ArrivalRules.validate(req.departureDate(), req.departureTime(),
                 req.arrivalDate(), req.arrivalTime(), mode);
-        // Trajet neuf : arrivalDateMax reste nul, aucune fourchette à contredire
-        // (chk_announcements_arrival_date_max). Un trajet dédié bateau reste au kilo, sans
-        // fourchette ni volume, jusqu'au trajet dédié bateau au m³ (lot 3, tâche BA7).
+        if (boat) {
+            // Fourchette d'arrivée estimée obligatoire : arrivalDate (début) et arrivalDateMax (fin).
+            com.yadony.api.matching.ArrivalRules.validateRange(
+                    req.departureDate(), req.arrivalDate(), req.arrivalDateMax());
+            ann.setArrivalDateMax(req.arrivalDateMax());
+        }
+        // Hors bateau : arrivalDateMax reste nul, aucune fourchette à contredire
+        // (chk_announcements_arrival_date_max, chk_announcements_boat_columns).
         ann.setArrivalDate(req.arrivalDate());
         ann.setHandoverDeadline(dedicatedHandoverDeadline(
                 req.departureDate(), req.departureTime(), ann.getTimezone()));
@@ -1042,21 +1070,42 @@ public class NegotiationService {
         ann.setDeliveryAddressLabel(req.deliveryAddress().label());
         ann.setDeliveryLat(BigDecimal.valueOf(req.deliveryAddress().lat()));
         ann.setDeliveryLng(BigDecimal.valueOf(req.deliveryAddress().lng()));
-        ann.setAvailableKg(java.math.BigDecimal.ZERO);
-        ann.setTotalKg(request.getWeightKg());
-        ann.setReservedKg(request.getWeightKg());
-        BigDecimal derivedPricePerKg = agreedPriceEur
-            .divide(request.getWeightKg(), 2, RoundingMode.HALF_UP);
-        if (derivedPricePerKg.signum() <= 0) {
-            derivedPricePerKg = new BigDecimal("0.01");
+        if (boat) {
+            // Trajet dédié bateau AU M³ (chk_announcements_kg_or_m3 : prix au m³ et volume renseignés,
+            // aucun kilo) : tout le volume de la demande lui est réservé, comme le trajet au kilo réserve
+            // tous les kilos (disponible = volume de la demande, ouverture de surplus refusée en m³) ;
+            // prix au m³ dérivé du prix convenu, à 2 décimales, jamais sous 0,01. Aucun kilo, aucune
+            // réserve en kilos : le prix du fil reste le prix total du colis lié.
+            BigDecimal volume = request.getVolumeM3();
+            ann.setVolumeCapacityM3(volume);
+            ann.setAvailableVolumeM3(volume);
+            ann.setAvailableKg(null);
+            ann.setTotalKg(null);
+            ann.setReservedKg(BigDecimal.ZERO);
+            BigDecimal derivedPricePerM3 = agreedPriceEur.divide(volume, 2, RoundingMode.HALF_UP);
+            if (derivedPricePerM3.signum() <= 0) {
+                derivedPricePerM3 = new BigDecimal("0.01");
+            }
+            ann.setPricePerM3(derivedPricePerM3);
+            ann.setPricePerKg(null);
+            ann.setPricePerKgEur(null);
+        } else {
+            ann.setAvailableKg(java.math.BigDecimal.ZERO);
+            ann.setTotalKg(request.getWeightKg());
+            ann.setReservedKg(request.getWeightKg());
+            BigDecimal derivedPricePerKg = agreedPriceEur
+                .divide(request.getWeightKg(), 2, RoundingMode.HALF_UP);
+            if (derivedPricePerKg.signum() <= 0) {
+                derivedPricePerKg = new BigDecimal("0.01");
+            }
+            ann.setPricePerKg(derivedPricePerKg);
+            ann.setPricePerKgEur(exchangeRateService.toEurPivot(derivedPricePerKg, request.getCurrency()));
         }
-        ann.setPricePerKg(derivedPricePerKg);
         // Devise de la DEMANDE, règle métier « la négociation porte la devise de la
         // demande de colis » : sans cette ligne le trajet dédié restait sur le défaut
         // d'entité (EUR), même pour une négo XOF — et thread.setCurrency copiait
         // ensuite cette devise erronée.
         ann.setCurrency(request.getCurrency());
-        ann.setPricePerKgEur(exchangeRateService.toEurPivot(derivedPricePerKg, request.getCurrency()));
         // Sans cette ligne le trajet dédié gardait le défaut d'entité {STRIPE}, publié même en
         // zone CFA ou pour un voyageur sans compte Connect : les moyens sont ceux que le voyageur
         // peut réellement fournir sur cette demande, l'espèce en repli.
@@ -1115,7 +1164,7 @@ public class NegotiationService {
 
         // Build the dedicated announcement with all locked fields derived server-side.
         com.yadony.api.matching.AnnouncementEntity ann =
-            buildDedicatedTripAnnouncement(request, traveler, thread.getCurrentPriceEur(), req);
+            buildBookableDedicatedTrip(request, traveler, thread.getCurrentPriceEur(), req);
 
         com.yadony.api.matching.AnnouncementEntity savedAnn = announcementRepo.save(ann);
 
@@ -2120,6 +2169,11 @@ public class NegotiationService {
         if (ann.isSurplusPublished()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "surplus/already-open");
         }
+        // Le surplus se vend au kilo (availableKg, pricePerKg) : un trajet dédié bateau au m³ n'a aucun
+        // kilo (chk_announcements_kg_or_m3), l'ouvrir au kilo le rendrait incohérent.
+        if (ann.isPricedPerM3()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "surplus/volume-trip-unsupported");
+        }
         if (surplusKg == null || surplusKg.compareTo(BigDecimal.ONE) < 0) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "surplus/invalid-kg");
         }
@@ -2823,8 +2877,23 @@ public class NegotiationService {
             senderUser != null && senderUser.isGpPro(),
             t.getCommissionGridId(),
             travelerCashCommissionEur,
-            autoReminderSentAt(t)
+            autoReminderSentAt(t),
+            threadTransportMode(request, linkedAnn)
         );
+    }
+
+    /**
+     * Mode du fil servi à l'app : celui de la demande de colis, sinon celui du trajet lié (l'offre
+     * d'un voyageur sur une demande « peu importe »), sinon null. Aucun repli sur l'avion : null veut
+     * dire « inconnu », et l'app affiche alors une icône neutre.
+     */
+    static String threadTransportMode(PackageRequestEntity request,
+                                      com.yadony.api.matching.AnnouncementEntity linkedAnn) {
+        if (request.getTransportMode() != null) {
+            return request.getTransportMode().name();
+        }
+        return linkedAnn != null && linkedAnn.getTransportMode() != null
+            ? linkedAnn.getTransportMode().name() : null;
     }
 
     /**

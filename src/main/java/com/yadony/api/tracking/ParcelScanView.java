@@ -17,6 +17,8 @@ public record ParcelScanView(
         String senderName,
         String recipientName,
         String travelerName,
-        List<RecipientController.RecipientEventDto> events
+        List<RecipientController.RecipientEventDto> events,
+        /** Mode du trajet ({@code PLANE}, {@code BOAT}...), null si inconnu : la page n'en déduit jamais l'avion. */
+        String transportMode
 ) {
 }

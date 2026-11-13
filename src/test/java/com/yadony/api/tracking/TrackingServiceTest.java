@@ -307,6 +307,39 @@ class TrackingServiceTest {
     }
 
     @Test
+    void trackingSearch_exposesTripMode() {
+        BidEntity bid = buildBid(BidStatus.PENDING, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.transportMode()).isEqualTo("BOAT");
+    }
+
+    @Test
+    void trackingSearch_tripWithoutMode_nullNeverPlane() throws Exception {
+        BidEntity bid = buildBid(BidStatus.PENDING, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.transportMode()).isNull();
+        // Toujours sérialisé, null compris (l'app affiche alors une icône neutre).
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper()
+                .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                .writeValueAsString(resp)).contains("\"transportMode\":null");
+    }
+
+    @Test
     void searchByTrackingNumber_arrivedWithInstructions_returnsArrivalInstructions() {
         BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
         AnnouncementEntity ann = buildAnnouncement();

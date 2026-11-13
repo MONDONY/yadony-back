@@ -241,7 +241,8 @@ public class TrackingService {
                 currentStep,
                 stepLabel,
                 paymentStatus,
-                announcement.getArrivalInstructions()
+                announcement.getArrivalInstructions(),
+                announcement.getTransportMode() != null ? announcement.getTransportMode().name() : null
         );
     }
 

@@ -130,7 +130,8 @@ public class ParcelScanController {
                         // Jamais le lieu : il commence par la rue, souvent celle de l'expéditeur.
                         null,
                         resolvePhoto(e.getPhotoUrl()),
-                        e.getOfflineTimestamp() != null)).toList());
+                        e.getOfflineTimestamp() != null)).toList(),
+                announcement.getTransportMode() != null ? announcement.getTransportMode().name() : null);
 
         model.addAttribute("inactive", false);
         model.addAttribute("parcel", parcel);

@@ -7013,4 +7013,288 @@ class NegotiationServiceTest {
             assertThat(NegotiationService.isTripHandoverOver(ann, java.time.Instant.parse("2026-10-19T18:31:00Z"))).isTrue();
         }
     }
+
+    @Nested
+    @DisplayName("Fil de négociation : mode de transport servi tel quel (lot 3, BA7)")
+    class ThreadTransportModeTests {
+
+        private NegotiationThreadResponse respond(com.yadony.api.matching.AnnouncementEntity linkedAnn) {
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.OPEN);
+            thread.setCurrentPriceEur(new BigDecimal("30"));
+            thread.setRoundsCount((short) 1);
+            thread.setLastActivityAt(java.time.LocalDateTime.now());
+            try {
+                var idField = com.yadony.api.common.BaseEntity.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(thread, UUID.randomUUID());
+            } catch (Exception e) { throw new RuntimeException(e); }
+            request.setDepartureCity("Paris");
+            request.setArrivalCity("Dakar");
+            request.setWeightKg(new BigDecimal("5"));
+            return service.toResponse(thread, List.of(), null, traveler, request, TRAVELER_ID, "Expéditeur", linkedAnn);
+        }
+
+        private com.yadony.api.matching.AnnouncementEntity tripWithMode(com.yadony.api.matching.TransportMode mode) {
+            com.yadony.api.matching.AnnouncementEntity ann = new com.yadony.api.matching.AnnouncementEntity();
+            ann.setDepartureCity("Paris");
+            ann.setArrivalCity("Dakar");
+            ann.setAvailableKg(new BigDecimal("5"));
+            ann.setTransportMode(mode);
+            return ann;
+        }
+
+        @Test
+        @DisplayName("thread_exposesRequestMode : la demande fixe le mode, il l'emporte sur celui du trajet lié")
+        void thread_exposesRequestMode() {
+            request.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+
+            NegotiationThreadResponse response = respond(tripWithMode(com.yadony.api.matching.TransportMode.PLANE));
+
+            assertThat(response.transportMode()).isEqualTo("BOAT");
+        }
+
+        @Test
+        @DisplayName("thread_anyRequest_exposesOfferMode : demande « peu importe », le mode du trajet lié est servi")
+        void thread_anyRequest_exposesOfferMode() {
+            request.setTransportMode(null);
+
+            NegotiationThreadResponse response = respond(tripWithMode(com.yadony.api.matching.TransportMode.CAR));
+
+            assertThat(response.transportMode()).isEqualTo("CAR");
+        }
+
+        @Test
+        @DisplayName("thread_noMode_null : ni mode de demande ni trajet lié, null, jamais l'avion")
+        void thread_noMode_null() {
+            request.setTransportMode(null);
+
+            assertThat(respond(null).transportMode()).isNull();
+            assertThat(respond(tripWithMode(null)).transportMode()).isNull();
+        }
+
+        @Test
+        @DisplayName("la clé transportMode est toujours sérialisée, null compris")
+        void thread_nullMode_keyStillSerialized() throws Exception {
+            request.setTransportMode(null);
+
+            String json = new com.fasterxml.jackson.databind.ObjectMapper()
+                .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                .writeValueAsString(respond(null));
+
+            assertThat(json).contains("\"transportMode\":null");
+        }
+    }
+
+    @Nested
+    @DisplayName("Trajet dédié bateau au m³ (lot 3, BA7)")
+    class DedicatedBoatTripTests {
+
+        private com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest boatPayload(
+                LocalDate departure, LocalDate arrival, LocalDate arrivalMax) {
+            return new com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest(
+                departure, null, null,
+                new com.yadony.api.matching.dto.AddressDto("Port de Marseille", 43.3, 5.35),
+                new com.yadony.api.matching.dto.AddressDto("Port de Dakar", 14.68, -17.43),
+                "Conteneur groupé",
+                java.util.List.of("vetements"), java.util.List.of(),
+                false, arrival, null, arrivalMax);
+        }
+
+        private void boatRequest(String volumeM3) {
+            request.setDepartureCity("Marseille");
+            request.setArrivalCity("Dakar");
+            request.setDesiredDate(LocalDate.now().plusDays(10));
+            request.setDateToleranceDays((short) 2);
+            request.setWeightKg(new BigDecimal("40"));
+            request.setCurrency("EUR");
+            request.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+            request.setVolumeM3(volumeM3 == null ? null : new BigDecimal(volumeM3));
+            request.setAcceptedPaymentMethods(java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+        }
+
+        private com.yadony.api.matching.AnnouncementEntity build(BigDecimal price,
+                com.yadony.api.requests.dto.NegotiationCreateDedicatedTripRequest payload) {
+            return service.buildDedicatedTripAnnouncement(request, traveler, price, payload);
+        }
+
+        @Test
+        @DisplayName("dedicatedBoatTrip_copiesRequestVolume : volume de la demande, prix au m³ dérivé, aucun kilo")
+        void dedicatedBoatTrip_copiesRequestVolume() {
+            boatRequest("0.800");
+            LocalDate departure = request.getDesiredDate();
+
+            var ann = build(new BigDecimal("500"),
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(30)));
+
+            assertThat(ann.getTransportMode()).isEqualTo(com.yadony.api.matching.TransportMode.BOAT);
+            assertThat(ann.getVolumeCapacityM3()).isEqualByComparingTo("0.800");
+            assertThat(ann.getAvailableVolumeM3()).isEqualByComparingTo("0.800");
+            // 500 / 0,8 = 625 : le prix du fil (offre totale) divisé par le volume.
+            assertThat(ann.getPricePerM3()).isEqualByComparingTo("625.00");
+            assertThat(ann.isPricedPerM3()).isTrue();
+            assertThat(ann.getAvailableKg()).isNull();
+            assertThat(ann.getTotalKg()).isNull();
+            assertThat(ann.getPricePerKg()).isNull();
+            assertThat(ann.getPricePerKgEur()).isNull();
+            assertThat(ann.getReservedKg()).isEqualByComparingTo("0");
+            assertThat(ann.getArrivalDate()).isEqualTo(departure.plusDays(20));
+            assertThat(ann.getArrivalDateMax()).isEqualTo(departure.plusDays(30));
+            assertThat(ann.getLinkedPackageRequestId()).isEqualTo(REQUEST_ID);
+            assertThat(ann.getCurrency()).isEqualTo("EUR");
+        }
+
+        @Test
+        @DisplayName("prix au m³ arrondi à 2 décimales (HALF_UP) et jamais sous 0,01")
+        void dedicatedBoatTrip_pricePerM3_roundedAndFloored() {
+            boatRequest("3.000");
+            LocalDate departure = request.getDesiredDate();
+            var payload = boatPayload(departure, departure.plusDays(20), departure.plusDays(30));
+
+            // 100 / 3 = 33,333... → 33,33 ; 0,01 / 64 → 0 → plancher 0,01.
+            assertThat(build(new BigDecimal("100"), payload).getPricePerM3()).isEqualByComparingTo("33.33");
+            boatRequest("64.000");
+            assertThat(build(new BigDecimal("0.01"), payload).getPricePerM3()).isEqualByComparingTo("0.01");
+        }
+
+        @Test
+        @DisplayName("dedicatedBoatTrip_withoutArrivalMax_422 : fourchette d'arrivée obligatoire (arrival-range-invalid)")
+        void dedicatedBoatTrip_withoutArrivalMax_422() {
+            boatRequest("0.800");
+            LocalDate departure = request.getDesiredDate();
+
+            assertThatThrownBy(() -> build(new BigDecimal("500"),
+                boatPayload(departure, departure.plusDays(20), null)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("arrival-range-invalid");
+                });
+        }
+
+        @Test
+        @DisplayName("fin de fourchette avant le début ou au-delà de départ + 120 j : 422")
+        void dedicatedBoatTrip_invalidRange_422() {
+            boatRequest("0.800");
+            LocalDate departure = request.getDesiredDate();
+
+            assertThatThrownBy(() -> build(new BigDecimal("500"),
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(10))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("arrival-range-invalid"));
+            assertThatThrownBy(() -> build(new BigDecimal("500"),
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(121))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("arrival-too-far"));
+        }
+
+        @Test
+        @DisplayName("demande sans volume : 422 boat-dimensions-required")
+        void dedicatedBoatTrip_requestWithoutVolume_422() {
+            boatRequest(null);
+            LocalDate departure = request.getDesiredDate();
+
+            assertThatThrownBy(() -> build(new BigDecimal("500"),
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(30))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-dimensions-required");
+                });
+        }
+
+        @Test
+        @DisplayName("hors bateau, la fourchette envoyée est ignorée : trajet au kilo, pas de volume")
+        void dedicatedPlaneTrip_ignoresBoatFields() {
+            boatRequest("0.800");
+            request.setTransportMode(com.yadony.api.matching.TransportMode.PLANE);
+            LocalDate departure = request.getDesiredDate();
+
+            var ann = build(new BigDecimal("80"), boatPayload(departure, departure, departure.plusDays(30)));
+
+            assertThat(ann.getArrivalDateMax()).isNull();
+            assertThat(ann.getVolumeCapacityM3()).isNull();
+            assertThat(ann.getPricePerM3()).isNull();
+            assertThat(ann.isPricedPerM3()).isFalse();
+            assertThat(ann.getTotalKg()).isEqualByComparingTo("40");
+            assertThat(ann.getPricePerKg()).isEqualByComparingTo("2.00");
+        }
+
+        @Test
+        @DisplayName("start : trajet dédié bateau refusé en 422 boat-volume-booking-unavailable jusqu'à BB2, rien d'écrit")
+        void start_dedicatedBoatTrip_refusedUntilVolumeBooking_savesNothing() {
+            boatRequest("0.800");
+            LocalDate departure = request.getDesiredDate();
+            lenient().when(config.maxOpenThreadsPerTraveler()).thenReturn(5);
+            lenient().when(config.threadsPerMinuteRateLimit()).thenReturn(1);
+            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(requestRepo.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(request));
+            lenient().when(threadRepo.findActiveByPackageRequestIdAndTravelerId(REQUEST_ID, TRAVELER_ID))
+                .thenReturn(Optional.empty());
+            lenient().when(threadRepo.countByTravelerIdAndStatus(eq(TRAVELER_ID), eq(NegotiationThreadStatus.OPEN)))
+                .thenReturn(0L);
+            lenient().when(threadRepo.countCreatedBy(eq(TRAVELER_ID), any())).thenReturn(0L);
+            lenient().when(announcementRepo.findCountryCodeByCityName(anyString())).thenReturn(Optional.empty());
+            var payload = boatPayload(departure, departure.plusDays(20), departure.plusDays(30));
+
+            assertThatThrownBy(() -> service.start(TRAVELER_ID, new NegotiationStartRequest(
+                REQUEST_ID, new BigDecimal("500"), request.getDesiredDate(),
+                new BigDecimal("40"), null, null, true, payload)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable");
+                });
+
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("createDedicatedTrip : fil AWAITING_TRIP bateau refusé en 422, le fil reste en attente de trajet")
+        void createDedicatedTrip_boat_refusedUntilVolumeBooking_threadUntouched() {
+            boatRequest("0.800");
+            LocalDate departure = request.getDesiredDate();
+            NegotiationThreadEntity thread = new NegotiationThreadEntity();
+            thread.setPackageRequestId(REQUEST_ID);
+            thread.setTravelerId(TRAVELER_ID);
+            thread.setStatus(NegotiationThreadStatus.AWAITING_TRIP);
+            thread.setCurrentPriceEur(new BigDecimal("500"));
+            thread.setRoundsCount((short) 1);
+            UUID threadId = UUID.randomUUID();
+            when(threadRepo.findById(threadId)).thenReturn(Optional.of(thread));
+            when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(request));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
+            lenient().when(announcementRepo.findCountryCodeByCityName(anyString())).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.createDedicatedTrip(TRAVELER_ID, threadId,
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(30))))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                    ex -> assertThat(ex.getErrorCode()).isEqualTo("boat-volume-booking-unavailable"));
+
+            verify(announcementRepo, never()).save(any());
+            verify(threadRepo, never()).save(any());
+            assertThat(thread.getStatus()).isEqualTo(NegotiationThreadStatus.AWAITING_TRIP);
+        }
+
+        @Test
+        @DisplayName("openSurplus d'un trajet dédié au m³ : 422 surplus/volume-trip-unsupported, rien d'écrit")
+        void openSurplus_perM3Trip_refused() {
+            boatRequest("0.800");
+            LocalDate departure = request.getDesiredDate();
+            var ann = build(new BigDecimal("500"),
+                boatPayload(departure, departure.plusDays(20), departure.plusDays(30)));
+            ann.setTravelerId(TRAVELER_ID);
+            UUID annId = UUID.randomUUID();
+            when(announcementRepo.findById(annId)).thenReturn(Optional.of(ann));
+
+            assertThatThrownBy(() -> service.openSurplus(TRAVELER_ID, annId,
+                new BigDecimal("8"), new BigDecimal("7")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("surplus/volume-trip-unsupported");
+
+            verify(announcementRepo, never()).save(any());
+        }
+    }
 }

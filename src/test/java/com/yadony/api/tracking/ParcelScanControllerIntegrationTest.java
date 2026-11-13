@@ -28,6 +28,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -130,6 +131,26 @@ class ParcelScanControllerIntegrationTest {
                 .andExpect(content().string(containsString("App Store")))
                 .andExpect(content().string(not(containsString("Google Play"))))
                 .andExpect(content().string(containsString("noindex")));
+    }
+
+    // Lot 3 (BA7) : la page publique du colis porte le mode du trajet (champ non sensible), null si inconnu.
+    @Test
+    void colisEnCours_vueExposeLeModeDuTrajet() throws Exception {
+        assertThat(scanViewMode()).isEqualTo("PLANE");
+
+        AnnouncementEntity trip = announcementRepository.findById(bid.getAnnouncementId()).orElseThrow();
+        trip.setTransportMode(TransportMode.BOAT);
+        announcementRepository.save(trip);
+
+        assertThat(scanViewMode()).isEqualTo("BOAT");
+    }
+
+    private String scanViewMode() throws Exception {
+        var result = mockMvc.perform(get("/tracking/{id}/scan", bid.getId()))
+                .andExpect(status().isOk())
+                .andReturn();
+        Object parcel = result.getModelAndView().getModel().get("parcel");
+        return ((ParcelScanView) parcel).transportMode();
     }
 
     @Test
