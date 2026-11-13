@@ -60,6 +60,18 @@ public class TripRescheduleService {
         this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * Versement au dépôt déjà parti ? (port de cancellation/, implémenté par payments) ; repli prudent
+     * {@link com.yadony.api.cancellation.DepositPayoutPort#ASSUME_PAID} tant que Spring ne l'a pas injecté.
+     */
+    private com.yadony.api.cancellation.DepositPayoutPort depositPayouts =
+            com.yadony.api.cancellation.DepositPayoutPort.ASSUME_PAID;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDepositPayoutPort(com.yadony.api.cancellation.DepositPayoutPort depositPayouts) {
+        this.depositPayouts = depositPayouts;
+    }
+
     /** Retards annoncés (V382) : purgés au report ; aucun tant que Spring ne l'a pas injecté. */
     private TripDelayRepository tripDelayRepository;
 
@@ -226,14 +238,17 @@ public class TripRescheduleService {
      * Recale chaque colis sur les nouveaux horaires. Accepté : nouvelle limite de remise
      * (copiée sur le bid, que lisent le rappel H-2 et l'absence automatique) et rappel
      * H-2 réarmé. Remis : expiration du code de retrait recalculée. Les deux attendent la
-     * réponse de l'expéditeur ; les demandes pas encore acceptées sont seulement prévenues.
+     * réponse de l'expéditeur ; les demandes pas encore acceptées sont seulement prévenues. Un colis payé au dépôt
+     * dont le transporteur a déjà reçu l'argent est seulement prévenu lui aussi : s'en retirer serait refusé (409
+     * {@code deposit-paid-no-refund}), on ne lui propose donc pas de choix.
      */
     private List<TripRescheduledEvent.Target> applyToBids(AnnouncementEntity announcement, UUID rescheduleId) {
         Set<BidStatus> touched = EnumSet.copyOf(TripRescheduleRules.DECISION_STATUSES);
         touched.addAll(TripRescheduleRules.INFORMED_STATUSES);
         List<TripRescheduledEvent.Target> targets = new ArrayList<>();
         for (BidEntity bid : bidRepository.findByAnnouncementIdAndStatusIn(announcement.getId(), List.copyOf(touched))) {
-            boolean decisionRequired = TripRescheduleRules.DECISION_STATUSES.contains(bid.getStatus());
+            boolean decisionRequired = TripRescheduleRules.DECISION_STATUSES.contains(bid.getStatus())
+                    && !com.yadony.api.cancellation.CancellationGuard.depositPaid(bid, depositPayouts);
             if (bid.getStatus() == BidStatus.ACCEPTED) {
                 bid.applyHandoverFrom(announcement);
                 bid.setH2AlertSentAt(null);

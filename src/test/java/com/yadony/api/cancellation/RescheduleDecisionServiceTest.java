@@ -1,5 +1,6 @@
 package com.yadony.api.cancellation;
 
+import org.springframework.http.HttpStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.events.ParcelReturnToSenderRequestedEvent;
@@ -212,6 +213,40 @@ class RescheduleDecisionServiceTest {
         service.decide("uid-sender", bidId, RescheduleDecision.WITHDRAW);
 
         verify(eventPublisher).publishEvent(any(TravelerHighCancellationEvent.class));
+    }
+
+    @Test
+    void withdraw_depositPaidParcel_409_nothingCancelledNothingAnnounced() {
+        bid.setStatus(BidStatus.HANDED_OVER);
+        ReflectionTestUtils.setField(bid, "payoutTrigger", com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+        ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt", LocalDateTime.now().minusDays(2));
+        service.setDepositPayoutPort(id -> true);
+
+        assertThatThrownBy(() -> service.decide("uid-sender", bidId, RescheduleDecision.WITHDRAW))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("deposit-paid-no-refund");
+                });
+
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+        assertThat(bid.getPendingRescheduleId()).isEqualTo(rescheduleId);
+        assertThat(bid.getReturnCode()).isNull();
+        verify(cancellationRepository, never()).save(any());
+        verify(bidRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void keep_depositPaidParcel_stillAllowed() {
+        bid.setStatus(BidStatus.HANDED_OVER);
+        ReflectionTestUtils.setField(bid, "payoutTrigger", com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+        ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt", LocalDateTime.now().minusDays(2));
+        service.setDepositPayoutPort(id -> true);
+
+        service.decide("uid-sender", bidId, RescheduleDecision.KEEP);
+
+        assertThat(bid.getPendingRescheduleId()).isNull();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
     }
 
     @Test

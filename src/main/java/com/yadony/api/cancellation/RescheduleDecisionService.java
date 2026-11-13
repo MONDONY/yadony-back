@@ -46,6 +46,17 @@ public class RescheduleDecisionService {
     private final AuditService auditService;
     private final ApplicationEventPublisher eventPublisher;
 
+    /**
+     * Versement au dépôt déjà parti ? (port branché par Spring, paquet {@code payments}) ; repli prudent
+     * {@link DepositPayoutPort#ASSUME_PAID} sans implémentation.
+     */
+    private DepositPayoutPort depositPayouts = DepositPayoutPort.ASSUME_PAID;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDepositPayoutPort(DepositPayoutPort depositPayouts) {
+        this.depositPayouts = depositPayouts;
+    }
+
     public RescheduleDecisionService(BidRepository bidRepository,
                                      AnnouncementRepository announcementRepository,
                                      UserRepository userRepository,
@@ -84,6 +95,13 @@ public class RescheduleDecisionService {
         if (!TripRescheduleRules.decisionOpen(bid, announcement)) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "reschedule-decision-closed",
                     "problem.reschedule-decision-closed");
+        }
+
+        // Colis payé au dépôt dont le transporteur a déjà reçu l'argent : se retirer annoncerait un remboursement
+        // qui n'aura jamais lieu (RefundProcessor ne rembourse pas un paiement versé). 409 deposit-paid-no-refund,
+        // rien n'est annulé ; le support ouvre un litige.
+        if (decision == RescheduleDecision.WITHDRAW) {
+            CancellationGuard.assertNoRefundAfterDepositPayout(bid, depositPayouts);
         }
 
         UUID rescheduleId = bid.getPendingRescheduleId();

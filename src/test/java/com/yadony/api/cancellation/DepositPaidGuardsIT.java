@@ -91,6 +91,8 @@ class DepositPaidGuardsIT {
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired BidRepository bidRepository;
     @Autowired PaymentRepository paymentRepository;
+    @Autowired RescheduleDecisionService rescheduleDecisionService;
+    @Autowired com.yadony.api.tracking.TrackingEventRepository trackingEventRepository;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
@@ -131,6 +133,33 @@ class DepositPaidGuardsIT {
         assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.HANDED_OVER);
         assertThat(count("SELECT COUNT(*) FROM admin_alerts WHERE type = ? AND resolved = false",
                 DepositPaidTripCancelAlertListener.ALERT_PREFIX + trip.getId())).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("report du trajet puis retrait de l'expéditeur d'un colis payé au dépôt → 409, colis intact")
+    void withdrawAfterReschedule_depositPaid_409() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        UserEntity sender = persistUser(Role.SENDER);
+        AnnouncementEntity trip = persistBoatTrip(traveler);
+        BidEntity bid = persistDepositedBid(trip, sender, PaymentMethod.STRIPE);
+        persistPayment(bid, PaymentStatus.RELEASED);
+        UUID rescheduleId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO trip_reschedules (id, announcement_id, traveler_id, reason, previous_departure_date,
+                                              new_departure_date, created_at)
+                VALUES (?, ?, ?, 'POSTPONED', ?, ?, now())
+                """, rescheduleId, trip.getId(), traveler.getId(), LocalDate.now().plusDays(1),
+                LocalDate.now().plusDays(3));
+        jdbc.update("UPDATE bids SET pending_reschedule_id = ? WHERE id = ?", rescheduleId, bid.getId());
+
+        assertDepositPaid(() -> rescheduleDecisionService.decide(sender.getFirebaseUid(), bid.getId(),
+                RescheduleDecision.WITHDRAW));
+
+        BidEntity after = bidRepository.findById(bid.getId()).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+        assertThat(after.getPendingRescheduleId()).isEqualTo(rescheduleId);
+        assertThat(after.getReturnCode()).isNull();
+        assertThat(count("SELECT COUNT(*) FROM cancellations WHERE bid_id = ?", bid.getId())).isZero();
     }
 
     @Test
@@ -218,7 +247,15 @@ class DepositPaidGuardsIT {
         bid.setTrackingNumber("DNY" + String.format("%09d", Math.floorMod(System.nanoTime(), 1_000_000_000L)));
         ReflectionTestUtils.setField(bid, "payoutTrigger", PayoutTrigger.DEPOSIT);
         ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt", LocalDateTime.now());
-        return bidRepository.saveAndFlush(bid);
+        BidEntity saved = bidRepository.saveAndFlush(bid);
+        // Vrai dépôt : étape DEPART enregistrée (photo du dépôt).
+        com.yadony.api.tracking.TrackingEventEntity depart = new com.yadony.api.tracking.TrackingEventEntity();
+        depart.setBidId(saved.getId());
+        depart.setEventType(com.yadony.api.tracking.TrackingEventType.DEPART);
+        depart.setScannedAt(LocalDateTime.now().minusHours(1));
+        depart.setPhotoUrl("tracking/" + saved.getId() + "/deposit.jpg");
+        trackingEventRepository.saveAndFlush(depart);
+        return saved;
     }
 
     private void persistPayment(BidEntity bid, PaymentStatus status) {
