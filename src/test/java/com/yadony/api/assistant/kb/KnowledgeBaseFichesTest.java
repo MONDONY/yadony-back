@@ -693,6 +693,35 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void fichesBateau_decriventLeM3LaFourchetteLesRetardsEtLaGardeSansAnnoncerLePaiementAuDepot() {
+        List<String> ids = List.of("modes-transport", "proposer-trajet", "envoyer-colis", "reporter-trajet",
+                "preparer-colis", "rechercher-trajet");
+        for (String id : ids) {
+            for (String locale : List.of("fr", "en")) {
+                assertThat(article(locale, id)).as(locale + "/" + id).isPresent();
+                // Le paiement au dépôt et l'annulation après dépôt arrivent avec la PR de paiement.
+                assertThat(body(locale, id).toLowerCase()).as(locale + "/" + id)
+                        .doesNotContain("au dépôt").doesNotContain("at drop-off").doesNotContain("après le dépôt")
+                        .doesNotContain("after drop-off");
+            }
+        }
+        assertThat(body("fr", "modes-transport")).contains("m³").contains("GP Pro").contains("fourchette")
+                .contains("retard").doesNotContain("Paris-Dakar");
+        assertThat(body("en", "modes-transport")).contains("m³").contains("GP Pro").contains("range")
+                .contains("delay").doesNotContain("Paris-Dakar");
+        assertThat(body("fr", "proposer-trajet")).contains("GP Pro et aux comptes PRO").contains("prix au m³");
+        assertThat(body("en", "proposer-trajet")).contains("GP Pro and PRO accounts").contains("price per m³");
+        assertThat(body("fr", "envoyer-colis")).contains("dimensions").contains("400").contains("m³");
+        assertThat(body("en", "envoyer-colis")).contains("dimensions").contains("400").contains("m³");
+        assertThat(body("fr", "reporter-trajet")).contains("retard").contains("300 caractères").contains("port encombré");
+        assertThat(body("en", "reporter-trajet")).contains("delay").contains("300 characters").contains("port congestion");
+        assertThat(body("fr", "rechercher-trajet")).contains("volume minimal").contains("prix maximal au m³");
+        assertThat(body("en", "rechercher-trajet")).contains("minimum volume").contains("maximum price per m³");
+        assertThat(body("fr", "preparer-colis")).contains("longueur, largeur, hauteur");
+        assertThat(body("en", "preparer-colis")).contains("length, width, height");
+    }
+
+    @Test
     void fiches_noEmDash() {
         assertThat(allBodies()).isNotEmpty().noneMatch(b -> b.contains("\u2014"));
     }
