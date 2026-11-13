@@ -460,6 +460,48 @@ public class FirestoreService {
     }
 
     /**
+     * Date du dernier message d'une conversation : {@code lastMessageAt} du document parent, à
+     * défaut le message le plus récent. Lecture seule. Vide si Firestore est désactivé, si la
+     * conversation n'a aucun message ou si la date est illisible. Lève en cas d'échec Firestore :
+     * l'appelant ne doit alors PAS purger.
+     */
+    public java.util.Optional<Instant> lastMessageInstant(String conversationId) {
+        if (firestore == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var convRef = firestore.collection("conversations").document(conversationId);
+            var snap = convRef.get().get();
+            java.util.Optional<Instant> fromParent = snap.exists()
+                    ? toInstant(snap.get("lastMessageAt")) : java.util.Optional.empty();
+            if (fromParent.isPresent()) {
+                return fromParent;
+            }
+            var last = convRef.collection("messages")
+                    .orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)
+                    .limit(1).get().get();
+            return last.isEmpty() ? java.util.Optional.empty()
+                    : toInstant(last.getDocuments().get(0).get("sentAt"));
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore lastMessageInstant failed", e);
+        }
+    }
+
+    private static java.util.Optional<Instant> toInstant(Object value) {
+        try {
+            if (value instanceof String s && !s.isBlank()) {
+                return java.util.Optional.of(Instant.parse(s));
+            }
+            if (value instanceof com.google.cloud.Timestamp t) {
+                return java.util.Optional.of(t.toDate().toInstant());
+            }
+        } catch (Exception ignored) {
+            // date illisible : traitée comme absente
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
      * Suppression complète d'une conversation INQUIRY inactive : document conversation, TOUS ses
      * messages (avec leurs sous-collections) ET le compteur {@code inquiryQuota/{convId}}, ensemble.
      * Le compteur n'est jamais supprimé seul : tant que des messages {@code inq<n>} existent, il

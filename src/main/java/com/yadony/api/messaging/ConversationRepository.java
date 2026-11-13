@@ -201,6 +201,26 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     java.util.List<ConversationEntity> findStaleInquiries(@Param("cutoff") java.time.LocalDateTime cutoff);
 
     /**
+     * Réserve une INQUIRY inactive en vue de sa purge : suppression logique GARDÉE, atomique (aucune
+     * entité périmée réécrite). Rend 0 si, entre la sélection et maintenant, la conversation a été
+     * promue (kind), supprimée ou réveillée (activité plus récente que {@code cutoff}) : à ignorer.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.deletedAt = :now " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
+           "AND c.deletedAt IS NULL AND COALESCE(c.lastActivityAt, c.createdAt) < :cutoff")
+    int reserveStaleInquiry(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now,
+                            @Param("cutoff") java.time.LocalDateTime cutoff);
+
+    /** Annule {@link #reserveStaleInquiry} quand l'effacement Firestore a échoué. */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.deletedAt = NULL " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY")
+    int releaseInquiryReservation(@Param("id") UUID id);
+
+    /**
      * Conversations de la modération, filtrables : seulement celles qui ont un signalement ouvert sur
      * un message ({@code reports.target_id} = {@code conversations.id}), et/ou dont un participant est
      * l'un de ces comptes. Les drapeaux évitent un {@code IN ()} vide : {@code userIds} n'est lu que si

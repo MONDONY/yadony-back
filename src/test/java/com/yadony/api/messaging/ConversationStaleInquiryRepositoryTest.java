@@ -73,4 +73,29 @@ class ConversationStaleInquiryRepositoryTest {
 
         assertThat(selected(gone, now.minusDays(InquiryPolicy.INACTIVITY_DAYS))).isFalse();
     }
+
+    @Test
+    void reserveStaleInquiry_softDeletesOnlyWhileStillInactiveAndInquiry_thenReleaseUndoes() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime cutoff = now.minusDays(InquiryPolicy.INACTIVITY_DAYS);
+        ConversationEntity stale = inquiry(now.minusDays(40), now.minusDays(40));
+        ConversationEntity awakened = inquiry(now.minusDays(1), now.minusDays(40));
+        ConversationEntity promoted = inquiry(now.minusDays(40), now.minusDays(40));
+        jdbc.update("UPDATE conversations SET kind = 'SENDER_TRAVELER' WHERE id = ?", promoted.getId());
+
+        assertThat(repo.reserveStaleInquiry(awakened.getId(), now, cutoff)).isZero();
+        assertThat(repo.reserveStaleInquiry(promoted.getId(), now, cutoff)).isZero();
+        assertThat(repo.reserveStaleInquiry(stale.getId(), now, cutoff)).isEqualTo(1);
+        assertThat(repo.reserveStaleInquiry(stale.getId(), now, cutoff)).isZero();
+        assertThat(deletedAt(stale)).isNotNull();
+        assertThat(deletedAt(promoted)).isNull();
+
+        assertThat(repo.releaseInquiryReservation(stale.getId())).isEqualTo(1);
+        assertThat(deletedAt(stale)).isNull();
+        assertThat(repo.releaseInquiryReservation(promoted.getId())).isZero();
+    }
+
+    private Object deletedAt(ConversationEntity c) {
+        return jdbc.queryForObject("SELECT deleted_at FROM conversations WHERE id = ?", Object.class, c.getId());
+    }
 }
