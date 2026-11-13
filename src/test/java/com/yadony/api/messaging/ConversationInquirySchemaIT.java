@@ -91,9 +91,29 @@ class ConversationInquirySchemaIT {
     }
 
     @Test
+    @DisplayName("tant qu'une conversation promue existe pour le couple, aucune INQUIRY ne peut naître ; promote puis relock réussit")
+    void promotedThreadBlocksNewInquiry_andRelockWorks() throws Exception {
+        UUID ann = seedAnnouncement();
+        UUID inquiry = insertConversation("INQUIRY", null, asker, ann);
+        exec("UPDATE conversations SET kind = 'SENDER_TRAVELER', bid_id = '" + seedBid()
+                + "' WHERE id = '" + inquiry + "'");
+        assertThatThrownBy(() -> insertConversation("INQUIRY", null, asker, ann))
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("conversations_inquiry_active_idx");
+        exec("UPDATE conversations SET kind = 'INQUIRY', bid_id = NULL WHERE id = '" + inquiry + "'");
+    }
+
+    @Test
+    @DisplayName("hors INQUIRY, bid_id reste obligatoire")
+    void bidRequiredUnlessInquiry() {
+        assertThatThrownBy(() -> insertConversation("SENDER_TRAVELER", null, null, null))
+                .isInstanceOf(SQLException.class).hasMessageContaining("chk_conversations_bid_unless_inquiry");
+    }
+
+    @Test
     @DisplayName("un type inconnu reste refusé")
     void unknownKind_isRejected() {
-        assertThatThrownBy(() -> insertConversation("FOO", null, asker, announcement))
+        assertThatThrownBy(() -> insertConversation("FOO", seedBid(), asker, announcement))
                 .isInstanceOf(SQLException.class).hasMessageContaining("chk_conversations_kind");
     }
 

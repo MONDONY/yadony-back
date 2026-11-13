@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -145,18 +146,25 @@ public class ConversationEntity extends BaseEntity {
         return quotaLiftedAt != null;
     }
 
-    /** Un bid est créé : la conversation devient SENDER_TRAVELER et le quota est levé. */
+    /** Un bid est créé : la conversation INQUIRY ouverte devient SENDER_TRAVELER et le quota est levé. */
     public void promoteToBid(UUID bidId, LocalDateTime at) {
+        Objects.requireNonNull(bidId, "bidId");
+        if (kind != ConversationKind.INQUIRY || isClosed()) {
+            throw new IllegalStateException("Seule une conversation INQUIRY ouverte peut être promue");
+        }
         this.bidId = bidId;
         this.kind = ConversationKind.SENDER_TRAVELER;
         this.quotaLiftedAt = at;
+        this.lastActivityAt = at;
     }
 
     /** Le bid est annulé : retour à INQUIRY, sans bid, quota réappliqué. */
     public void relockToInquiry(LocalDateTime at) {
-        if (announcementId == null || askerId == null) {
+        if (kind != ConversationKind.SENDER_TRAVELER || isClosed()
+                || announcementId == null || askerId == null) {
             throw new IllegalStateException(
-                    "Impossible de re-verrouiller en INQUIRY sans announcement_id ni asker_id");
+                    "Seule une conversation promue et ouverte (announcement_id et asker_id renseignés) "
+                            + "peut être re-verrouillée en INQUIRY");
         }
         this.bidId = null;
         this.kind = ConversationKind.INQUIRY;

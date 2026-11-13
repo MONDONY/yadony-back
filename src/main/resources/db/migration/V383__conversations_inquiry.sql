@@ -24,7 +24,16 @@ ALTER TABLE conversations
     ADD CONSTRAINT chk_conversations_inquiry_refs
     CHECK (kind <> 'INQUIRY' OR (asker_id IS NOT NULL AND announcement_id IS NOT NULL));
 
--- Une seule conversation INQUIRY ouverte par couple (demandeur, annonce).
+-- Hors INQUIRY, le bid reste obligatoire.
+ALTER TABLE conversations
+    ADD CONSTRAINT chk_conversations_bid_unless_inquiry
+    CHECK (kind = 'INQUIRY' OR bid_id IS NOT NULL);
+
+-- Une seule conversation ouverte par couple (demandeur, annonce), tous types confondus :
+-- une conversation promue (SENDER_TRAVELER) garde asker_id et announcement_id, donc empêche
+-- d'ouvrir une seconde INQUIRY qui ferait échouer le re-verrouillage. Les conversations créées
+-- à l'acceptation d'un bid laissent ces colonnes nulles : pas de conflit.
 CREATE UNIQUE INDEX conversations_inquiry_active_idx
     ON conversations (asker_id, announcement_id)
-    WHERE kind = 'INQUIRY' AND deleted_at IS NULL AND closed_at IS NULL;
+    WHERE asker_id IS NOT NULL AND announcement_id IS NOT NULL
+      AND deleted_at IS NULL AND closed_at IS NULL;

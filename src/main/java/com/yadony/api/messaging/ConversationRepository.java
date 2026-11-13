@@ -52,6 +52,15 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     Optional<ConversationEntity> findInquiry(@Param("askerId") UUID askerId,
                                              @Param("announcementId") UUID announcementId);
 
+    /**
+     * Conversation ouverte du couple (demandeur, annonce), tous types (INQUIRY ou déjà promue en
+     * SENDER_TRAVELER) ; ni supprimée ni fermée. Sert à ne jamais en créer une seconde.
+     */
+    @Query("SELECT c FROM ConversationEntity c WHERE c.askerId = :askerId AND c.announcementId = :announcementId " +
+           "AND c.closedAt IS NULL AND c.deletedAt IS NULL")
+    Optional<ConversationEntity> findByAskerAndAnnouncement(@Param("askerId") UUID askerId,
+                                                            @Param("announcementId") UUID announcementId);
+
     Optional<ConversationEntity> findByFirestoreConversationId(String firestoreConversationId);
 
     /** Toutes les conversations d'un bid, tous types et fermées comprises (rétention des photos). */
