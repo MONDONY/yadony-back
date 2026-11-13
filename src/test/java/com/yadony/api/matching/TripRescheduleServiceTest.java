@@ -94,6 +94,32 @@ class TripRescheduleServiceTest {
     }
 
     @Test
+    void reschedule_softDeletesTheAnnouncedDelays_soLatestTripDelayGoesStale() {
+        TripDelayRepository delayRepository = org.mockito.Mockito.mock(TripDelayRepository.class);
+        service.setTripDelayRepository(delayRepository);
+        TripDelayEntity d1 = new TripDelayEntity();
+        TripDelayEntity d2 = new TripDelayEntity();
+        when(delayRepository.findByAnnouncementId(announcementId)).thenReturn(List.of(d1, d2));
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(List.of());
+
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+
+        assertThat(d1.getDeletedAt()).isNotNull();
+        assertThat(d2.getDeletedAt()).isNotNull();
+        org.mockito.Mockito.verify(delayRepository).save(d1);
+        org.mockito.Mockito.verify(delayRepository).save(d2);
+    }
+
+    @Test
+    void reschedule_withoutDelayRepository_stillWorks() {
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(List.of());
+
+        service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
+
+        assertThat(announcement.getDepartureDate()).isEqualTo(newDate);
+    }
+
+    @Test
     void rescheduleResetsDepartedAt() {
         announcement.setDepartedAt(java.time.OffsetDateTime.now().minusHours(1));
         announcement.setDeparturePromptSentAt(java.time.OffsetDateTime.now().minusHours(1));
@@ -260,5 +286,83 @@ class TripRescheduleServiceTest {
         service.reschedule(announcementId, "uid-traveler", request(newDate, LocalTime.of(23, 0)));
         assertThat(announcement.getDeparturePromptSentAt()).isNull();
         assertThat(announcement.getArrivalPromptSentAt()).isNull();
+    }
+
+    // ─── Bateau (lot 3) : la fourchette d'arrivée suit le report ─────────────────
+
+    private void boatWithRange(int minDays, int maxDays) {
+        announcement.setTransportMode(TransportMode.BOAT);
+        announcement.setArrivalDate(oldDate.plusDays(minDays));
+        announcement.setArrivalDateMax(oldDate.plusDays(maxDays));
+    }
+
+    private TripRescheduleRequest boatRequest(LocalDate departure, LocalDate arrival) {
+        return new TripRescheduleRequest(departure, LocalTime.of(10, 0), arrival, null,
+                departure.minusDays(1).atTime(18, 0), TripRescheduleReason.POSTPONED, null);
+    }
+
+    @Test
+    void reschedule_boatWithRange_shiftsRangeKeepingItsWidth() {
+        boatWithRange(30, 40);
+        BidEntity handedOver = bid(BidStatus.HANDED_OVER);
+        handedOver.setConfirmationCode("123456");
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList()))
+                .thenReturn(List.of(handedOver));
+
+        service.reschedule(announcementId, "uid-traveler", boatRequest(newDate, newDate.plusDays(35)));
+
+        assertThat(announcement.getArrivalDate()).isEqualTo(newDate.plusDays(35));
+        assertThat(announcement.getArrivalDateMax()).isEqualTo(newDate.plusDays(45));
+        // Le code de retrait est recalé sur la NOUVELLE fin de fourchette.
+        assertThat(handedOver.getConfirmationCodeExpiry()).isEqualTo(newDate.plusDays(45).atStartOfDay().plusDays(3));
+    }
+
+    @Test
+    void reschedule_boatRangeBeyond120Days_isShortenedToTheCeiling() {
+        boatWithRange(30, 40);
+
+        service.reschedule(announcementId, "uid-traveler", boatRequest(newDate, newDate.plusDays(115)));
+
+        assertThat(announcement.getArrivalDate()).isEqualTo(newDate.plusDays(115));
+        assertThat(announcement.getArrivalDateMax()).isEqualTo(newDate.plusDays(120));
+    }
+
+    @Test
+    void reschedule_boatWithRange_withoutArrivalDate_isRefused() {
+        boatWithRange(30, 40);
+
+        assertThatThrownBy(() -> service.reschedule(announcementId, "uid-traveler", boatRequest(newDate, null)))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("arrival-range-invalid"));
+        verify(rescheduleRepository, never()).save(any());
+    }
+
+    @Test
+    void reschedule_withoutRange_keepsArrivalDateMaxNull() {
+        announcement.setTransportMode(TransportMode.BOAT);
+        service.reschedule(announcementId, "uid-traveler", boatRequest(newDate, newDate.plusDays(30)));
+
+        assertThat(announcement.getArrivalDateMax()).isNull();
+        assertThat(TripRescheduleService.shiftedArrivalDateMax(announcement, boatRequest(newDate, null))).isNull();
+    }
+
+    @Test
+    void reschedule_inProgressBoatPerM3_backOnMarketByVolume() {
+        boatWithRange(30, 40);
+        announcement.setAvailableKg(null);
+        announcement.setPricePerM3(new BigDecimal("600"));
+        announcement.setVolumeCapacityM3(new BigDecimal("2"));
+        announcement.setAvailableVolumeM3(BigDecimal.ZERO);
+        announcement.setStatus(AnnouncementStatus.IN_PROGRESS);
+
+        service.reschedule(announcementId, "uid-traveler", boatRequest(newDate, newDate.plusDays(35)));
+
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+
+        announcement.setStatus(AnnouncementStatus.IN_PROGRESS);
+        announcement.setAvailableVolumeM3(new BigDecimal("0.5"));
+        service.reschedule(announcementId, "uid-traveler", boatRequest(newDate.plusDays(1), newDate.plusDays(36)));
+
+        assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
     }
 }

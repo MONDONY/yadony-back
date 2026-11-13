@@ -64,6 +64,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -123,6 +124,109 @@ public class AnnouncementService {
     }
 
     /**
+     * Règles d'un trajet bateau (lot 3), appelées à la création et à la modification, avant toute
+     * écriture. Hors bateau : rien (les champs bateau sont ignorés et stockés nuls).
+     * <ul>
+     *   <li>fourchette d'arrivée estimée obligatoire et cohérente : {@code arrivalDate} (début) et
+     *       {@code arrivalDateMax} (fin), fin pas avant le début (422 {@code arrival-range-invalid}),
+     *       fin au plus départ + 120 jours (422 {@code arrival-too-far}) ;</li>
+     *   <li>un seul prix : au m³ ({@code pricePerM3}) ou au kilo ({@code pricePerKg} strictement
+     *       positif), jamais les deux, jamais aucun, et pas de grille d'articles (422
+     *       {@code boat-price-required}) ;</li>
+     *   <li>au m³, le volume proposé est obligatoire (422 {@code boat-volume-required}) ; ses bornes
+     *       (0,1 à 9 999 m³) et celles du prix au m³ (strictement positif, sans borne haute métier)
+     *       sont portées par {@link AnnouncementRequest}.</li>
+     * </ul>
+     */
+    static void validateBoatFields(AnnouncementRequest request, TransportMode mode) {
+        if (mode != TransportMode.BOAT) {
+            return;
+        }
+        ArrivalRules.validateRange(request.departureDate(), request.arrivalDate(), request.arrivalDateMax());
+        boolean perM3 = request.pricePerM3() != null;
+        boolean perKg = request.pricePerKg() != null && request.pricePerKg().signum() > 0;
+        if (request.pricingMode() == PricingMode.MIXED || perM3 == perKg) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-price-required",
+                    "problem.boat-price-required");
+        }
+        if (perM3 && request.volumeCapacityM3() == null) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-volume-required",
+                    "problem.boat-volume-required");
+        }
+        // Un trajet au m³ n'a pas de kilos : le « kilo libre » (aucune limite de poids) le ferait passer dans les
+        // filtres et les recherches en kilos.
+        if (perM3 && request.capacityUnit() == CapacityUnit.KG_FREE) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-volume-unit-invalid",
+                    "problem.boat-volume-unit-invalid");
+        }
+    }
+
+    /**
+     * Modification d'un trajet bateau d'avant le lot 3 (au kilo, sans fourchette ni volume) par un
+     * client qui n'envoie aucun champ bateau, en restant bateau : ancienne app, ou dony-pro avant son
+     * lot bateau. Les règles bateau ne s'y appliquent pas, le trajet reste au kilo sans fourchette.
+     * Dès qu'un champ bateau est envoyé, ou que le trajet a déjà une fourchette ou un volume, les
+     * règles s'appliquent entières.
+     */
+    private static boolean isLegacyBoatEdit(AnnouncementEntity announcement, AnnouncementRequest request) {
+        return announcement.getTransportMode() == TransportMode.BOAT
+                && request.transportMode() == TransportMode.BOAT
+                && announcement.getArrivalDateMax() == null
+                && announcement.getVolumeCapacityM3() == null
+                && announcement.getPricePerM3() == null
+                && request.arrivalDateMax() == null
+                && request.volumeCapacityM3() == null
+                && request.pricePerM3() == null;
+    }
+
+    /** La requête décrit un trajet bateau vendu au m³ (sans kilos). */
+    private static boolean isPricedPerM3(AnnouncementRequest request) {
+        return request.transportMode() == TransportMode.BOAT && request.pricePerM3() != null;
+    }
+
+    /** Trajet au m³ : capacité, capacité initiale, prix au kilo et son pivot EUR à null. */
+    private static void clearKgCapacityAndPrice(AnnouncementEntity announcement) {
+        announcement.setAvailableKg(null);
+        announcement.setTotalKg(null);
+        announcement.setPricePerKg(null);
+        announcement.setPricePerKgEur(null);
+    }
+
+    /**
+     * Champs bateau du trajet selon le mode enregistré : fourchette, volume proposé et restant, prix
+     * au m³ en bateau ; tous nuls hors bateau (V382, chk_announcements_boat_columns). Le volume
+     * restant repart du volume proposé : la création n'a aucun colis, et la modification est refusée
+     * dès qu'un colis est accepté (409 modification-impossible). Volume arrondi au litre et prix au
+     * centime, comme leurs colonnes.
+     */
+    private static void applyBoatFields(AnnouncementEntity announcement, AnnouncementRequest request,
+                                        TransportMode mode) {
+        if (mode != TransportMode.BOAT) {
+            announcement.setArrivalDateMax(null);
+            announcement.setVolumeCapacityM3(null);
+            announcement.setAvailableVolumeM3(null);
+            announcement.setPricePerM3(null);
+            return;
+        }
+        BigDecimal volume = request.volumeCapacityM3() == null ? null
+                : request.volumeCapacityM3().setScale(3, java.math.RoundingMode.HALF_UP);
+        announcement.setArrivalDateMax(request.arrivalDateMax());
+        announcement.setVolumeCapacityM3(volume);
+        announcement.setAvailableVolumeM3(volume);
+        announcement.setPricePerM3(request.pricePerM3() == null ? null
+                : request.pricePerM3().setScale(2, java.math.RoundingMode.HALF_UP));
+    }
+
+    /** Capacité et prix d'un trajet pour l'audit : kilos au kilo, volume et prix au m³ au m³. */
+    private static void putCapacityAndPrice(Map<String, Object> audit, AnnouncementEntity saved) {
+        if (saved.getAvailableKg() != null) audit.put("availableKg", saved.getAvailableKg().toString());
+        if (saved.getPricePerKg() != null) audit.put("pricePerKg", saved.getPricePerKg().toString());
+        if (saved.getVolumeCapacityM3() != null) audit.put("volumeCapacityM3", saved.getVolumeCapacityM3().toString());
+        if (saved.getPricePerM3() != null) audit.put("pricePerM3", saved.getPricePerM3().toString());
+        if (saved.getArrivalDateMax() != null) audit.put("arrivalDateMax", saved.getArrivalDateMax().toString());
+    }
+
+    /**
      * Statuts de bid qui figent la devise d'un trajet (FLUTTER-KV) : une demande en attente
      * (y compris celle dont l'expéditeur n'a pas encore payé), une négociation de prix en cours
      * ou un colis engagé. Plus large que {@code countVisibleByAnnouncementId} (PENDING et
@@ -138,6 +242,11 @@ public class AnnouncementService {
      * existe : bid d'un statut de {@link #CURRENCY_LOCKING_BID_STATUSES}, ou fil de négociation
      * d'une demande d'envoi lié à ce trajet (statut actif).
      */
+    private boolean isPricingUnitLocked(java.util.UUID announcementId) {
+        return bidRepository.existsByAnnouncementId(announcementId)
+                || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
+    }
+
     private boolean isCurrencyLocked(java.util.UUID announcementId) {
         return bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(CURRENCY_LOCKING_BID_STATUSES))
                 || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
@@ -210,6 +319,14 @@ public class AnnouncementService {
 
     /** Interrupteurs des modes de transport (bateau fermé tant qu'il n'est pas ouvert depuis l'admin). */
     private final TransportModeGuard transportModeGuard;
+
+    /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
+    private TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
 
     @Value("${yadony.kyc.enforce:true}")
     private boolean enforceKyc;
@@ -392,6 +509,16 @@ public class AnnouncementService {
             strict = strict.and(AnnouncementSpecification.minItemSize(filters.minItemSize()));
         if (filters.viaCity() != null)
             strict = strict.and(AnnouncementSpecification.voyageStopsAt(filters.viaCity()));
+        // Filtres bateau (volume restant, prix au m³, arrivée estimée) : stricts eux aussi. Un trajet qui
+        // les rate (au kilo, sans volume ni prix au m³, trop tardif) ne correspond pas à la recherche ;
+        // il n'y a pas d'écart à expliquer au bloc 2.
+        if (filters.minVolumeM3() != null)
+            strict = strict.and(AnnouncementSpecification.minAvailableVolume(filters.minVolumeM3()));
+        if (filters.maxPricePerM3() != null)
+            strict = strict.and(AnnouncementSpecification.maxPricePerM3(
+                    maxPricePerM3ByCurrency(filters.maxPricePerM3(), viewerCurrency)));
+        if (filters.arrivalBefore() != null)
+            strict = strict.and(AnnouncementSpecification.arrivalNotAfter(filters.arrivalBefore()));
 
         // ── Critères souples : filtres SQL du bloc 1, écarts expliqués au bloc 2 ──
         Specification<AnnouncementEntity> exact = strict;
@@ -506,10 +633,15 @@ public class AnnouncementService {
             // (facteur strictement positif), donc trier sur le pivot équivaut à trier
             // sur le prix converti dans sa devise — sans charger tout le fil en mémoire.
             Sort sort = buildSort(mode, sortDir);
-            Page<AnnouncementEntity> page = filters.includeFull()
-                    // Tri porté par la spécification (réservables d'abord) : Pageable non trié.
+            // Tri par prix : les trajets au m³ (sans pivot) passent après les trajets au kilo, dans les
+            // deux sens (NULLS FIRST de PostgreSQL les mettrait en tête du tri décroissant). Un tri
+            // porté par la spécification impose un Pageable non trié.
+            boolean priceSort = "price".equals(mode);
+            Page<AnnouncementEntity> page = (filters.includeFull() || priceSort)
                     ? announcementRepository.findAll(
-                            exactSpec.and(AnnouncementSpecification.bookableFirstThen(sort)),
+                            exactSpec.and(priceSort
+                                    ? AnnouncementSpecification.unpricedLastThen(sort, filters.includeFull())
+                                    : AnnouncementSpecification.bookableFirstThen(sort)),
                             PageRequest.of(pageable.getPageNumber(), pageable.getPageSize()))
                     : announcementRepository.findAll(exactSpec,
                             PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort));
@@ -816,6 +948,28 @@ public class AnnouncementService {
         return exchangeRateService.convert(display, announcementCurrency, viewerCurrency);
     }
 
+    /**
+     * Borne « prix max au m³ » (saisie dans la devise du lecteur) convertie dans chaque devise connue :
+     * le prix au m³ n'a pas de pivot EUR, chaque trajet est comparé à la borne de sa propre devise.
+     * Arrondie vers le bas à la plus petite unité de la devise cible ({@link RoundingMode#DOWN}) pour ne
+     * jamais laisser passer un prix au-dessus de la borne. Une devise sans taux est omise (ses trajets
+     * ne passent pas) plutôt que de faire échouer toute la recherche en 422 {@code exchange-rate-missing}.
+     */
+    private Map<String, BigDecimal> maxPricePerM3ByCurrency(BigDecimal bound, String viewerCurrency) {
+        Map<String, BigDecimal> byCurrency = new java.util.LinkedHashMap<>();
+        for (SupportedCurrency currency : SupportedCurrency.values()) {
+            String code = currency.code().toUpperCase(java.util.Locale.ROOT);
+            try {
+                byCurrency.put(code, exchangeRateService.convert(bound, viewerCurrency, code, RoundingMode.DOWN));
+            } catch (YadonyBusinessException e) {
+                if (!ExchangeRateService.RATE_MISSING_CODE.equals(e.getErrorCode())) {
+                    throw e;
+                }
+            }
+        }
+        return byCurrency;
+    }
+
     private Sort buildSort(String sortBy, String sortDir) {
         Sort.Direction direction = "desc".equalsIgnoreCase(sortDir) ? Sort.Direction.DESC : Sort.Direction.ASC;
         // Tri manuel : plus de clé « pro d'abord » (travelerIsPro), le critère choisi passe
@@ -825,10 +979,11 @@ public class AnnouncementService {
             // Pivot EUR, jamais le brut : seul lui ordonne un fil multidevise.
             // Pas de NullHandling : Spring Data JPA le refuse sur une requête
             // Criteria (« Applying Null Precedence using Criteria Queries is not
-            // yet supported », 500 assurée) — et le pivot est de facto non null,
-            // price_per_kg étant NOT NULL + CHECK > 0 depuis V3, backfillé par
-            // V235 et posé à chaque écriture. Id en départage : ordre total
-            // stable sous pagination.
+            // yet supported », 500 assurée). Le pivot est non null pour tout trajet au
+            // kilo (CHECK > 0 depuis V3, backfill V235, posé à chaque écriture) ; seul
+            // un trajet bateau au m³ (V382) n'en a pas : PostgreSQL le range en fin
+            // en croissant, en tête en décroissant (NULLS FIRST). Id en départage :
+            // ordre total stable sous pagination.
             // Départage GP Pro : à date (ou prix) égale, le voyageur GP Pro passe avant,
             // quelle que soit la direction du tri principal.
             case "price" -> Sort.by(direction, "pricePerKgEur").and(gpTie)
@@ -846,6 +1001,14 @@ public class AnnouncementService {
      */
     private java.math.BigDecimal pricePerKgDisplay(java.math.BigDecimal net, java.util.UUID travelerId) {
         return net == null ? null : priceGridService.displayPrice(net, travelerId);
+    }
+
+    /**
+     * Prix au m³ payé par l'expéditeur (brut), même règle que {@link #pricePerKgDisplay} : la
+     * commission s'applique au prix unitaire, au kilo comme au m³. {@code null} sans prix au m³.
+     */
+    private java.math.BigDecimal pricePerM3Display(AnnouncementEntity announcement) {
+        return pricePerKgDisplay(announcement.getPricePerM3(), announcement.getTravelerId());
     }
 
     /**
@@ -925,6 +1088,7 @@ public class AnnouncementService {
             source.setSeriesId(seriesId);
             announcementRepository.save(source);
         }
+        // Trajet au m³ : ni kilos ni prix au kilo, la capacité copiée est le volume proposé.
         BigDecimal capacity = source.getTotalKg() != null ? source.getTotalKg() : source.getAvailableKg();
         AnnouncementRequest base = new AnnouncementRequest(
                 source.getDepartureCity(),
@@ -954,7 +1118,10 @@ public class AnnouncementService {
                 source.getArrivalDate(),
                 source.getStopsCount(),
                 source.getMaxItemSize() == null ? null : source.getMaxItemSize().name(),
-                source.getMaxParcelWeightKg());
+                source.getMaxParcelWeightKg(),
+                source.getArrivalDateMax(),
+                source.getVolumeCapacityM3(),
+                source.getPricePerM3());
         return new TripSeriesStart(seriesId, source.getDepartureDate(),
                 TripTimezones.zoneOf(source.getTimezone()), base);
     }
@@ -990,10 +1157,20 @@ public class AnnouncementService {
         // du mode : la récurrence a passé la garde à sa création, ses trajets continuent de sortir.
         transportModeGuard.assertTripModeAllowed(request.transportMode(),
                 recurrenceId != null ? request.transportMode() : null);
+        // Puis le profil : le bateau est réservé aux transporteurs vérifiés (GP Pro ou compte PRO).
+        transportModeGuard.assertBoatCarrierAllowed(request.transportMode(),
+                recurrenceId != null ? request.transportMode() : null, user);
 
         // D4 : voyageur suspendu de publication (retour de colis non rendu, décision admin).
         // S'applique aussi bien à un brouillon qu'à une publication directe.
         assertPublishingNotSuspended(user);
+
+        // Bateau (lot 3) : fourchette d'arrivée, prix au m³ ou au kilo, volume. Avant toute écriture,
+        // brouillon compris. Une occurrence de récurrence bateau déjà enregistrée (créée avant le
+        // refus des récurrences bateau) reste un trajet au kilo sans fourchette : non recontrôlée.
+        if (recurrenceId == null) {
+            validateBoatFields(request, request.transportMode());
+        }
 
         boolean isDraft = request.isDraft();
 
@@ -1061,16 +1238,25 @@ public class AnnouncementService {
         announcement.setDeliveryAddressLabel(request.deliveryAddress().label());
         announcement.setDeliveryLat(java.math.BigDecimal.valueOf(request.deliveryAddress().lat()));
         announcement.setDeliveryLng(java.math.BigDecimal.valueOf(request.deliveryAddress().lng()));
-        // Plafond par mode (V380) : 999,99 kg en avion, train, autre ; tonnes en route et bateau.
-        // En kilo libre, availableKg est une valeur technique basse : elle passe toujours.
-        WeightLimits.assertTripCapacity(request.availableKg(), request.transportMode());
-        announcement.setAvailableKg(request.availableKg());
-        announcement.setTotalKg(request.availableKg());
-        assertPricePerKgWithinBounds(request.pricePerKg(), announcement.getCurrency());
-        announcement.setPricePerKg(request.pricePerKg());
-        announcement.setPricePerKgEur(
-                exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
+        boolean pricedPerM3 = isPricedPerM3(request);
+        if (pricedPerM3) {
+            // Trajet bateau au m³ : aucun kilo (ni capacité, ni prix au kilo, ni pivot), jamais de
+            // valeur factice (V382, chk_announcements_kg_or_m3).
+            clearKgCapacityAndPrice(announcement);
+        } else {
+            // Plafond par mode (V380) : 999,99 kg en avion, train, autre ; tonnes en route et bateau.
+            // En kilo libre, availableKg est une valeur technique basse : elle passe toujours.
+            WeightLimits.assertTripCapacity(request.availableKg(), request.transportMode());
+            announcement.setAvailableKg(request.availableKg());
+            announcement.setTotalKg(request.availableKg());
+            assertPricePerKgWithinBounds(request.pricePerKg(), announcement.getCurrency());
+            announcement.setPricePerKg(request.pricePerKg());
+            announcement.setPricePerKgEur(
+                    exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
+        }
         announcement.setTransportMode(request.transportMode());
+        // Fourchette, volume (restant = proposé à la création) et prix au m³ : bateau seulement.
+        applyBoatFields(announcement, request, request.transportMode());
         announcement.setStopsCount(TripStops.normalize(request.stopsCount(), request.transportMode()));
         // Taille et poids maximaux par colis : gardés selon le mode, effacés sinon (ParcelFitRules).
         announcement.setMaxItemSize(ParcelFitRules.normalizeMaxItemSize(
@@ -1093,7 +1279,8 @@ public class AnnouncementService {
         );
         PricingMode pricingMode = request.pricingMode() != null ? request.pricingMode() : PricingMode.KG;
         announcement.setPricingMode(pricingMode);
-        if (pricingMode == PricingMode.KG &&
+        // Un trajet au m³ n'a pas de prix au kilo : son prix (au m³) est contrôlé par validateBoatFields.
+        if (!pricedPerM3 && pricingMode == PricingMode.KG &&
                 (request.pricePerKg() == null || request.pricePerKg().compareTo(java.math.BigDecimal.ZERO) <= 0)) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-price", "problem.invalid-price");
         }
@@ -1124,20 +1311,19 @@ public class AnnouncementService {
             priceGridService.snapshotToAnnouncement(user.getId(), saved.getId(), saved.getCurrency());
         }
 
+        Map<String, Object> createdAudit = new java.util.LinkedHashMap<>();
+        createdAudit.put("departureCity", saved.getDepartureCity());
+        createdAudit.put("arrivalCity", saved.getArrivalCity());
+        createdAudit.put("departureDate", saved.getDepartureDate().toString());
+        putCapacityAndPrice(createdAudit, saved);
+        createdAudit.put("transportMode", saved.getTransportMode().name());
+        createdAudit.put("status", saved.getStatus().name());
         auditService.log(
                 "USER",
                 user.getId(),
                 "ANNOUNCEMENT_CREATED",
                 saved.getId(),
-                Map.of(
-                        "departureCity", saved.getDepartureCity(),
-                        "arrivalCity", saved.getArrivalCity(),
-                        "departureDate", saved.getDepartureDate().toString(),
-                        "availableKg", saved.getAvailableKg().toString(),
-                        "pricePerKg", saved.getPricePerKg().toString(),
-                        "transportMode", saved.getTransportMode().name(),
-                        "status", saved.getStatus().name()
-                )
+                createdAudit
         );
 
         // Un brouillon est invisible des expéditeurs : pas de matching/notification/alerte
@@ -1454,10 +1640,17 @@ public class AnnouncementService {
         ).withDepartureTimezone(announcement.getTimezone())
                 .withMaxParcelLimits(
                         announcement.getMaxItemSize() == null ? null : announcement.getMaxItemSize().name(),
-                        announcement.getMaxParcelWeightKg());
+                        announcement.getMaxParcelWeightKg())
+                // Prix au m³ : net masqué pour un invité (comme pricePerKg), brut servi à tous.
+                .withBoatFields(announcement.getArrivalDateMax(), announcement.getVolumeCapacityM3(),
+                        announcement.getAvailableVolumeM3(),
+                        com.yadony.api.common.GuestSession.travelerNetOrNull(announcement.getPricePerM3()),
+                        pricePerM3Display(announcement));
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
             detail = detail.withParcelsSummary(parcelsSummary(announcement));
+            // Dernier retard annoncé, message libre compris : lu par le seul voyageur propriétaire.
+            detail = detail.withLatestTripDelay(TripDelays.latest(tripDelayRepository, id));
             // Même règle que la liste « Mes trajets » (TripPositionService.isWindowOpen), lue ici
             // pour un seul trajet : le booléen suffit, jamais de position.
             detail = detail.withTrackingActive(com.yadony.api.tracking.TripPositionService.isWindowOpen(
@@ -1585,13 +1778,38 @@ public class AnnouncementService {
         final com.yadony.api.matching.TransportMode oldTransportMode = announcement.getTransportMode();
         // Un trajet bateau déjà en base reste modifiable interrupteur éteint ; y passer ne l'est pas.
         transportModeGuard.assertTripModeAllowed(request.transportMode(), oldTransportMode);
+        // Passer à bateau demande le profil vérifié ; un trajet qui reste bateau n'est pas recontrôlé.
+        transportModeGuard.assertBoatCarrierAllowed(request.transportMode(), oldTransportMode, user);
+        // Règles bateau (fourchette, un seul prix, volume), sauf pour un trajet bateau d'avant le lot 3
+        // (au kilo, sans fourchette ni volume) modifié par un client qui n'envoie aucun champ bateau :
+        // il reste tel quel, comme l'interrupteur et le profil ne le recontrôlent pas. Sa fourchette
+        // reste nulle, aucun CHECK ne peut donc la contredire.
+        if (!isLegacyBoatEdit(announcement, request)) {
+            validateBoatFields(request, request.transportMode());
+        }
+        final boolean pricedPerM3 = isPricedPerM3(request);
+        // Passer du kilo au m³ (ou l'inverse) change ce que portent les demandes, offres et
+        // négociations vivantes, et efface le prix au kilo que lisent encore les revenus des colis
+        // terminés : refusé dès qu'il existe un colis ou une offre, quel que soit son statut
+        // (livré, no-show et refusé compris), ou une négociation vivante.
+        if (pricedPerM3 != announcement.isPricedPerM3() && isPricingUnitLocked(id)) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "pricing-unit-locked",
+                    "problem.pricing-unit-locked");
+        }
         final String oldCurrency = announcement.getCurrency();
         final String newCurrency = resolveCurrencyOnUpdate(announcement, request.currency(), user.getId());
         final boolean currencyChanged = !newCurrency.equalsIgnoreCase(oldCurrency);
 
         final PricingMode previousPricingMode = announcement.getPricingMode();
         PricingMode updatePricingMode = request.pricingMode() != null ? request.pricingMode() : previousPricingMode;
-        if (updatePricingMode == PricingMode.KG &&
+        // Mode de prix absent = conservé : un trajet en grille qui passe au bateau garderait sa grille.
+        // Le bateau n'en a pas (même refus que validateBoatFields), sauf le bateau d'avant le lot 3.
+        if (request.transportMode() == TransportMode.BOAT && updatePricingMode == PricingMode.MIXED
+                && !isLegacyBoatEdit(announcement, request)) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "boat-price-required",
+                    "problem.boat-price-required");
+        }
+        if (!pricedPerM3 && updatePricingMode == PricingMode.KG &&
                 (request.pricePerKg() == null || request.pricePerKg().compareTo(java.math.BigDecimal.ZERO) <= 0)) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "invalid-price", "problem.invalid-price");
         }
@@ -1599,7 +1817,9 @@ public class AnnouncementService {
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime(), request.transportMode());
         // Plafond sur le mode APRÈS modification (V380), avant toute écriture.
-        WeightLimits.assertTripCapacity(request.availableKg(), request.transportMode());
+        if (!pricedPerM3) {
+            WeightLimits.assertTripCapacity(request.availableKg(), request.transportMode());
+        }
 
         // Calculés AVANT d'écraser les villes : une modification qui omet le code pays
         // (l'édition ne le recevait pas du détail) le conserve si la ville n'a pas changé,
@@ -1640,18 +1860,25 @@ public class AnnouncementService {
         announcement.setDeliveryAddressLabel(request.deliveryAddress().label());
         announcement.setDeliveryLat(java.math.BigDecimal.valueOf(request.deliveryAddress().lat()));
         announcement.setDeliveryLng(java.math.BigDecimal.valueOf(request.deliveryAddress().lng()));
-        announcement.setAvailableKg(request.availableKg());
-        // Update is blocked if any bid is ACCEPTED, so no booked weight to preserve → keep total in sync.
-        announcement.setTotalKg(request.availableKg());
-        // Bornes et pivot dans la devise FINALE du trajet : la nouvelle si elle change (FLUTTER-KV).
-        assertPricePerKgWithinBounds(request.pricePerKg(), newCurrency);
         announcement.setCurrency(newCurrency);
-        announcement.setPricePerKg(request.pricePerKg());
-        announcement.setPricePerKgEur(
-                exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
+        if (pricedPerM3) {
+            clearKgCapacityAndPrice(announcement);
+        } else {
+            announcement.setAvailableKg(request.availableKg());
+            // Update is blocked if any bid is ACCEPTED, so no booked weight to preserve → keep total in sync.
+            announcement.setTotalKg(request.availableKg());
+            // Bornes et pivot dans la devise FINALE du trajet : la nouvelle si elle change (FLUTTER-KV).
+            assertPricePerKgWithinBounds(request.pricePerKg(), newCurrency);
+            announcement.setPricePerKg(request.pricePerKg());
+            announcement.setPricePerKgEur(
+                    exchangeRateService.toEurPivot(request.pricePerKg(), announcement.getCurrency()));
+        }
         announcement.setStopsCount(TripStops.normalizeOnUpdate(
                 request.stopsCount(), announcement.getStopsCount(), request.transportMode()));
         announcement.setTransportMode(request.transportMode());
+        // Champs bateau selon le mode APRÈS modification (effacés hors bateau). Même règle que les
+        // kilos : aucun colis accepté, le volume restant repart du volume proposé.
+        applyBoatFields(announcement, request, request.transportMode());
         // Taille et poids maximaux : absents = conservés (client antérieur), « NONE » / 0 = effacés ;
         // selon le mode APRÈS modification, un passage hors route les efface toujours.
         announcement.setMaxItemSize(ParcelFitRules.resolveMaxItemSizeOnUpdate(
@@ -1689,6 +1916,9 @@ public class AnnouncementService {
         }
         if (request.capacityUnit() != null) {
             announcement.setCapacityUnit(request.capacityUnit());
+        } else if (pricedPerM3 && announcement.getCapacityUnit() == CapacityUnit.KG_FREE) {
+            // Trajet passé au m³ qui était en kilo libre : l'unité en kilos n'a plus de sens.
+            announcement.setCapacityUnit(ParcelFitRules.defaultCapacityUnit(TransportMode.BOAT));
         }
         // Le mode validé plus haut est celui qu'on enregistre : sans cette écriture, un trajet resté
         // en mode KG recevait le prix 0 d'une demande en mode grille et la base refusait la ligne
@@ -1719,20 +1949,19 @@ public class AnnouncementService {
             );
         }
 
+        Map<String, Object> updatedAudit = new java.util.LinkedHashMap<>();
+        updatedAudit.put("departureCity", saved.getDepartureCity());
+        updatedAudit.put("arrivalCity", saved.getArrivalCity());
+        updatedAudit.put("departureDate", saved.getDepartureDate().toString());
+        putCapacityAndPrice(updatedAudit, saved);
+        updatedAudit.put("transportMode_old", oldTransportMode.name());
+        updatedAudit.put("transportMode_new", saved.getTransportMode().name());
         auditService.log(
                 "USER",
                 user.getId(),
                 "ANNOUNCEMENT_UPDATED",
                 saved.getId(),
-                Map.of(
-                        "departureCity", saved.getDepartureCity(),
-                        "arrivalCity", saved.getArrivalCity(),
-                        "departureDate", saved.getDepartureDate().toString(),
-                        "availableKg", saved.getAvailableKg().toString(),
-                        "pricePerKg", saved.getPricePerKg().toString(),
-                        "transportMode_old", oldTransportMode.name(),
-                        "transportMode_new", saved.getTransportMode().name()
-                )
+                updatedAudit
         );
 
         long bidsCount = bidRepository.countVisibleByAnnouncementId(id);
@@ -1809,7 +2038,10 @@ public class AnnouncementService {
         ).withDepartureTimezone(saved.getTimezone())
                 .withMaxParcelLimits(
                         saved.getMaxItemSize() == null ? null : saved.getMaxItemSize().name(),
-                        saved.getMaxParcelWeightKg());
+                        saved.getMaxParcelWeightKg())
+                .withBoatFields(saved.getArrivalDateMax(), saved.getVolumeCapacityM3(),
+                        saved.getAvailableVolumeM3(), saved.getPricePerM3(),
+                        pricePerM3Display(saved));
     }
 
     /**
@@ -1842,6 +2074,10 @@ public class AnnouncementService {
                 && com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(announcement.getPublishedAt())
                         .equals(com.yadony.api.travelerstatus.IndividualFrequencyEvaluator.monthOf(
                                 java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)));
+        // Un brouillon bateau ne sort que si le mode est encore proposé (interrupteur d'abord, comme à la création),
+        // puis d'un compte encore vérifié (badge retiré depuis la création).
+        transportModeGuard.assertTripModeAllowed(announcement.getTransportMode(), null);
+        transportModeGuard.assertBoatCarrierAllowed(announcement.getTransportMode(), null, user);
         assertCanPublish(user, !alreadyCountedThisMonth);
         assertStripeCapability(user, announcement.getAcceptedPaymentMethods());
 
@@ -2452,14 +2688,15 @@ public class AnnouncementService {
     /** Compteurs des cartes d'une page, lus par lot (cf. {@link #loadCardCounts}). */
     private record CardCounts(Map<UUID, Long> pending, Map<UUID, Long> confirmed,
                               Map<UUID, BigDecimal> reservedNet, Map<UUID, Long> tripLegs,
-                              java.util.Set<UUID> carried) {}
+                              java.util.Set<UUID> carried,
+                              Map<UUID, com.yadony.api.matching.dto.TripDelayInfo> latestDelays) {}
 
     private static final List<BidStatus> CONFIRMED_STATUSES =
             List.of(BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.COMPLETED);
 
     private CardCounts loadCardCounts(List<AnnouncementEntity> announcements) {
         if (announcements.isEmpty()) {
-            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of(), java.util.Set.of());
+            return new CardCounts(Map.of(), Map.of(), Map.of(), Map.of(), java.util.Set.of(), Map.of());
         }
         List<UUID> ids = announcements.stream().map(AnnouncementEntity::getId).toList();
         List<UUID> groupIds = announcements.stream().map(AnnouncementEntity::getTripGroupId)
@@ -2471,7 +2708,8 @@ public class AnnouncementService {
                         ids, CONFIRMED_STATUSES.stream().map(Enum::name).toList())),
                 groupIds.isEmpty() ? Map.of() : countsById(announcementRepository.countByTripGroupIds(groupIds)),
                 new java.util.HashSet<>(bidRepository.findAnnouncementIdsWithStatusIn(
-                        ids, com.yadony.api.tracking.TripPositionService.carriedStatuses())));
+                        ids, com.yadony.api.tracking.TripPositionService.carriedStatuses())),
+                TripDelays.latestByAnnouncement(tripDelayRepository, ids));
     }
 
     private static Map<UUID, Long> countsById(List<Object[]> rows) {
@@ -2602,7 +2840,15 @@ public class AnnouncementService {
                                 : bidRepository.existsByAnnouncementIdAndStatusIn(entity.getId(),
                                         com.yadony.api.tracking.TripPositionService.carriedStatuses())),
                 entity.getMaxItemSize() == null ? null : entity.getMaxItemSize().name(),
-                entity.getMaxParcelWeightKg()
+                entity.getMaxParcelWeightKg(),
+                entity.getArrivalDateMax(),
+                entity.getVolumeCapacityM3(),
+                entity.getAvailableVolumeM3(),
+                entity.getPricePerM3(),
+                pricePerM3Display(entity),
+                counts != null
+                        ? counts.latestDelays().get(entity.getId())
+                        : TripDelays.latest(tripDelayRepository, entity.getId())
         );
     }
 
@@ -2633,7 +2879,12 @@ public class AnnouncementService {
                         ? priceGridService.minAnnouncementGridDisplay(a.getId(), a.getTravelerId())
                         : null,
                 a.getMaxItemSize() == null ? null : a.getMaxItemSize().name(),
-                a.getMaxParcelWeightKg()))
+                a.getMaxParcelWeightKg(),
+                a.getArrivalDateMax(),
+                a.getVolumeCapacityM3(),
+                a.getAvailableVolumeM3(),
+                com.yadony.api.common.GuestSession.travelerNetOrNull(a.getPricePerM3()),
+                pricePerM3Display(a)))
             .toList();
     }
 

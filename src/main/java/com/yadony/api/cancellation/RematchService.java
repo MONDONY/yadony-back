@@ -103,7 +103,11 @@ public class RematchService {
                                                         LocalDate from, LocalDate to) {
         Specification<AnnouncementEntity> spec = buildAlternativesSpec(cancelled, senderId, weightKg, from, to);
 
-        List<AnnouncementEntity> candidates = announcementRepository.findAll(spec);
+        // Jusqu'à la réservation au m³ (BB2), un trajet vendu au m³ ne se réserve pas (422) : même exclusion que
+        // le matching, par le même prédicat de l'entité (le poids nul d'un colis à la grille ne l'écarte pas en SQL).
+        List<AnnouncementEntity> candidates = announcementRepository.findAll(spec).stream()
+                .filter(a -> !a.isPricedPerM3())
+                .toList();
 
         Map<UUID, BigDecimal> ratings = userRepository
                 .findAllById(candidates.stream()

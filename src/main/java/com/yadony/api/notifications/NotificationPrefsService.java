@@ -128,6 +128,8 @@ public class NotificationPrefsService {
             // FLUTTER-GB : arrivée du trajet (instructions de retrait, à l'expéditeur) et
             // demande de colis retirée par la modération, suivies comme le reste du colis.
             Map.entry("TRIP_ARRIVED",                 "pushActivityBids"),
+            // Retard annoncé par le voyageur (bateau surtout) : l'expéditeur suit son colis en route.
+            Map.entry("TRIP_DELAYED",                 "pushActivityBids"),
             Map.entry("PACKAGE_REQUEST_REMOVED",      "pushActivityBids"),
             Map.entry("NEW_MESSAGE",                  "pushMessages"),
             // Le support vit dans l'onglet Messages (« Yadony Support ») : même interrupteur.

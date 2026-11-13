@@ -71,7 +71,28 @@ public final class ArrivalRules {
         }
     }
 
-    /** Jour d'arrivée effectif : la date d'arrivée, sinon le jour du départ. */
+    /**
+     * Fourchette d'arrivée estimée d'un trajet bateau : début ({@code arrivalDate}) et fin
+     * ({@code arrivalDateMax}) tous deux présents, la fin pas avant le début (422
+     * {@code arrival-range-invalid}), et au plus départ + 120 jours (422 {@code arrival-too-far}, le
+     * plafond du CHECK {@code chk_announcements_arrival_date_max}). Le début contre le départ reste
+     * contrôlé par {@link #validate}.
+     */
+    public static void validateRange(LocalDate departureDate, LocalDate arrivalDate, LocalDate arrivalDateMax) {
+        if (arrivalDate == null || arrivalDateMax == null || arrivalDateMax.isBefore(arrivalDate)) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-range-invalid",
+                    "problem.arrival-range-invalid");
+        }
+        if (departureDate != null && arrivalDateMax.isAfter(departureDate.plusDays(BOAT_MAX_DAYS))) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-too-far",
+                    "problem.arrival-too-far", BOAT_MAX_DAYS);
+        }
+    }
+
+    /**
+     * Jour d'arrivée effectif : la date d'arrivée, sinon le jour du départ. Pour un bateau, c'est
+     * le début de la fourchette (arrivée au plus tôt), lu par le suivi et le rappel d'arrivée.
+     */
     public static LocalDate effectiveArrivalDate(AnnouncementEntity announcement) {
         return announcement.getArrivalDate() != null
                 ? announcement.getArrivalDate()
@@ -79,15 +100,31 @@ public final class ArrivalRules {
     }
 
     /**
+     * Jour d'arrivée au plus tard : la fin de la fourchette d'un bateau ({@code arrivalDateMax}),
+     * sinon le jour d'arrivée effectif.
+     */
+    public static LocalDate latestArrivalDate(AnnouncementEntity announcement) {
+        return announcement.getArrivalDateMax() != null
+                ? announcement.getArrivalDateMax()
+                : effectiveArrivalDate(announcement);
+    }
+
+    /**
      * Expiration du code de retrait : jour d'arrivée réel + heure d'arrivée + 24 h, sinon
      * 72 h après le début du jour d'arrivée. Un vol de nuit arrive le lendemain : partir du
      * jour du départ faisait expirer le code à l'atterrissage (FLUTTER-4E). Recalculée
-     * quand le trajet est reporté.
+     * quand le trajet est reporté. Pour un bateau, le jour d'arrivée est la FIN de la fourchette
+     * ({@link #latestArrivalDate}) : un code calé sur l'arrivée au plus tôt expirerait avant
+     * qu'un navire en retard dans sa fourchette n'accoste.
      */
     public static java.time.LocalDateTime pickupCodeExpiry(AnnouncementEntity announcement) {
-        LocalDate arrivalDay = effectiveArrivalDate(announcement);
-        if (announcement.getArrivalTime() != null) {
-            return arrivalDay.atTime(announcement.getArrivalTime()).plusDays(1);
+        return pickupCodeExpiry(latestArrivalDate(announcement), announcement.getArrivalTime());
+    }
+
+    /** Même règle sur un jour d'arrivée donné (l'annonce de retard la calcule sur la fin de fourchette). */
+    public static java.time.LocalDateTime pickupCodeExpiry(LocalDate arrivalDay, LocalTime arrivalTime) {
+        if (arrivalTime != null) {
+            return arrivalDay.atTime(arrivalTime).plusDays(1);
         }
         return arrivalDay.atStartOfDay().plusDays(3);
     }
@@ -102,7 +139,34 @@ public final class ArrivalRules {
      * (FLUTTER-BA). Le nouveau code vaut donc au moins 24 h à partir de maintenant.
      */
     public static java.time.LocalDateTime renewedPickupCodeExpiry(AnnouncementEntity announcement) {
-        java.time.LocalDateTime planned = pickupCodeExpiry(announcement);
+        return renewedPickupCodeExpiry(latestArrivalDate(announcement), announcement.getArrivalTime());
+    }
+
+    /**
+     * Même règle, avec la fin de fourchette d'un retard annoncé hors bateau : l'annonce n'y garde que le début
+     * ({@code chk_announcements_boat_columns}), la fin vit dans le dernier retard ({@link TripDelayEntity}). Sans
+     * elle, un code régénéré après un retard expirerait avant l'arrivée annoncée. Un bateau garde sa fin sur
+     * l'annonce, qui reste la référence ; un retard dont la fin précède l'arrivée de l'annonce ne la raccourcit
+     * jamais. Dépôt absent ou trajet sans retard : règle de {@link #renewedPickupCodeExpiry(AnnouncementEntity)}.
+     */
+    public static java.time.LocalDateTime renewedPickupCodeExpiry(AnnouncementEntity announcement,
+                                                                  TripDelayRepository tripDelayRepository) {
+        LocalDate arrivalDay = latestArrivalDate(announcement);
+        if (tripDelayRepository != null && announcement.getId() != null && announcement.getArrivalDateMax() == null) {
+            LocalDate delayedMax = tripDelayRepository
+                    .findFirstByAnnouncementIdOrderByCreatedAtDesc(announcement.getId())
+                    .map(TripDelayEntity::getNewArrivalDateMax)
+                    .orElse(null);
+            if (delayedMax != null && delayedMax.isAfter(arrivalDay)) {
+                arrivalDay = delayedMax;
+            }
+        }
+        return renewedPickupCodeExpiry(arrivalDay, announcement.getArrivalTime());
+    }
+
+    /** Même règle sur un jour d'arrivée donné : l'expiration prévue, jamais avant maintenant + 24 h. */
+    public static java.time.LocalDateTime renewedPickupCodeExpiry(LocalDate arrivalDay, LocalTime arrivalTime) {
+        java.time.LocalDateTime planned = pickupCodeExpiry(arrivalDay, arrivalTime);
         java.time.LocalDateTime floor = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
                 .plus(RENEWED_CODE_MIN_VALIDITY);
         return planned.isAfter(floor) ? planned : floor;

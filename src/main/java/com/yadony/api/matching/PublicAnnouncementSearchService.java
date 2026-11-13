@@ -53,8 +53,9 @@ public class PublicAnnouncementSearchService {
                 .map(PublicAnnouncementCard::from));
     }
 
-    /** Vue publique plus les deux filtres de route ; sans eux, exactement {@link AnnouncementSearchExtras#PUBLIC_VIEW}. */
+    /** Vue publique plus les filtres de route et de bateau ; sans eux, exactement {@link AnnouncementSearchExtras#PUBLIC_VIEW}. */
     private static AnnouncementSearchExtras publicExtras(PublicAnnouncementQuery q) {
-        return new AnnouncementSearchExtras(null, Set.of(), false, true, q.minItemSize(), q.viaCity());
+        return new AnnouncementSearchExtras(null, Set.of(), false, true, q.minItemSize(), q.viaCity(),
+                q.minVolumeM3(), q.maxPricePerM3(), q.arrivalBefore());
     }
 }

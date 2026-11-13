@@ -95,6 +95,22 @@ class AnnouncementSearchKgFreeIntegrationTest {
         assertThat(ids(search("23"))).containsExactlyInAnyOrder(kgFree, suitcase23);
     }
 
+    @Test
+    @DisplayName("filtres bateau hors bornes (exposant géant, négatif, 5 décimales) : 400 invalid-search, comme en public")
+    void boatFiltersOutOfBounds_return400() throws Exception {
+        for (String[] bad : new String[][] {{"minVolumeM3", "1E999999999"}, {"maxPricePerM3", "1E999999999"},
+                {"minVolumeM3", "-1"}, {"maxPricePerM3", "-1"}, {"minVolumeM3", "1.12345"},
+                {"maxPricePerM3", "1E-999999999"}}) {
+            mockMvc.perform(get("/announcements").param(bad[0], bad[1]).with(as("kgfree-reader")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                            .jsonPath("$.code").value("invalid-search"));
+        }
+        mockMvc.perform(get("/announcements").param("minVolumeM3", "1.5").param("maxPricePerM3", "700")
+                        .with(as("kgfree-reader")))
+                .andExpect(status().isOk());
+    }
+
     private JsonNode search(String minKg) throws Exception {
         var request = get("/announcements").param("size", "50").with(as("kgfree-reader"));
         if (minKg != null) {

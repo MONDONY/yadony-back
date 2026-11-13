@@ -1230,6 +1230,13 @@ class PackageRequestServiceTest {
         private PackageRequestEntity stubUpdatableEntity(TransportMode current) {
             PackageRequestEntity entity = buildEntity(SENDER_ID, PackageRequestStatus.OPEN);
             entity.setTransportMode(current);
+            if (current == TransportMode.BOAT) {
+                // Une demande bateau porte toujours ses dimensions (lot 3) : conservées si l'app n'en envoie pas.
+                entity.setLengthCm(60);
+                entity.setWidthCm(40);
+                entity.setHeightCm(40);
+                entity.setVolumeM3(new BigDecimal("0.096"));
+            }
             when(repository.findById(entity.getId())).thenReturn(Optional.of(entity));
             when(threadRepository.findByPackageRequestId(entity.getId())).thenReturn(List.of());
             when(repository.save(any(PackageRequestEntity.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -2344,7 +2351,7 @@ class PackageRequestServiceTest {
             stubCreateSaves();
 
             PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
-                requestWithModeAndWeight("BOAT", "1200"));
+                withBoatDimensions(requestWithModeAndWeight("BOAT", "1200")));
 
             assertThat(saved.getWeightKg()).isEqualByComparingTo("1200");
         }
@@ -2507,7 +2514,8 @@ class PackageRequestServiceTest {
                 .isEqualTo(com.yadony.api.matching.ItemSize.XL);
             assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("PLANE", "M", "28.00")).getItemSize())
                 .isNull();
-            assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("BOAT", "L", "28.00")).getItemSize())
+            assertThat(service.createAndReturnEntity(SENDER_ID,
+                withBoatDimensions(requestWith("BOAT", "L", "28.00"))).getItemSize())
                 .isNull();
             assertThat(service.createAndReturnEntity(SENDER_ID, requestWith("TRAIN", "S", "28.00")).getItemSize())
                 .isNull();
@@ -2600,7 +2608,7 @@ class PackageRequestServiceTest {
 
             for (String mode : List.of("CAR", "BUS", "BOAT")) {
                 PackageRequestEntity saved = service.createAndReturnEntity(SENDER_ID,
-                    requestWith(mode, null, "900.00"));
+                    withBoatDimensions(requestWith(mode, null, "900.00")));
                 // net = 900 / 1,12 (taux global du test)
                 assertThat(saved.getTargetPriceEur()).isEqualByComparingTo("803.57");
             }
@@ -2700,6 +2708,15 @@ class PackageRequestServiceTest {
             "Cadeau pour ma mère", new BigDecimal(budget), null,
             "10e arr", "Plateau",
             true, EnumSet.of(PaymentMethod.STRIPE), List.of(), null, null, null, transportMode, itemSize);
+    }
+
+    /** Même demande avec des dimensions (60 x 40 x 40 cm), exigées en bateau depuis le lot 3. */
+    private static PackageRequestCreateRequest withBoatDimensions(PackageRequestCreateRequest r) {
+        return new PackageRequestCreateRequest(
+            r.departureCity(), r.arrivalCity(), r.desiredDate(), r.dateToleranceDays(), r.weightKg(),
+            r.contentCategory(), r.description(), r.totalBudgetEur(), r.photoUrl(), r.pickupNeighborhood(),
+            r.deliveryNeighborhood(), r.negotiable(), r.acceptedPaymentMethods(), r.photoKeys(),
+            r.saveAsDraft(), r.promoCode(), r.currency(), r.transportMode(), r.itemSize(), 60, 40, 40);
     }
 
     /** Demande valide avec un mode brut (null = absent) et un poids donnés. */

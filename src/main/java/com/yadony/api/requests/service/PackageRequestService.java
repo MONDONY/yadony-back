@@ -372,6 +372,12 @@ public class PackageRequestService {
         // Plafond par mode (V380) : 32 kg en avion et « peu importe », tonnes en route et bateau.
         // Brouillon compris : un brouillon trop lourd pour son mode ne serait jamais publiable.
         com.yadony.api.matching.WeightLimits.assertRequestWeight(req.weightKg(), requestedMode);
+        // Dimensions (bateau, lot 3) : toutes ou aucune, obligatoires en bateau à la publication (un brouillon
+        // peut les compléter plus tard). Le volume se calcule ici, jamais lu du client.
+        com.yadony.api.matching.ParcelFitRules.RequestDimensions dimensions =
+            com.yadony.api.matching.ParcelFitRules.resolveRequestDimensions(
+                req.lengthCm(), req.widthCm(), req.heightCm(),
+                com.yadony.api.matching.ParcelFitRules.RequestDimensions.NONE, requestedMode, !isDraft);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -412,6 +418,10 @@ public class PackageRequestService {
         // Taille facultative : gardée en route et « peu importe », sinon ramenée à null.
         entity.setItemSize(com.yadony.api.matching.ParcelFitRules.normalizeRequestItemSize(
             com.yadony.api.matching.ItemSize.parseOrNull(req.itemSize()), requestedMode));
+        entity.setLengthCm(dimensions.lengthCm());
+        entity.setWidthCm(dimensions.widthCm());
+        entity.setHeightCm(dimensions.heightCm());
+        entity.setVolumeM3(dimensions.volumeM3());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
@@ -511,6 +521,13 @@ public class PackageRequestService {
         // Le plafond se lit sur le mode APRÈS modification : une demande route de 60 kg passée en
         // avion est refusée, une demande route modifiée sans mode garde ses tonnes.
         com.yadony.api.matching.WeightLimits.assertRequestWeight(req.weightKg(), newMode);
+        // Dimensions absentes = conservées (ancienne app) ; en bateau, un brouillon peut rester sans.
+        com.yadony.api.matching.ParcelFitRules.RequestDimensions dimensions =
+            com.yadony.api.matching.ParcelFitRules.resolveRequestDimensions(
+                req.lengthCm(), req.widthCm(), req.heightCm(),
+                new com.yadony.api.matching.ParcelFitRules.RequestDimensions(entity.getLengthCm(),
+                    entity.getWidthCm(), entity.getHeightCm(), entity.getVolumeM3()),
+                newMode, entity.getStatus() != PackageRequestStatus.DRAFT);
         if (req.departureCity().equalsIgnoreCase(req.arrivalCity())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "request/invalid-corridor");
         }
@@ -548,6 +565,10 @@ public class PackageRequestService {
         // Taille absente = conservée, « NONE » = effacée ; ramenée à null si le nouveau mode l'interdit.
         entity.setItemSize(com.yadony.api.matching.ParcelFitRules.resolveRequestItemSizeOnUpdate(
             req.itemSize(), entity.getItemSize(), newMode));
+        entity.setLengthCm(dimensions.lengthCm());
+        entity.setWidthCm(dimensions.widthCm());
+        entity.setHeightCm(dimensions.heightCm());
+        entity.setVolumeM3(dimensions.volumeM3());
         // Normalisé à l'écriture (C2) — cf. ContentCategoryNormalizer javadoc.
         entity.setContentCategory(ContentCategoryNormalizer.normalizeJoined(req.contentCategory()));
         entity.setDescription(req.description());
@@ -634,6 +655,9 @@ public class PackageRequestService {
         transportModeGuard.assertRequestModeAllowed(entity.getTransportMode());
         // Règle de poids rejouée : le brouillon a pu être enregistré avant une règle plus stricte.
         com.yadony.api.matching.WeightLimits.assertRequestWeight(entity.getWeightKg(), entity.getTransportMode());
+        // Un brouillon bateau peut avoir été enregistré sans dimensions : la publication les exige.
+        com.yadony.api.matching.ParcelFitRules.assertBoatDimensionsPresent(
+            entity.getTransportMode(), entity.getVolumeM3());
         requireTargetPrice(entity.getTargetPriceEur());
         long openCount = repository.countBySenderIdAndStatusIn(callerUid,
             List.of(PackageRequestStatus.OPEN, PackageRequestStatus.NEGOTIATING));
@@ -1294,7 +1318,8 @@ public class PackageRequestService {
             null, null,
             e.getStatus() == PackageRequestStatus.REMOVED_BY_ADMIN,
             e.getCommissionGridId(),
-            e.getItemSize() == null ? null : e.getItemSize().name()
+            e.getItemSize() == null ? null : e.getItemSize().name(),
+            e.getLengthCm(), e.getWidthCm(), e.getHeightCm(), e.getVolumeM3()
         );
     }
 

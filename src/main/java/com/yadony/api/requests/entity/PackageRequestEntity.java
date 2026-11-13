@@ -53,6 +53,20 @@ public class PackageRequestEntity extends BaseEntity {
     @Column(name = "item_size", length = 2)
     private com.yadony.api.matching.ItemSize itemSize;
 
+    /** Dimensions du colis en cm (V382, bateau) : toutes renseignées ou toutes nulles. */
+    @Column(name = "length_cm")
+    private Integer lengthCm;
+
+    @Column(name = "width_cm")
+    private Integer widthCm;
+
+    @Column(name = "height_cm")
+    private Integer heightCm;
+
+    /** Volume du colis en m³ (V382, bateau). Null hors bateau. */
+    @Column(name = "volume_m3", precision = 8, scale = 3)
+    private BigDecimal volumeM3;
+
     // Colonne élargie en TEXT par V171 (multi-sélection canonique jointe par virgule
     // peut dépasser 255) — columnDefinition reflète le vrai type DB (length est
     // trompeur : Hibernate ne le valide pas au runtime, mais un DDL futur s'y fierait).
@@ -252,6 +266,14 @@ public class PackageRequestEntity extends BaseEntity {
     public void setTransportMode(com.yadony.api.matching.TransportMode transportMode) { this.transportMode = transportMode; }
     public com.yadony.api.matching.ItemSize getItemSize() { return itemSize; }
     public void setItemSize(com.yadony.api.matching.ItemSize itemSize) { this.itemSize = itemSize; }
+    public Integer getLengthCm() { return lengthCm; }
+    public void setLengthCm(Integer lengthCm) { this.lengthCm = lengthCm; }
+    public Integer getWidthCm() { return widthCm; }
+    public void setWidthCm(Integer widthCm) { this.widthCm = widthCm; }
+    public Integer getHeightCm() { return heightCm; }
+    public void setHeightCm(Integer heightCm) { this.heightCm = heightCm; }
+    public BigDecimal getVolumeM3() { return volumeM3; }
+    public void setVolumeM3(BigDecimal volumeM3) { this.volumeM3 = volumeM3; }
 
     public void setContentCategory(String contentCategory) { this.contentCategory = contentCategory; }
 

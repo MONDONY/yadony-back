@@ -49,7 +49,7 @@ class AnnouncementControllerSearchEventTest {
     private void search(AnnouncementController c, String dep, String arr, Pageable pageable) {
         c.searchAnnouncements(dep, arr, LocalDate.of(2026, 11, 10), LocalDate.of(2026, 11, 30),
                 null, null, null, null, null, null, null, null, null, null, null, null, null,
-                false, null, null, null, null, null, "score", "asc", pageable);
+                false, null, null, null, null, null, null, null, null, "score", "asc", pageable);
     }
 
     private static Page<AnnouncementSearchResponse> emptyPage(Pageable pageable, Long bookable) {

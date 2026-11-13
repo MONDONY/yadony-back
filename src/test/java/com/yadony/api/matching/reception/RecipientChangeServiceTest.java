@@ -7,6 +7,8 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.ArrivalRules;
+import com.yadony.api.matching.TripDelayEntity;
+import com.yadony.api.matching.TripDelayRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
@@ -155,6 +157,27 @@ class RecipientChangeServiceTest {
     }
 
     // ── Numéro changé ───────────────────────────────────────────────────────
+
+    @Test
+    void newNumber_afterANonBoatDelay_callsTheCodeOnTheDelayedRangeEnd() {
+        // M1 : la fin du retard annoncé (l'annonce hors bateau n'a que le début) cale le code régénéré.
+        LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
+        announcement.setDepartureDate(today);
+        announcement.setArrivalDate(today.plusDays(3));
+        announcement.setArrivalTime(null);
+        TripDelayRepository delays = org.mockito.Mockito.mock(TripDelayRepository.class);
+        TripDelayEntity delay = new TripDelayEntity();
+        delay.setNewArrivalDate(today.plusDays(8));
+        delay.setNewArrivalDateMax(today.plusDays(10));
+        when(delays.findFirstByAnnouncementIdOrderByCreatedAtDesc(announcement.getId()))
+                .thenReturn(Optional.of(delay));
+        service.setTripDelayRepository(delays);
+        link(ReceptionLinkStatus.CONFIRMED);
+
+        service.changeRecipient(bid.getId(), UID, request("Awa Sow", "+221781112233"));
+
+        assertThat(bid.getConfirmationCodeExpiry()).isEqualTo(today.plusDays(13).atStartOfDay());
+    }
 
     @Test
     void newNumber_revokesTokenRegeneratesCodeAndDropsTheLink() {

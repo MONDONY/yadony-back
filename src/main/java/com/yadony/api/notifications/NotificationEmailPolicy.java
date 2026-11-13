@@ -87,6 +87,7 @@ public final class NotificationEmailPolicy {
             Map.entry("request_accepted", Kind.RECAP),
             Map.entry("DELIVERY_CONFIRMED", Kind.RECAP),
             Map.entry("TRIP_CANCELLED", Kind.RECAP),
+            Map.entry("TRIP_DELAYED", Kind.RECAP),
             Map.entry("PARCEL_RETURN_REQUIRED", Kind.RECAP),
             Map.entry("PARCEL_RETURN_TO_SENDER", Kind.RECAP),
             Map.entry("RETURN_DEADLINE_EXPIRED", Kind.RECAP),

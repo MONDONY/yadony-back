@@ -44,12 +44,15 @@ public final class SearchCriteriaMatcher {
         // AVAILABLE_KG (borne basse) : le kilo libre la passe toujours.
         // MAX_AVAILABLE_KG (borne haute) : jamais d'exemption, code distinct pour que l'app
         // sache quelle borne est ratée.
+        // Trajet bateau au m³ (kilos nuls) : comme en SQL, où « NULL >= x » est faux, il ne respecte
+        // aucune borne de kilos ; la valeur constatée est alors vide.
         BigDecimal kg = a.availableKg();
+        String actualKg = kg == null ? "" : plain(kg);
         if (c.minAvailableKg() != null && a.capacityUnit() != CapacityUnit.KG_FREE
-                && kg.compareTo(c.minAvailableKg()) < 0) {
-            out.add(new UnmetCriterion("AVAILABLE_KG", plain(c.minAvailableKg()), plain(kg)));
-        } else if (c.maxAvailableKg() != null && kg.compareTo(c.maxAvailableKg()) > 0) {
-            out.add(new UnmetCriterion("MAX_AVAILABLE_KG", plain(c.maxAvailableKg()), plain(kg)));
+                && (kg == null || kg.compareTo(c.minAvailableKg()) < 0)) {
+            out.add(new UnmetCriterion("AVAILABLE_KG", plain(c.minAvailableKg()), actualKg));
+        } else if (c.maxAvailableKg() != null && (kg == null || kg.compareTo(c.maxAvailableKg()) > 0)) {
+            out.add(new UnmetCriterion("MAX_AVAILABLE_KG", plain(c.maxAvailableKg()), actualKg));
         }
 
         // TRANSPORT_MODE : valeur invalide ignorée, comme dans la recherche SQL ; la route couvre

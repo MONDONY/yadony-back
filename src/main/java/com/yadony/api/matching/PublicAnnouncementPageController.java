@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.common.TransportModeLabels;
 import com.yadony.api.matching.dto.AnnouncementPriceGridItemResponse;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import jakarta.servlet.http.HttpServletRequest;
@@ -53,6 +54,11 @@ public class PublicAnnouncementPageController {
             DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", Locale.FRENCH);
     private static final DateTimeFormatter DEADLINE_FMT =
             DateTimeFormatter.ofPattern("EEEE d MMMM 'à' HH'h'mm", Locale.FRENCH);
+
+    private static final DateTimeFormatter DAY_MONTH_FMT =
+            DateTimeFormatter.ofPattern("d MMMM", Locale.FRENCH);
+    private static final DateTimeFormatter DAY_MONTH_YEAR_FMT =
+            DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.FRENCH);
 
     private static final String VIEW = "public/annonce";
 
@@ -193,10 +199,19 @@ public class PublicAnnouncementPageController {
         // n'est pas analysable par Thymeleaf dans un attribut de balise meta.
         model.addAttribute("pageTitle", "Trajet " + corridor + " | Yadony");
         model.addAttribute("ogTitle", corridor);
-        model.addAttribute("ogDescription",
-                "Départ le " + departureDate + ". Réservez vos kilos sur Yadony.");
+        model.addAttribute("ogDescription", "Départ le " + departureDate + ". "
+                + (announcement.isPricedPerM3()
+                        ? "Réservez de la place au mètre cube sur Yadony."
+                        : "Réservez vos kilos sur Yadony."));
+        // Mode du trajet : libellé et symbole selon le mode, rien quand il est inconnu (jamais l'avion par défaut).
+        model.addAttribute("modeLabel", TransportModeLabels.label(announcement.getTransportMode()));
+        model.addAttribute("modeSymbol", TransportModeLabels.symbol(announcement.getTransportMode()));
+        model.addAttribute("arrivalRange", arrivalRangeLabel(announcement));
+        // Le bateau n'est pas payé comme les autres modes : la phrase sur le versement au voyageur n'est pas la sienne.
+        model.addAttribute("showEscrowNote", announcement.getTransportMode() != TransportMode.BOAT);
         model.addAttribute("handoverDeadline", formatDeadline(announcement));
         model.addAttribute("capacity", capacityLabel(announcement));
+        model.addAttribute("pricePerM3", formatDecimal(m3Price(announcement)));
         model.addAttribute("stops", stopsLabel(announcement.getStopsCount()));
         model.addAttribute("pricePerKg", formatDecimal(kgPrice(announcement)));
         model.addAttribute("cheapestGridPrice",
@@ -358,6 +373,40 @@ public class PublicAnnouncementPageController {
     }
 
     /**
+     * Prix au m³ payé par l'expéditeur (brut, comme {@code pricePerM3Display} de l'API), jamais le net du
+     * voyageur ; {@code null} hors trajet au m³.
+     */
+    private BigDecimal m3Price(AnnouncementEntity announcement) {
+        BigDecimal net = announcement.getPricePerM3();
+        if (!announcement.isPricedPerM3() || net.signum() <= 0) {
+            return null;
+        }
+        return priceGridService.displayPrice(net, announcement.getTravelerId());
+    }
+
+    /**
+     * Fourchette d'arrivée estimée d'un trajet qui en annonce une (bateau) : « du 12 décembre au
+     * 20 décembre 2026 ». {@code null} sans fin de fourchette : les autres modes n'affichent pas de ligne.
+     */
+    static String arrivalRangeLabel(AnnouncementEntity announcement) {
+        java.time.LocalDate max = announcement.getArrivalDateMax();
+        if (max == null) {
+            return null;
+        }
+        java.time.LocalDate min = announcement.getArrivalDate();
+        if (min == null || min.isAfter(max)) {
+            return "avant le " + max.format(DAY_MONTH_YEAR_FMT);
+        }
+        if (min.equals(max)) {
+            return "le " + max.format(DAY_MONTH_YEAR_FMT);
+        }
+        String start = min.getYear() == max.getYear()
+                ? min.format(DAY_MONTH_FMT)
+                : min.format(DAY_MONTH_YEAR_FMT);
+        return "du " + start + " au " + max.format(DAY_MONTH_YEAR_FMT);
+    }
+
+    /**
      * Prix expéditeur de l'article le moins cher, pour une accroche « dès X ».
      *
      * <p>{@code null} hors mode {@link PricingMode#MIXED}. Le service garantit
@@ -401,6 +450,10 @@ public class PublicAnnouncementPageController {
      * « Kg libre » dans ce cas.
      */
     private String capacityLabel(AnnouncementEntity announcement) {
+        if (announcement.isPricedPerM3()) {
+            String m3 = formatDecimal(announcement.getAvailableVolumeM3());
+            return m3 == null ? null : m3 + " m³";
+        }
         if (announcement.getCapacityUnit() == CapacityUnit.KG_FREE) {
             return "Kg libre";
         }

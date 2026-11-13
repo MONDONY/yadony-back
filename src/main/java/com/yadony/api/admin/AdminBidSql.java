@@ -44,7 +44,7 @@ public final class AdminBidSql {
     /**
      * Rang d'alerte du colis, le plus urgent l'emporte : 1 litige ouvert (quel que soit le statut),
      * 2 no-show, 3 paiement attendu depuis plus de {@value #UNPAID_AFTER_HOURS} h, 4 en route après
-     * l'arrivée prévue (départ à défaut) plus {@value #LATE_AFTER_DAYS} jour de grâce ; 0 sinon.
+     * l'arrivée prévue au plus tard (fin de la fourchette d'un bateau, sinon date d'arrivée, départ à défaut) plus {@value #LATE_AFTER_DAYS} jour de grâce ; 0 sinon.
      * Seule définition de l'alerte : liste, tri, nombres et étiquette la réutilisent.
      */
     public static final String ALERT_RANK = "(CASE"
@@ -55,7 +55,7 @@ public final class AdminBidSql {
             + "      AND b.updated_at < " + NOW + " - INTERVAL '" + UNPAID_AFTER_HOURS + "' HOUR THEN 3"
             + " WHEN b.status IN " + LATE_STATUSES
             + "      AND b.delivered_at IS NULL"
-            + "      AND COALESCE(a.arrival_date, a.departure_date) < CAST(:lateBefore AS DATE) THEN 4"
+            + "      AND COALESCE(a.arrival_date_max, a.arrival_date, a.departure_date) < CAST(:lateBefore AS DATE) THEN 4"
             + " ELSE 0 END)";
 
     /** Prédicat de chaque vue (hors {@code ALL}) : seule définition, la liste et les nombres la partagent. */

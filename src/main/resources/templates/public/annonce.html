@@ -67,6 +67,10 @@
       <h1 class="corridor">
         <span th:text="${departureCity}">Paris</span><span class="arrow">→</span><span th:text="${arrivalCity}">Dakar</span>
       </h1>
+      <!-- Mode du trajet : libellé et symbole selon le mode, rien quand il est inconnu (jamais l'avion par défaut). -->
+      <p class="badge-line mode-line" th:if="${modeLabel != null}">
+        <span class="badge"><span aria-hidden="true" th:if="${modeSymbol != null}" th:text="${modeSymbol} + ' '">✈</span><span th:text="${modeLabel}">Avion</span></span>
+      </p>
       <p class="badge-line" th:if="${travelerGpPro}">
         <span class="badge">GP Pro</span>
       </p>
@@ -77,6 +81,10 @@
         <div class="row">
           <dt>Départ</dt>
           <dd th:text="${departureDate}">jeudi 20 août 2026</dd>
+        </div>
+        <div class="row" th:if="${arrivalRange != null}">
+          <dt>Arrivée estimée</dt>
+          <dd th:text="${arrivalRange}">du 12 décembre au 20 décembre 2026</dd>
         </div>
         <div class="row" th:if="${stops != null}">
           <dt>Escales</dt>
@@ -120,6 +128,13 @@
         </span>
         <span class="unit">par kilo</span>
       </div>
+      <!-- Trajet vendu au mètre cube (bateau) : prix payé par l'expéditeur, jamais le net du voyageur. -->
+      <div class="price" th:if="${cheapestGridPrice == null and pricePerKg == null and pricePerM3 != null}">
+        <span class="amount">
+          <span th:text="${pricePerM3}">120</span><span th:text="${currency}">€</span>
+        </span>
+        <span class="unit">par m³</span>
+      </div>
       <p class="price-alt" th:if="${cheapestGridPrice != null and pricePerKg != null}">
         et <span th:text="${pricePerKg}">8</span><span th:text="${currency}">€</span> par kilo
       </p>
@@ -128,7 +143,7 @@
         voyageur, hors frais de service (le total exact est montré dans l'app
         avant toute validation).
       -->
-      <p class="price-alt" th:if="${serviceFeeExtra and (cheapestGridPrice != null or pricePerKg != null)}">
+      <p class="price-alt" th:if="${serviceFeeExtra and (cheapestGridPrice != null or pricePerKg != null or pricePerM3 != null)}">
         + frais de service Yadony
       </p>
 
@@ -151,7 +166,7 @@
 
     <p class="trust">Paiement sécurisé · Suivi du colis · Voyageurs vérifiés</p>
 
-    <p class="note">
+    <p class="note" th:if="${showEscrowNote}">
       Votre paiement est conservé par Yadony et n'est versé au voyageur qu'après
       la livraison confirmée.
     </p>

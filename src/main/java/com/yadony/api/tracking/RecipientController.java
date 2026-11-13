@@ -2,6 +2,7 @@ package com.yadony.api.tracking;
 
 import com.yadony.api.common.StorageService;
 import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
@@ -103,9 +104,10 @@ public class RecipientController {
         List<TrackingEventEntity> rawEvents =
                 trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId());
 
+        TransportMode mode = announcementOpt.map(AnnouncementEntity::getTransportMode).orElse(null);
         List<Map<String, Object>> events = rawEvents.stream()
                 .map(e -> Map.<String, Object>of(
-                        "label", ParcelSteps.label(e.getEventType()),
+                        "label", ParcelSteps.label(e.getEventType(), mode),
                         "scannedAt", e.getScannedAt().format(FMT),
                         "offline", e.getOfflineTimestamp() != null,
                         "gpsLabel", e.getGpsLabel() != null ? e.getGpsLabel() : "",
@@ -113,7 +115,7 @@ public class RecipientController {
                 ))
                 .toList();
 
-        String currentStep = ParcelSteps.currentStep(rawEvents);
+        String currentStep = ParcelSteps.currentStep(rawEvents, mode);
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("currentStep", currentStep);
         body.put("events", events);
@@ -165,9 +167,10 @@ public class RecipientController {
         List<TrackingEventEntity> rawEvents =
                 trackingEventRepository.findByBidIdOrderByScannedAtAsc(bid.getId());
 
+        TransportMode mode = announcementOpt.map(AnnouncementEntity::getTransportMode).orElse(null);
         List<RecipientEventDto> events = rawEvents.stream()
                 .map(e -> new RecipientEventDto(
-                        ParcelSteps.label(e.getEventType()),
+                        ParcelSteps.label(e.getEventType(), mode),
                         e.getScannedAt().format(FMT),
                         e.getGpsLabel(),
                         resolvePhoto(e.getPhotoUrl()),
@@ -175,7 +178,7 @@ public class RecipientController {
                 ))
                 .toList();
 
-        String currentStepLabel = ParcelSteps.currentStep(rawEvents);
+        String currentStepLabel = ParcelSteps.currentStep(rawEvents, mode);
 
         model.addAttribute("trackingNumber", bid.getTrackingNumber());
         model.addAttribute("corridor", corridor);

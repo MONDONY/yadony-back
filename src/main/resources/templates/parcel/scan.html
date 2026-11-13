@@ -15,6 +15,7 @@
     .route .end { text-align: right; }
     .route .route-arrow { color: var(--subtle); font-size: 18px; }
     .city { font-family: var(--f-display); font-size: 20px; font-weight: 800; display: block; }
+    .mode { margin: 0 0 8px; }
     .desc { margin: 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink) !important; }
     .person { display: grid; }
     .stores { text-align: center; font-size: 13px; color: var(--muted); margin: 0; }
@@ -42,6 +43,10 @@
 
     <section class="card">
       <p class="label">Trajet</p>
+      <!-- Mode du trajet : libellé et symbole selon le mode, rien quand il est inconnu (jamais l'avion par défaut). -->
+      <p class="mode" th:if="${modeLabel != null}">
+        <span class="chip neutral"><span aria-hidden="true" th:if="${modeSymbol != null}" th:text="${modeSymbol} + ' '">✈</span><span th:text="${modeLabel}">Avion</span></span>
+      </p>
       <div class="route">
         <div><span class="city" th:text="${parcel.departureCity}">Paris</span>
           <span class="muted" th:if="${!#strings.isEmpty(parcel.departureDate)}" th:text="'Départ ' + ${parcel.departureDate}">Départ</span></div>
@@ -59,6 +64,9 @@
       <p class="desc" th:if="${!#strings.isEmpty(parcel.description)}" th:text="${parcel.description}">Description</p>
       <dl class="rows" th:if="${!#strings.isEmpty(parcel.weight)}">
         <div class="row"><dt>Poids</dt><dd th:text="${parcel.weight}">4,5 kg</dd></div>
+      </dl>
+      <dl class="rows" th:if="${!#strings.isEmpty(parcel.volume)}">
+        <div class="row"><dt>Volume</dt><dd th:text="${parcel.volume}">0,096 m³</dd></div>
       </dl>
     </section>
 

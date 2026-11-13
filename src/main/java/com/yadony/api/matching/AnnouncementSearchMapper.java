@@ -141,7 +141,13 @@ public class AnnouncementSearchMapper {
                 null,
                 entity.getTimezone(),
                 entity.getMaxItemSize() == null ? null : entity.getMaxItemSize().name(),
-                entity.getMaxParcelWeightKg()
+                entity.getMaxParcelWeightKg(),
+                // Bateau : fourchette, volume, prix au m³ (net masqué pour un invité, brut servi à tous).
+                entity.getArrivalDateMax(),
+                entity.getVolumeCapacityM3(),
+                entity.getAvailableVolumeM3(),
+                GuestSession.travelerNetOrNull(entity.getPricePerM3()),
+                pricePerKgDisplay(entity.getPricePerM3(), entity.getTravelerId())
         );
     }
 
@@ -218,7 +224,13 @@ public class AnnouncementSearchMapper {
                 null,
                 entity.getTimezone(),
                 entity.getMaxItemSize() == null ? null : entity.getMaxItemSize().name(),
-                entity.getMaxParcelWeightKg()
+                entity.getMaxParcelWeightKg(),
+                // Bateau : fourchette, volume, prix au m³ (net masqué pour un invité, brut servi à tous).
+                entity.getArrivalDateMax(),
+                entity.getVolumeCapacityM3(),
+                entity.getAvailableVolumeM3(),
+                GuestSession.travelerNetOrNull(entity.getPricePerM3()),
+                pricePerKgDisplay(entity.getPricePerM3(), entity.getTravelerId())
         );
     }
 

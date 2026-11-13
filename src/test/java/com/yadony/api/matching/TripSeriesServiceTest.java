@@ -82,6 +82,23 @@ class TripSeriesServiceTest {
     }
 
     @Test
+    void shiftTo_boat_shiftsArrivalRangeAndKeepsVolumeAndPricePerM3() {
+        AnnouncementRequest boat = new AnnouncementRequest("Marseille", "Dakar", SOURCE_DATE, LocalTime.of(10, 0),
+                null, new AddressDto("Port", 43.3, 5.37), new AddressDto("Port", 14.69, -17.44),
+                null, null, TransportMode.BOAT, null, null, null, null, CapacityUnit.KG_EXACT, PricingMode.KG,
+                "FR", "SN", null, Boolean.FALSE, false, "EUR", SOURCE_DATE.plusDays(20), null, null, null,
+                SOURCE_DATE.plusDays(30), new BigDecimal("2.5"), new BigDecimal("600"));
+
+        AnnouncementRequest shifted = service.shiftTo(start(boat), SOURCE_DATE.plusDays(7), false);
+
+        assertThat(shifted.arrivalDate()).isEqualTo(SOURCE_DATE.plusDays(27));
+        assertThat(shifted.arrivalDateMax()).isEqualTo(SOURCE_DATE.plusDays(37));
+        assertThat(shifted.volumeCapacityM3()).isEqualByComparingTo("2.5");
+        assertThat(shifted.pricePerM3()).isEqualByComparingTo("600");
+        assertThat(shifted.availableKg()).isNull();
+    }
+
+    @Test
     void shiftTo_keepsMaxItemSizeAndMaxParcelWeight() {
         AnnouncementRequest road = new AnnouncementRequest("Paris", "Dakar", SOURCE_DATE, LocalTime.of(10, 0), null,
                 new AddressDto("Orly", 48.72, 2.37), new AddressDto("Dakar", 14.69, -17.44),

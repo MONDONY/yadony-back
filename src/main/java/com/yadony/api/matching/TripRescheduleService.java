@@ -13,7 +13,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -61,8 +60,16 @@ public class TripRescheduleService {
         this.eventPublisher = eventPublisher;
     }
 
+    /** Retards annoncés (V382) : purgés au report ; aucun tant que Spring ne l'a pas injecté. */
+    private TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     @Transactional
-    @CacheEvict(value = "announcements-search", allEntries = true)
+    @CacheEvict(value = {"announcements-search", "traveler-bids-me", "bids-me"}, allEntries = true)
     public TripRescheduleResponse reschedule(UUID announcementId, String firebaseUid, TripRescheduleRequest request) {
         UserEntity traveler = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
@@ -73,6 +80,8 @@ public class TripRescheduleService {
         }
         assertReschedulable(announcement);
         assertNewSchedule(announcement, request);
+        // Calculée avant d'écraser l'arrivée : elle part de la fourchette actuelle.
+        java.time.LocalDate newArrivalDateMax = shiftedArrivalDateMax(announcement, request);
 
         TripRescheduleEntity reschedule = new TripRescheduleEntity();
         reschedule.setAnnouncementId(announcement.getId());
@@ -94,6 +103,7 @@ public class TripRescheduleService {
         announcement.setDepartureDate(request.departureDate());
         announcement.setDepartureTime(request.departureTime());
         announcement.setArrivalDate(request.arrivalDate());
+        announcement.setArrivalDateMax(newArrivalDateMax);
         announcement.setArrivalTime(request.arrivalTime());
         announcement.setDepartureAt(AnnouncementService.deriveDepartureAt(
                 request.departureDate(), request.departureTime(), announcement.getTimezone()));
@@ -107,11 +117,12 @@ public class TripRescheduleService {
         if (announcement.getStatus() == AnnouncementStatus.IN_PROGRESS) {
             // Le planificateur l'avait fait partir à l'ancienne heure : le trajet repart
             // sur le marché, complet s'il ne reste plus de place.
-            boolean full = announcement.getCapacityUnit() != CapacityUnit.KG_FREE
-                    && announcement.getAvailableKg().compareTo(BigDecimal.ZERO) <= 0;
+            // Kilos (ou volume pour un bateau au m³) restants à zéro ; kilo libre jamais plein.
+            boolean full = announcement.hasNoCapacityLeft();
             announcement.setStatus(full ? AnnouncementStatus.FULL : AnnouncementStatus.ACTIVE);
         }
         announcementRepository.save(announcement);
+        clearAnnouncedDelays(announcement.getId());
 
         List<TripRescheduledEvent.Target> targets = applyToBids(announcement, reschedule.getId());
         int awaitingDecision = (int) targets.stream().filter(TripRescheduledEvent.Target::decisionRequired).count();
@@ -133,6 +144,20 @@ public class TripRescheduleService {
         return new TripRescheduleResponse(reschedule.getId(), announcement.getRescheduleCount(),
                 TripRescheduleRules.MAX_RESCHEDULES - announcement.getRescheduleCount(),
                 awaitingDecision, targets.size() - awaitingDecision);
+    }
+
+    /**
+     * Un report (le trajet repasse en vente, nouveau calendrier) rend caduques les retards annoncés avant :
+     * ils sont retirés de la lecture ({@code latestTripDelay} redevient nul), la ligne et l'audit restent.
+     */
+    private void clearAnnouncedDelays(UUID announcementId) {
+        if (tripDelayRepository == null) {
+            return;
+        }
+        for (TripDelayEntity delay : tripDelayRepository.findByAnnouncementId(announcementId)) {
+            delay.softDelete();
+            tripDelayRepository.save(delay);
+        }
     }
 
     private void assertReschedulable(AnnouncementEntity announcement) {
@@ -167,6 +192,34 @@ public class TripRescheduleService {
         }
         ArrivalRules.validate(request.departureDate(), request.departureTime(),
                 request.arrivalDate(), request.arrivalTime(), announcement.getTransportMode());
+        // Bateau avec fourchette : le report doit garder un début de fourchette (sinon la fin n'a plus
+        // de point de départ, chk_announcements_arrival_date_max).
+        if (announcement.getArrivalDateMax() != null && request.arrivalDate() == null) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "arrival-range-invalid",
+                    "problem.arrival-range-invalid");
+        }
+    }
+
+    /**
+     * Fin de la fourchette d'arrivée après le report. La requête de report ne porte qu'une date
+     * d'arrivée : pour un bateau, la fourchette glisse avec elle en gardant sa largeur, sans dépasser
+     * départ + 120 jours (plafond du CHECK, la fourchette est alors raccourcie ; la nouvelle arrivée
+     * est déjà validée sous ce plafond par {@link ArrivalRules#validate}). Sans fourchette (tout
+     * autre trajet, ou bateau d'avant le lot 3), elle reste nulle. Le retard d'un bateau parti passe
+     * par l'annonce de retard, qui fixe la fourchette entière.
+     */
+    static java.time.LocalDate shiftedArrivalDateMax(AnnouncementEntity announcement, TripRescheduleRequest request) {
+        java.time.LocalDate currentMax = announcement.getArrivalDateMax();
+        if (currentMax == null || request.arrivalDate() == null) {
+            return null;
+        }
+        java.time.LocalDate currentMin = announcement.getArrivalDate() != null
+                ? announcement.getArrivalDate() : announcement.getDepartureDate();
+        long width = Math.max(0, java.time.temporal.ChronoUnit.DAYS.between(currentMin, currentMax));
+        java.time.LocalDate shifted = request.arrivalDate().plusDays(width);
+        java.time.LocalDate ceiling = request.departureDate()
+                .plusDays(ArrivalRules.maxDaysAfterDeparture(TransportMode.BOAT));
+        return shifted.isAfter(ceiling) ? ceiling : shifted;
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.yadony.api.requests.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.entity.NegotiationThreadStatus;
 import java.math.BigDecimal;
@@ -96,8 +97,40 @@ public record NegotiationThreadResponse(
     // Rappel AUTOMATIQUE envoyé à la partie qui doit répondre (NegotiationAutoReminderScheduler),
     // tant qu'aucun message n'est arrivé depuis. Null sinon, donc absent du JSON. Additif, en fin
     // de record : l'app affiche « Rappel envoyé » dans le fil, sans rien déduire.
-    LocalDateTime autoReminderSentAt
+    LocalDateTime autoReminderSentAt,
+    // Mode de transport du fil, servi tel quel : celui de la demande de colis, sinon celui du trajet
+    // lié (offre sur une demande « peu importe »), sinon null (aucun trajet lié, mode inconnu). Toujours
+    // sérialisé, null compris : l'app en tire l'icône du fil et affiche une icône neutre sur null, jamais
+    // l'avion. Aucun repli côté serveur. Additif, en fin de record.
+    @JsonInclude(JsonInclude.Include.ALWAYS) String transportMode
 ) {
+    /** Constructeur de compatibilité (sans transportMode, null) — arité canonique d'avant le lot 3. */
+    public NegotiationThreadResponse(
+            UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,
+            LocalDate travelerTravelDate, BigDecimal travelerAvailableKg, String travelerCapacityUnit,
+            NegotiationThreadStatus status, BigDecimal currentPriceEur, int roundsCount,
+            LocalDateTime lastActivityAt, LocalDateTime createdAt, List<NegotiationMessageResponse> messages,
+            String paymentIntentClientSecret, String travelerName, BigDecimal travelerRating,
+            Integer travelerTripsCount, String travelerPhotoUrl, String departureCity, String arrivalCity,
+            BigDecimal weightKg, String senderName, String senderPhotoUrl, boolean isMyTurn,
+            boolean canAccept, boolean canCounter, int roundsRemaining, LinkedTripSummary linkedTrip,
+            BigDecimal grossPriceEur, PaymentMethod paymentMethod, UUID materializedBidId,
+            boolean cashCommissionAvailable, Set<PaymentMethod> availablePaymentMethods, boolean canNudge,
+            boolean hasUnread, String promoCode, BigDecimal commissionRate, String currency,
+            String commissionStatus, LocalDateTime commissionDeadline, LocalDateTime depositExpiresAt,
+            UUID senderId, boolean archived, boolean travelerGpPro, boolean senderGpPro,
+            UUID commissionGridId, BigDecimal travelerCashCommissionEur, LocalDateTime autoReminderSentAt) {
+        this(id, packageRequestId, travelerId, travelerAnnouncementId, travelerTravelDate,
+                travelerAvailableKg, travelerCapacityUnit, status, currentPriceEur, roundsCount,
+                lastActivityAt, createdAt, messages, paymentIntentClientSecret, travelerName, travelerRating,
+                travelerTripsCount, travelerPhotoUrl, departureCity, arrivalCity, weightKg, senderName,
+                senderPhotoUrl, isMyTurn, canAccept, canCounter, roundsRemaining, linkedTrip, grossPriceEur,
+                paymentMethod, materializedBidId, cashCommissionAvailable, availablePaymentMethods, canNudge,
+                hasUnread, promoCode, commissionRate, currency, commissionStatus, commissionDeadline,
+                depositExpiresAt, senderId, archived, travelerGpPro, senderGpPro, commissionGridId,
+                travelerCashCommissionEur, autoReminderSentAt, null);
+    }
+
     /** Constructeur de compatibilité (sans autoReminderSentAt, null) — ancienne arité canonique. */
     public NegotiationThreadResponse(
             UUID id, UUID packageRequestId, UUID travelerId, UUID travelerAnnouncementId,

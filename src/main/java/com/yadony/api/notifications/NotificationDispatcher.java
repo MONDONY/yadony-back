@@ -31,6 +31,7 @@ import com.yadony.api.matching.events.BidRejectedEvent;
 import com.yadony.api.matching.events.HandoverAlertEvent;
 import com.yadony.api.matching.events.ParcelRefusedEvent;
 import com.yadony.api.matching.events.TripArrivedEvent;
+import com.yadony.api.matching.events.TripDelayedEvent;
 import com.yadony.api.matching.events.TripRescheduledEvent;
 import com.yadony.api.tracking.TripPromptDueEvent;
 import com.yadony.api.messaging.SystemMessages;
@@ -669,6 +670,23 @@ public class NotificationDispatcher {
             } else {
                 notifyUser(target.senderId(), text.title(), text.body(), data);
             }
+        }
+    }
+
+    /**
+     * Retard annoncé par le voyageur : chaque expéditeur d'un colis en route reçoit la nouvelle fourchette
+     * d'arrivée estimée, en push et par e-mail ({@link NotificationEmailPolicy}). Aucune décision à prendre :
+     * pas de notification critique.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async
+    public void onTripDelayed(TripDelayedEvent event) {
+        for (TripDelayedEvent.Target target : event.targets()) {
+            var text = NotificationTexts.tripDelayed(messagesFor(target.senderId()),
+                    event.arrivalDate(), event.arrivalDateMax());
+            notifyUser(target.senderId(), text.title(), text.body(),
+                    Map.of("type", "TRIP_DELAYED", "bidId", target.bidId().toString(),
+                            "announcementId", event.announcementId().toString()));
         }
     }
 

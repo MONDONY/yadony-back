@@ -135,7 +135,7 @@
         <div th:each="event : ${events}" class="history-row step">
           <span class="rail" aria-hidden="true"></span>
           <div class="history-body body">
-            <span class="history-label" th:text="${event.label == 'Colis remis au voyageur' ? 'Remise' : (event.label == 'Arrivée confirmée' ? 'Arrivée' : 'Étape')}">Étape</span>
+            <span class="history-label" th:text="${event.label == 'Colis remis au voyageur' ? 'Remise' : (#strings.startsWith(event.label, 'Dépôt') ? 'Dépôt' : (event.label == 'Arrivée confirmée' ? 'Arrivée' : 'Étape'))}">Étape</span>
             <strong th:text="${event.label}">Colis remis au voyageur</strong>
             <time th:text="${event.scannedAt}">15/08/2026 22:46</time>
             <span th:if="${event.gpsLabel != null and !#strings.isEmpty(event.gpsLabel)}"
@@ -199,6 +199,7 @@
 
   function railLabel(label) {
     if (label === 'Colis remis au voyageur') return 'Remise';
+    if (label && label.indexOf('Dépôt') === 0) return 'Dépôt';
     if (label === 'Arrivée confirmée') return 'Arrivée';
     return 'Étape';
   }

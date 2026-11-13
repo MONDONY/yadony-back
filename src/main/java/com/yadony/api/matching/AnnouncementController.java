@@ -97,6 +97,11 @@ public class AnnouncementController {
             @RequestParam(required = false) String minItemSize,
             // « Passe par » : trajets des voyages qui s'arrêtent dans cette ville. Vide : ignoré.
             @RequestParam(required = false) String viaCity,
+            // Bateau : volume restant minimal (m³), prix au m³ maximal (devise du lecteur) et arrivée
+            // estimée au plus tard (fin de fourchette). Stricts : un trajet au kilo n'y passe pas.
+            @RequestParam(required = false) BigDecimal minVolumeM3,
+            @RequestParam(required = false) BigDecimal maxPricePerM3,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate arrivalBefore,
             @RequestParam(required = false) Double userLat,
             @RequestParam(required = false) Double userLng,
             @RequestParam(required = false) Double radiusKm,
@@ -116,7 +121,8 @@ public class AnnouncementController {
                 userLat, userLng, radiusKm,
                 sortBy, sortDir, pageable, firebaseUid, urgent,
                 new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods), includeFull,
-                        false, ItemSize.parseOrNull(minItemSize), viaCity));
+                        false, ItemSize.parseOrNull(minItemSize), viaCity,
+                        minVolumeM3, maxPricePerM3, arrivalBefore));
         var response = com.yadony.api.matching.dto.TripSearchPageResponse.from(page);
         publishSearch(firebaseUid, departureCity, arrivalCity, departureDateFrom, departureDateTo,
                 pageable, response.bookableElements() != null ? response.bookableElements() : response.totalElements());

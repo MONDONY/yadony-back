@@ -7,6 +7,7 @@ import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.i18n.Messages;
 import com.yadony.api.common.i18n.MessagesResolver;
 import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.TransportMode;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
@@ -121,6 +122,14 @@ public class TrackingService {
         this.handoverBlockers = List.copyOf(handoverBlockers);
     }
 
+    /** Retards annoncés (fin de fourchette hors bateau, lue au renouvellement du code) ; absent hors Spring. */
+    private com.yadony.api.matching.TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTripDelayRepository(com.yadony.api.matching.TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     /** Mode recette (FLUTTER-FA) ; fermé tant que Spring ne l'a pas injecté. */
     private com.yadony.api.common.RecetteMode recetteMode = com.yadony.api.common.RecetteMode.disabled();
 
@@ -227,7 +236,9 @@ public class TrackingService {
                 stepLabel = m.get("tracking.step.in-transit");
             } else if (hasDepart) {
                 currentStep = "DEPARTED";
-                stepLabel = m.get("tracking.step.departed");
+                // Bateau : le colis est déposé à l'entrepôt, il n'est pas remis au voyageur.
+                stepLabel = m.get(announcement.getTransportMode() == TransportMode.BOAT
+                        ? "tracking.step.departed-boat" : "tracking.step.departed");
             }
         }
 
@@ -241,7 +252,8 @@ public class TrackingService {
                 currentStep,
                 stepLabel,
                 paymentStatus,
-                announcement.getArrivalInstructions()
+                announcement.getArrivalInstructions(),
+                announcement.getTransportMode() != null ? announcement.getTransportMode().name() : null
         );
     }
 
@@ -726,7 +738,7 @@ public class TrackingService {
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
 
         String newCode = com.yadony.api.matching.PickupCodes.newCode();
-        LocalDateTime newExpiry = com.yadony.api.matching.ArrivalRules.renewedPickupCodeExpiry(announcement);
+        LocalDateTime newExpiry = com.yadony.api.matching.ArrivalRules.renewedPickupCodeExpiry(announcement, tripDelayRepository);
         bid.setConfirmationCode(newCode);
         bid.setConfirmationCodeAttempts(0);
         bid.setConfirmationCodeExpiry(newExpiry);

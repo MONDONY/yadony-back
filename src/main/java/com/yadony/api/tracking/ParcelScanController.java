@@ -5,11 +5,13 @@ import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.PublicNameFormatter;
 import com.yadony.api.common.PublicTextSanitizer;
 import com.yadony.api.common.StorageService;
+import com.yadony.api.common.TransportModeLabels;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.TransportMode;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
@@ -110,9 +112,10 @@ public class ParcelScanController {
             return inactive(model, bid.getTrackingNumber(), "inactive");
         }
 
+        TransportMode mode = announcement.getTransportMode();
         ParcelScanView parcel = new ParcelScanView(
                 bid.getTrackingNumber(),
-                delivered ? "Livré" : ParcelSteps.currentStep(rawEvents),
+                delivered ? "Livré" : ParcelSteps.currentStep(rawEvents, mode),
                 delivered,
                 announcement.getDepartureCity(),
                 announcement.getArrivalCity(),
@@ -125,14 +128,19 @@ public class ParcelScanController {
                 PublicNameFormatter.shortName(bid.getRecipientName()),
                 publicUserName(announcement.getTravelerId()),
                 rawEvents.stream().map(e -> new RecipientController.RecipientEventDto(
-                        ParcelSteps.label(e.getEventType()),
+                        ParcelSteps.label(e.getEventType(), mode),
                         e.getScannedAt().format(EVENT_FMT),
                         // Jamais le lieu : il commence par la rue, souvent celle de l'expéditeur.
                         null,
                         resolvePhoto(e.getPhotoUrl()),
-                        e.getOfflineTimestamp() != null)).toList());
+                        e.getOfflineTimestamp() != null)).toList(),
+                mode != null ? mode.name() : null,
+                formatVolume(bid.getVolumeM3()));
 
         model.addAttribute("inactive", false);
+        // Libellé et symbole du mode du trajet : absents (repli neutre) quand le mode est inconnu.
+        model.addAttribute("modeLabel", TransportModeLabels.label(mode));
+        model.addAttribute("modeSymbol", TransportModeLabels.symbol(mode));
         model.addAttribute("parcel", parcel);
         model.addAttribute("appLink", "yadony://colis/" + bid.getId());
         addContact(model, bid.getTrackingNumber());
@@ -204,6 +212,11 @@ public class ParcelScanController {
     private static String formatWeight(BigDecimal kg) {
         if (kg == null) return "";
         return kg.stripTrailingZeros().toPlainString().replace('.', ',') + " kg";
+    }
+
+    private static String formatVolume(BigDecimal m3) {
+        if (m3 == null) return "";
+        return m3.stripTrailingZeros().toPlainString().replace('.', ',') + " m³";
     }
 
     private static String formatDate(LocalDate date) {

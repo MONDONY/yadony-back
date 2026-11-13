@@ -15,6 +15,9 @@ import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.CapacityUnit;
 import com.yadony.api.matching.PricingMode;
 import com.yadony.api.matching.TransportMode;
+import com.yadony.api.matching.TripDelayEntity;
+import com.yadony.api.matching.TripDelayReason;
+import com.yadony.api.matching.TripDelayRepository;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.requests.entity.PackageRequestEntity;
 import com.yadony.api.requests.entity.PackageRequestStatus;
@@ -117,6 +120,7 @@ class GuestDataExposureIT {
 
     /** Net voyageur au kilo du trajet seede. Masque pour un invite, servi a un inscrit. */
     private static final BigDecimal NET_PAR_KG = new BigDecimal("8.00");
+    private static final BigDecimal NET_PAR_M3 = new BigDecimal("600.00");
     /** Net voyageur de l'unique ligne de grille du trajet seede. Meme regle. */
     private static final BigDecimal NET_LIGNE_GRILLE = new BigDecimal("45.00");
     /** Budget net de la demande seedee. Servi a TOUS, invites compris (decision A16). */
@@ -214,6 +218,17 @@ class GuestDataExposureIT {
             // limites du trajet que l'expediteur doit connaitre avant de decider, invite compris,
             // au meme titre que availableKg et acceptedContentTypes. Ni identite ni montant.
             "maxItemSize", "maxParcelWeightKg",
+            // Bateau (lot 3) : fin de la fourchette d'arrivée estimée, volume proposé et restant, prix au
+            // m³ BRUT (pricePerM3Display) : limites et prix du trajet, comme leurs équivalents au kilo.
+            // pricePerM3 est le NET au m³ : champ ajouté donc toujours sérialisé, il vaut null pour un
+            // invité (même masquage que pricePerKg, GuestSession.travelerNetOrNull). La clé est servie,
+            // jamais la valeur : vérifié par unInviteNeRecoitJamaisLeNetAuM3.
+            "arrivalDateMax", "volumeCapacityM3", "availableVolumeM3", "pricePerM3Display", "pricePerM3",
+            // Dernier retard annoncé (motif, dates, message libre du voyageur) : champ ajouté donc toujours
+            // sérialisé, mais à null pour tout lecteur autre que le voyageur propriétaire, invité compris
+            // (vérifié par unInviteNeRecoitJamaisLeRetardAnnonce). Les clés internes du retard (reason,
+            // announcedAt, message) ne sortent donc jamais vers un invité et ne sont pas listées ici.
+            "latestTripDelay",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
@@ -229,6 +244,9 @@ class GuestDataExposureIT {
             // ne sont plus servis. « label » reste : libelle d'un reseau mobile money accepte.
             "label",
             // TravelerProfileDto
+            // identityVerified : PublicTravelerCard de la recherche publique (/public/announcements),
+            // booléen dérivé de kycVerified déjà servi ci-dessous ; ni identité ni document.
+            "identityVerified",
             "displayName", "averageRating", "totalTrips", "kiloPro", "gpPro", "isProAccount",
             "kycVerified", "avatarUrl", "acceptsUnverified",
             // Statut legal declare et raison sociale : l'expediteur doit les voir avant de
@@ -244,6 +262,10 @@ class GuestDataExposureIT {
             // weightKg, que le transporteur doit voir pour decider de la prendre. Aucune donnee
             // personnelle.
             "itemSize",
+            // Dimensions (cm) et volume (m3) du colis, demande bateau (lot 3) : meme nature que weightKg
+            // et itemSize, que le transporteur doit voir pour decider de la prendre. Aucune donnee
+            // personnelle ; le volume est calcule par le serveur.
+            "lengthCm", "widthCm", "heightCm", "volumeM3",
             // targetPriceEur est bien un net, mais AUCUN des deux motifs qui ont fait masquer le
             // net d'un trajet ne s'y applique, verification faite : la recherche de colis ne sert
             // aucun brut a cote (il n'y a donc pas de couple a lire, et le masquer priverait le
@@ -270,6 +292,7 @@ class GuestDataExposureIT {
     @Autowired private MockMvc mockMvc;
     @Autowired private UserRepository userRepository;
     @Autowired private AnnouncementRepository announcementRepository;
+    @Autowired private TripDelayRepository tripDelayRepository;
     @Autowired private AnnouncementPriceGridItemRepository gridItemRepository;
     @Autowired private PackageRequestRepository packageRequestRepository;
 
@@ -294,6 +317,7 @@ class GuestDataExposureIT {
     @BeforeEach
     void seed() {
         // Ordre impose par les dependances : les demandes et trajets referencent users(id).
+        tripDelayRepository.deleteAll();
         packageRequestRepository.deleteAll();
         gridItemRepository.deleteAll();
         announcementRepository.deleteAll();
@@ -580,6 +604,126 @@ class GuestDataExposureIT {
                 .isFalse();
     }
 
+    /**
+     * Trajet bateau au m³ (lot 3) : le net au m³ suit la règle du net au kilo. La clé
+     * {@code pricePerM3} est toujours sérialisée (champ ajouté), mais à null pour un invité ; le
+     * brut au m³ reste servi. Un inscrit voit le net.
+     */
+    @Test
+    @DisplayName("trajet bateau au m³ : un invité voit le brut au m³, jamais le net")
+    void unInviteNeRecoitJamaisLeNetAuM3() throws Exception {
+        UUID voyageurId = userRepository.findByFirebaseUid("uid-voyageur-exposition").orElseThrow().getId();
+        AnnouncementEntity bateau = new AnnouncementEntity();
+        bateau.setTravelerId(voyageurId);
+        bateau.setDepartureCity("Marseille");
+        bateau.setArrivalCity("Dakar");
+        bateau.setDepartureDate(LocalDate.now().plusDays(12));
+        bateau.setDepartureTime(LocalTime.of(10, 0));
+        bateau.setArrivalDate(LocalDate.now().plusDays(30));
+        bateau.setArrivalDateMax(LocalDate.now().plusDays(40));
+        bateau.setTransportMode(TransportMode.BOAT);
+        bateau.setPickupAddressLabel("Port de Marseille");
+        bateau.setPickupLat(new BigDecimal("43.300000"));
+        bateau.setPickupLng(new BigDecimal("5.370000"));
+        bateau.setDeliveryAddressLabel("Port de Dakar");
+        bateau.setDeliveryLat(new BigDecimal("14.690000"));
+        bateau.setDeliveryLng(new BigDecimal("-17.440000"));
+        bateau.setVolumeCapacityM3(new BigDecimal("2.500"));
+        bateau.setAvailableVolumeM3(new BigDecimal("2.500"));
+        bateau.setPricePerM3(NET_PAR_M3);
+        bateau.setCurrency("EUR");
+        bateau.setTimezone("Europe/Paris");
+        bateau.setStatus(AnnouncementStatus.ACTIVE);
+        bateau.setCapacityUnit(CapacityUnit.KG_EXACT);
+        bateau.setPricingMode(PricingMode.KG);
+        bateau.setHandoverDeadline(LocalDateTime.now().plusDays(10));
+        bateau.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.CASH));
+        UUID bateauId = announcementRepository.save(bateau).getId();
+
+        JsonNode detail = lire(get("/announcements/" + bateauId), "bateau-detail");
+        auditer(detail, "GET /announcements/{id} (bateau au m³)");
+        assertThat(detail.has("pricePerM3")).as("la clé est toujours servie").isTrue();
+        assertThat(detail.get("pricePerM3").isNull()).as("le net au m³ est masqué pour un invité").isTrue();
+        assertThat(detail.path("pricePerM3Display").decimalValue())
+                .as("le brut au m³ reste servi a un visiteur").isGreaterThan(BigDecimal.ZERO);
+
+        JsonNode recherche = lire(get("/announcements").param("page", "0").param("size", "20"), "bateau-recherche");
+        auditer(recherche, "GET /announcements (bateau au m³)");
+        JsonNode carte = null;
+        for (JsonNode n : recherche.path("content")) {
+            if (bateauId.toString().equals(n.path("id").asText())) carte = n;
+        }
+        assertThat(carte).as("le trajet bateau doit ressortir, sinon ce cas ne prouve rien").isNotNull();
+        assertThat(carte.get("pricePerM3").isNull()).isTrue();
+        assertThat(carte.path("pricePerM3Display").decimalValue()).isGreaterThan(BigDecimal.ZERO);
+
+        // Recherche publique (PublicAnnouncementCard) : fourchette d'arrivée, volume restant et brut au m³
+        // sont servis, jamais le net au m³, la capacité initiale ni l'adresse.
+        JsonNode publique = lire(get("/public/announcements").param("departureCity", "Marseille"),
+                "bateau-recherche-publique");
+        auditer(publique, "GET /public/announcements (bateau au m³)");
+        JsonNode cartePublique = null;
+        for (JsonNode n : publique.path("content")) {
+            if (bateauId.toString().equals(n.path("id").asText())) cartePublique = n;
+        }
+        assertThat(cartePublique).as("le trajet bateau doit ressortir de la recherche publique").isNotNull();
+        assertThat(cartePublique.path("pricePerM3Display").decimalValue()).isGreaterThan(BigDecimal.ZERO);
+        assertThat(cartePublique.path("availableVolumeM3").decimalValue()).isEqualByComparingTo("2.500");
+        assertThat(cartePublique.has("arrivalDateMax")).isTrue();
+        assertThat(cartePublique.has("pricePerM3")).as("jamais le net au m³").isFalse();
+
+        var inscrit = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+        JsonNode detailInscrit = MAPPER.readTree(mockMvc.perform(get("/announcements/" + bateauId)
+                        .with(authentication(inscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(detailInscrit.path("pricePerM3").decimalValue())
+                .as("un inscrit voit le net au m³").isEqualByComparingTo(NET_PAR_M3);
+    }
+
+    /**
+     * Retard annoncé (lot 3) : {@code latestTripDelay} sur la fiche d'un trajet est servi au seul voyageur
+     * propriétaire. Un invité et un autre inscrit lisent la clé à null : le message libre du voyageur et ses
+     * dates de retard ne sortent pas de la fiche publique.
+     */
+    @Test
+    @DisplayName("fiche d'un trajet : le retard annoncé n'est servi qu'au voyageur propriétaire")
+    void unInviteNeRecoitJamaisLeRetardAnnonce() throws Exception {
+        UUID voyageurId = userRepository.findByFirebaseUid("uid-voyageur-exposition").orElseThrow().getId();
+        TripDelayEntity retard = new TripDelayEntity();
+        retard.setAnnouncementId(trajetId);
+        retard.setReason(TripDelayReason.TRANSPORT_DISRUPTION);
+        retard.setNewArrivalDate(LocalDate.now().plusDays(3));
+        retard.setNewArrivalDateMax(LocalDate.now().plusDays(6));
+        retard.setMessage("MESSAGE-LIBRE-DU-VOYAGEUR");
+        retard.setCreatedBy(voyageurId);
+        tripDelayRepository.save(retard);
+
+        JsonNode invite = lire(get("/announcements/" + trajetId), "retard-detail-invite");
+        auditer(invite, "GET /announcements/{id} (retard annoncé)");
+        assertThat(invite.has("latestTripDelay")).as("la clé est toujours servie").isTrue();
+        assertThat(invite.get("latestTripDelay").isNull()).as("null pour un invité").isTrue();
+        assertThat(invite.toString()).doesNotContain("MESSAGE-LIBRE-DU-VOYAGEUR");
+
+        var autreInscrit = new UsernamePasswordAuthenticationToken(
+                "uid-expediteur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER")));
+        JsonNode inscrit = MAPPER.readTree(mockMvc.perform(get("/announcements/" + trajetId)
+                        .with(authentication(autreInscrit)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(inscrit.get("latestTripDelay").isNull()).as("null pour un autre inscrit").isTrue();
+        assertThat(inscrit.toString()).doesNotContain("MESSAGE-LIBRE-DU-VOYAGEUR");
+
+        var proprietaire = new UsernamePasswordAuthenticationToken(
+                "uid-voyageur-exposition", null, List.of(new SimpleGrantedAuthority("ROLE_TRAVELER")));
+        JsonNode pourLeProprietaire = MAPPER.readTree(mockMvc.perform(get("/announcements/" + trajetId)
+                        .with(authentication(proprietaire)))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(pourLeProprietaire.path("latestTripDelay").path("message").asText())
+                .as("le propriétaire lit son retard").isEqualTo("MESSAGE-LIBRE-DU-VOYAGEUR");
+        assertThat(pourLeProprietaire.path("latestTripDelay").path("reason").asText())
+                .isEqualTo("TRANSPORT_DISRUPTION");
+    }
+
     // ── Non-regression : rien ne change pour un compte inscrit ────────────────
 
     /**
@@ -689,6 +833,10 @@ class GuestDataExposureIT {
                     .doesNotContain(interdit);
         }
 
+        // pricePerM3 est le NET au m³ : sa clé est autorisée (toujours sérialisée) mais sa valeur doit
+        // rester nulle sur toute surface invité, comme pricePerKg l'est par la liste noire.
+        assertPricePerM3Masque(corps, surface);
+
         Set<String> inconnues = new TreeSet<>(cles);
         inconnues.removeAll(CLES_AUTORISEES);
         assertThat(inconnues).as(
@@ -709,6 +857,21 @@ class GuestDataExposureIT {
         assertThat(brut.toLowerCase(Locale.ROOT))
                 .as("%s : fragment de numero de telephone dans la charge servie a un invite", surface)
                 .doesNotContain(TEL_DESTINATAIRE.substring(1));
+    }
+
+    private static void assertPricePerM3Masque(JsonNode noeud, String surface) {
+        if (noeud.isObject()) {
+            for (Map.Entry<String, JsonNode> propriete : noeud.properties()) {
+                if ("pricePerM3".equals(propriete.getKey())) {
+                    assertThat(propriete.getValue().isNull())
+                            .as("%s : le net au m³ (pricePerM3) doit etre nul pour un invite", surface)
+                            .isTrue();
+                }
+                assertPricePerM3Masque(propriete.getValue(), surface);
+            }
+        } else if (noeud.isArray()) {
+            noeud.forEach(enfant -> assertPricePerM3Masque(enfant, surface));
+        }
     }
 
     private static void collecterCles(JsonNode noeud, Set<String> accumulateur) {

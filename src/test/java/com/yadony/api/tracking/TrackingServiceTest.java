@@ -306,6 +306,70 @@ class TrackingServiceTest {
         assertThat(resp.currentStep()).isEqualTo("DELIVERED");
     }
 
+    private TrackingSearchResponse searchWithDepartScan(com.yadony.api.matching.TransportMode mode) {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTransportMode(mode);
+        PaymentEntity payment = new PaymentEntity();
+        payment.setStatus(PaymentStatus.ESCROW);
+        TrackingEventEntity depart = new TrackingEventEntity();
+        depart.setEventType(TrackingEventType.DEPART);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(depart));
+        stubSenderAsCurrentUser();
+        return service.searchByTrackingNumber("TRK000001", "uid-sender");
+    }
+
+    // Généricité : en bateau, le scan de départ est un dépôt à l'entrepôt, jamais « remis au voyageur ».
+    @Test
+    void trackingSearch_boatDepartScan_saysWarehouseNotHandedToTraveler() {
+        TrackingSearchResponse boat = searchWithDepartScan(com.yadony.api.matching.TransportMode.BOAT);
+
+        assertThat(boat.currentStep()).isEqualTo("DEPARTED");
+        assertThat(boat.stepLabel()).containsIgnoringCase("entrepôt").doesNotContainIgnoringCase("voyageur");
+
+        for (com.yadony.api.matching.TransportMode mode : new com.yadony.api.matching.TransportMode[] {
+                com.yadony.api.matching.TransportMode.PLANE, com.yadony.api.matching.TransportMode.CAR, null}) {
+            assertThat(searchWithDepartScan(mode).stepLabel()).as("%s", mode)
+                    .containsIgnoringCase("remis au voyageur");
+        }
+    }
+
+    @Test
+    void trackingSearch_exposesTripMode() {
+        BidEntity bid = buildBid(BidStatus.PENDING, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.transportMode()).isEqualTo("BOAT");
+    }
+
+    @Test
+    void trackingSearch_tripWithoutMode_nullNeverPlane() throws Exception {
+        BidEntity bid = buildBid(BidStatus.PENDING, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        stubSenderAsCurrentUser();
+
+        TrackingSearchResponse resp = service.searchByTrackingNumber("TRK000001", "uid-sender");
+
+        assertThat(resp.transportMode()).isNull();
+        // Toujours sérialisé, null compris (l'app affiche alors une icône neutre).
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper()
+                .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                .writeValueAsString(resp)).contains("\"transportMode\":null");
+    }
+
     @Test
     void searchByTrackingNumber_arrivedWithInstructions_returnsArrivalInstructions() {
         BidEntity bid = buildBid(BidStatus.ARRIVED, "qt");
@@ -1399,6 +1463,31 @@ class TrackingServiceTest {
 
         assertThat(resp.expiresAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC).plusHours(23));
         assertThat(bid.getConfirmationCodeExpiry()).isEqualTo(resp.expiresAt());
+    }
+
+    @Test
+    void refreshCode_afterANonBoatDelay_isCalledOnTheDelayedRangeEnd() {
+        // M1 : hors bateau l'annonce ne garde que le début de la fourchette ; la fin du retard annoncé cale le code.
+        BidEntity bid = buildBid(BidStatus.IN_TRANSIT, "qt");
+        bid.setConfirmationCode("111111");
+        AnnouncementEntity ann = buildAnnouncement();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        ann.setDepartureDate(today);
+        ann.setArrivalDate(today.plusDays(3));
+        com.yadony.api.matching.TripDelayRepository delays = mock(com.yadony.api.matching.TripDelayRepository.class);
+        com.yadony.api.matching.TripDelayEntity delay = new com.yadony.api.matching.TripDelayEntity();
+        delay.setNewArrivalDate(today.plusDays(8));
+        delay.setNewArrivalDateMax(today.plusDays(10));
+        when(delays.findFirstByAnnouncementIdOrderByCreatedAtDesc(annId)).thenReturn(Optional.of(delay));
+        service.setTripDelayRepository(delays);
+        UserEntity sender = buildUser(senderId, "uid-sender");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(userRepository.findByFirebaseUid("uid-sender")).thenReturn(Optional.of(sender));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+
+        ConfirmCodeResponse resp = service.refreshConfirmationCode(bidId, "uid-sender");
+
+        assertThat(resp.expiresAt()).isEqualTo(today.plusDays(13).atStartOfDay());
     }
 
     @Test

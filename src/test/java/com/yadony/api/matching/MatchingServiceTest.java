@@ -897,6 +897,39 @@ class MatchingServiceTest {
             assertThat(results.get(0).matchScore()).isEqualTo(20 + 5 + 25);
         }
 
+        private void asBoatPerM3Trip() {
+            activeAnnouncement.setTransportMode(TransportMode.BOAT);
+            activeAnnouncement.setCapacityUnit(CapacityUnit.KG_EXACT);
+            activeAnnouncement.setAvailableKg(null);
+            activeAnnouncement.setPricePerKg(null);
+            activeAnnouncement.setPricePerM3(new BigDecimal("600"));
+            activeAnnouncement.setVolumeCapacityM3(new BigDecimal("2"));
+            activeAnnouncement.setAvailableVolumeM3(new BigDecimal("2"));
+        }
+
+        @Test
+        void boatPerM3Trip_isExcludedFromAllThreeMatchingPaths() throws Exception {
+            // Lot 3 (BA3), jusqu'à BB2 : un trajet au m³ ne se réserve pas (422), le matching ne le
+            // propose donc ni au voyageur (suggestion), ni à l'expéditeur, ni en notification. Aucun NPE
+            // pour autant : ni kilos ni prix au kilo à lire.
+            asBoatPerM3Trip();
+
+            assertThat(suggested(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+            assertThat(notified(buildRequest(25, LocalDate.now().plusDays(10), 3))).isFalse();
+            assertThat(bestMatched(buildRequest(15, LocalDate.now().plusDays(10), 3))).isFalse();
+        }
+
+        @Test
+        void boatPerKgTrip_stillMatches() throws Exception {
+            // Un bateau au kilo (volume facultatif) se réserve comme avant : il reste proposé.
+            activeAnnouncement.setTransportMode(TransportMode.BOAT);
+            activeAnnouncement.setCapacityUnit(CapacityUnit.KG_EXACT);
+            activeAnnouncement.setAvailableKg(new BigDecimal("30"));
+            activeAnnouncement.setVolumeCapacityM3(new BigDecimal("2"));
+
+            assertThat(notified(buildRequest(25, LocalDate.now().plusDays(10), 3))).isTrue();
+        }
+
         @Test
         void exactRoadTrip_1500kg_matches1200kgRequest() throws Exception {
             // Garde-fou (déjà vert avant B5) : la route compte en tonnes, 1 200 kg tiennent dans 1 500 kg.

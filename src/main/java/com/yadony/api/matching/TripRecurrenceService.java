@@ -358,6 +358,7 @@ public class TripRecurrenceService {
         TransportMode mode = TransportMode.parse(r.transportMode());
         transportModeGuard.assertTripModeAllowed(mode,
                 TransportMode.parseOrNull(e.getTransportMode()));
+        transportModeGuard.assertTemplateModeSupported(mode);
         // Durée et capacité du mode, refusées à l'enregistrement et avant toute écriture : jamais
         // perdues en silence à la génération (une occurrence trop longue serait refusée chaque fois).
         ArrivalRules.assertOffsetWithinMode(r.arrivalDayOffset(), mode);

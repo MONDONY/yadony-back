@@ -115,6 +115,14 @@ public class BidService {
     private static final java.util.Set<BidStatus> TRAVELER_TRACKING_STATUSES =
             java.util.EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
 
+    /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
+    private TripDelayRepository tripDelayRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
+        this.tripDelayRepository = tripDelayRepository;
+    }
+
     /** Supplément de prix à la remise (payments/supplement) ; aucun tant que Spring ne l'a pas injecté. */
     private BidSupplementSummaryPort supplementSummary = BidSupplementSummaryPort.NONE;
 
@@ -189,6 +197,8 @@ public class BidService {
         UserEntity sender = findUserByFirebaseUid(firebaseUid);
         AnnouncementEntity ann = announcementRepository.findById(request.announcementId())
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
+        // Trajet bateau au m³ : pas de devis au kilo (même refus que la réservation).
+        BoatVolumeBooking.assertBookableByKg(ann);
 
         // Même détermination de mode que createBid/checkout : au moins poids OU article.
         List<BidGridItemRequest> gridItems = request.gridItems() != null ? request.gridItems() : List.of();
@@ -453,6 +463,9 @@ public class BidService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
+
+        // Trajet bateau au m³ : pas encore réservable (prix et capacité en kilos seulement).
+        BoatVolumeBooking.assertBookableByKg(announcement);
 
         // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
         // garde, la demande naissait déjà « fenêtre dépassée » et l'expéditeur n'avait
@@ -1529,9 +1542,33 @@ public class BidService {
         Map<UUID, List<BidGridItemEntity>> gridItems =
                 BidResponsePrefetch.loadInChunks(bidIds, bidGridItemRepository::findByBidIdIn).stream()
                         .collect(Collectors.groupingBy(BidGridItemEntity::getBidId));
-        return new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
+        BidResponsePrefetch prefetch = new BidResponsePrefetch(links, raterPairs, cancellations, gridItems,
                 bidPhotoService.activePhotosByBid(bidIds), supplementSummary.prefetch(bidIds),
                 amendmentSummary.prefetch(bids));
+        prefetch.setLatestDelays(TripDelays.latestByAnnouncement(tripDelayRepository,
+                announcements.stream().map(AnnouncementEntity::getId).toList()));
+        return prefetch;
+    }
+
+    /** Colis auxquels le dernier retard du trajet est servi (ceux dont l'expéditeur a été prévenu). */
+    private static final java.util.Set<BidStatus> TRIP_DELAY_VISIBLE_STATUSES = java.util.EnumSet.of(
+            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED, BidStatus.COMPLETED);
+
+    /**
+     * Dernier retard annoncé du trajet du colis, null sans retard. Servi seulement aux colis que le retard
+     * concerne (remis, en transit, arrivés, livrés) : un colis en attente, refusé ou annulé n'a pas été
+     * prévenu et n'a pas à lire le message du voyageur. Une requête par liste via le prefetch.
+     */
+    private com.yadony.api.matching.dto.TripDelayInfo latestTripDelay(AnnouncementEntity announcement,
+                                                                      BidEntity bid,
+                                                                      BidResponsePrefetch prefetch) {
+        if (announcement == null || !TRIP_DELAY_VISIBLE_STATUSES.contains(bid.getStatus())) {
+            return null;
+        }
+        return prefetch != null
+                ? prefetch.latestDelay(announcement.getId(),
+                        () -> TripDelays.latest(tripDelayRepository, announcement.getId()))
+                : TripDelays.latest(tripDelayRepository, announcement.getId());
     }
 
     /**
@@ -1844,7 +1881,9 @@ public class BidService {
                 totalWeightKg,
                 moneyBreakdown,
                 travelerTracking,
-                bid.getItemSize() != null ? bid.getItemSize().name() : null
+                bid.getItemSize() != null ? bid.getItemSize().name() : null,
+                latestTripDelay(announcement, bid, prefetch),
+                announcement != null ? announcement.getArrivalDateMax() : null
         );
     }
 

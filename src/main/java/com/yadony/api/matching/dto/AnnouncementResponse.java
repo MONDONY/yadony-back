@@ -84,5 +84,19 @@ public record AnnouncementResponse(
          *  sérialisée (null explicite), champ ajouté. */
         @JsonInclude(JsonInclude.Include.ALWAYS) String maxItemSize,
         /** Poids maximal par colis en kg, route et bateau ; null = non renseigné. Toujours sérialisé. */
-        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal maxParcelWeightKg,
+        /** Bateau : fin de la fourchette d'arrivée estimée ({@code arrivalDate} = début) ; null hors
+         *  bateau. Toujours sérialisé, comme les quatre champs suivants. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) LocalDate arrivalDateMax,
+        /** Bateau : volume proposé en m³ (capacité initiale) ; null sans volume. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal volumeCapacityM3,
+        /** Bateau : volume restant en m³ ; null sans volume. */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal availableVolumeM3,
+        /** Bateau au m³ : prix net voyageur au m³ (les kilos et le prix au kilo sont alors nuls). */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3,
+        /** Prix au m³ payé par l'expéditeur (brut, même règle que {@code pricePerKgDisplay}). */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display,
+        /** Dernier retard annoncé par le voyageur (nouvelle fourchette d'arrivée estimée, motif, message) ; null
+         *  si le trajet n'en a jamais annoncé. Toujours sérialisé (null explicite). */
+        @JsonInclude(JsonInclude.Include.ALWAYS) TripDelayInfo latestTripDelay
 ) {}

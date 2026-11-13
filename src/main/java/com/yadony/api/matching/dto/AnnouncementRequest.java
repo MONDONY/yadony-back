@@ -17,6 +17,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Set;
 
+@KgCapacityRequiredUnlessPricedPerM3
 public record AnnouncementRequest(
         @NotBlank(message = "{validation.trip.departure-city.required}")
         String departureCity,
@@ -41,7 +42,8 @@ public record AnnouncementRequest(
         @Valid @NotNull(message = "{validation.trip.delivery-address.required}")
         AddressDto deliveryAddress,
 
-        @NotNull(message = "{validation.trip.available-kg.required}")
+        // Obligatoire sauf pour un trajet bateau au m³ (pricePerM3 renseigné), qui n'a pas de kilos :
+        // contrôle porté par @KgCapacityRequiredUnlessPricedPerM3 (même violation « availableKg »).
         @DecimalMin(value = "1.0", message = "{validation.trip.available-kg.min}")
         // Maximum technique (NUMERIC(8,2), V380) ; le plafond par mode est au service (WeightLimits).
         @DecimalMax(value = "999999.99", message = "{validation.trip.available-kg.max}")
@@ -113,8 +115,42 @@ public record AnnouncementRequest(
         // toujours ; hors route et bateau la valeur est ignorée.
         @ClearableMaxParcelWeight
         @DecimalMax(value = "999999.99", message = "{validation.trip.max-parcel-weight.max}")
-        BigDecimal maxParcelWeightKg
+        BigDecimal maxParcelWeightKg,
+        // Bateau (lot 3), facultatifs, ignorés et stockés nuls hors bateau. Fin de la fourchette
+        // d'arrivée estimée (arrivalDate = début) : obligatoire en bateau (422 arrival-range-invalid).
+        LocalDate arrivalDateMax,
+        // Volume proposé en m³ : obligatoire avec un prix au m³ (422 boat-volume-required),
+        // facultatif pour un bateau au kilo.
+        @DecimalMin(value = "0.1", message = "{validation.trip.volume-capacity.min}")
+        @DecimalMax(value = "9999", message = "{validation.trip.volume-capacity.max}")
+        BigDecimal volumeCapacityM3,
+        // Prix au m³, sans borne haute métier (plafond technique de NUMERIC(10,2)) ; exactement un
+        // de pricePerM3 / pricePerKg en bateau (422 boat-price-required).
+        @DecimalMin(value = "0.01", message = "{validation.trip.price-per-m3.positive}")
+        @DecimalMax(value = "99999999.99", message = "{validation.trip.price-per-m3.max}")
+        BigDecimal pricePerM3
 ) {
+    /** Arité d'avant le bateau (fourchette, volume, prix au m³), conservée pour les appels existants. */
+    public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
+                               LocalTime departureTime, LocalTime arrivalTime,
+                               AddressDto pickupAddress, AddressDto deliveryAddress,
+                               BigDecimal availableKg, BigDecimal pricePerKg,
+                               com.yadony.api.matching.TransportMode transportMode, String description,
+                               List<String> acceptedContentTypes, List<String> refusedTypes,
+                               Set<PaymentMethod> acceptedPaymentMethods,
+                               com.yadony.api.matching.CapacityUnit capacityUnit,
+                               com.yadony.api.matching.PricingMode pricingMode,
+                               String departureCountryCode, String arrivalCountryCode,
+                               LocalDateTime handoverDeadline, Boolean saveAsDraft,
+                               Boolean negotiable, String currency, LocalDate arrivalDate,
+                               Integer stopsCount, String maxItemSize, BigDecimal maxParcelWeightKg) {
+        this(departureCity, arrivalCity, departureDate, departureTime, arrivalTime, pickupAddress,
+                deliveryAddress, availableKg, pricePerKg, transportMode, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, pricingMode,
+                departureCountryCode, arrivalCountryCode, handoverDeadline, saveAsDraft, negotiable,
+                currency, arrivalDate, stopsCount, maxItemSize, maxParcelWeightKg, null, null, null);
+    }
+
     /** Arité d'avant la taille et le poids maximaux, conservée pour les appels existants. */
     public AnnouncementRequest(String departureCity, String arrivalCity, LocalDate departureDate,
                                LocalTime departureTime, LocalTime arrivalTime,

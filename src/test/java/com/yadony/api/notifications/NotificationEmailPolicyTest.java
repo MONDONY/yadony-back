@@ -13,11 +13,11 @@ class NotificationEmailPolicyTest {
     /**
      * Plan validé : 22 types doublés par un e-mail, 4 où l'e-mail remplace le push, plus la
      * suggestion selon les recherches (V362) et la relance de vérification d'identité, doublées
-     * d'un e-mail avec désinscription, et les deux types DAC7 (demande du numéro fiscal, récapitulatif annuel).
+     * d'un e-mail avec désinscription, les deux types DAC7 (demande du numéro fiscal, récapitulatif annuel) et le retard annoncé d'un trajet (BA6).
      */
     @Test
     void planCounts() {
-        assertThat(NotificationEmailPolicy.WITH_PUSH).hasSize(26);
+        assertThat(NotificationEmailPolicy.WITH_PUSH).hasSize(27);
         assertThat(NotificationEmailPolicy.kindOf("SEARCH_SUGGESTION", Map.of())).contains(Kind.SUGGESTION);
         assertThat(NotificationEmailPolicy.replacesPush("SEARCH_SUGGESTION", Map.of())).isFalse();
         assertThat(Kind.SUGGESTION.pref()).contains("emailAlertsTips");

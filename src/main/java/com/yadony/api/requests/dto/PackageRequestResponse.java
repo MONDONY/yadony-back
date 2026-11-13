@@ -68,8 +68,52 @@ public record PackageRequestResponse(
      * Taille du colis (« S », « M », « L », « XL »), facultative. Toujours sérialisée, null compris :
      * null = taille non renseignée. Additif, en fin de record.
      */
-    @JsonInclude(JsonInclude.Include.ALWAYS) String itemSize
+    @JsonInclude(JsonInclude.Include.ALWAYS) String itemSize,
+    /**
+     * Dimensions du colis en cm et volume en m³ (bateau, lot 3). Toujours sérialisés, null compris (comme
+     * {@code transportMode} et {@code itemSize}) : null = non renseignés. Le volume est calculé côté serveur
+     * à partir des trois dimensions ({@code ParcelFitRules.volumeM3}), jamais lu du client. Additifs, en fin
+     * de record.
+     */
+    @JsonInclude(JsonInclude.Include.ALWAYS) Integer lengthCm,
+    @JsonInclude(JsonInclude.Include.ALWAYS) Integer widthCm,
+    @JsonInclude(JsonInclude.Include.ALWAYS) Integer heightCm,
+    @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal volumeM3
 ) {
+    /** Constructeur de compatibilité, sans dimensions ni volume (null) : l'arité d'avant le lot 3 bateau. */
+    public PackageRequestResponse(
+            UUID id, UUID senderId,
+            String departureCity, String arrivalCity,
+            LocalDate desiredDate, int dateToleranceDays,
+            BigDecimal weightKg, ParcelSize parcelSize,
+            TransportMode transportMode,
+            String contentCategory,
+            String description, BigDecimal targetPriceEur, String photoUrl,
+            String pickupNeighborhood, String deliveryNeighborhood,
+            PackageRequestStatus status,
+            LocalDateTime createdAt,
+            boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods,
+            BigDecimal grossPriceEur,
+            List<PackageRequestPhotoResponse> photos,
+            UUID viewerThreadId,
+            String viewerThreadStatus,
+            String promoCode,
+            String currency,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal convertedDisplayPrice,
+            String convertedCurrency,
+            boolean moderationRemoved,
+            UUID commissionGridId,
+            String itemSize) {
+        this(id, senderId, departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, parcelSize,
+            transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
+            deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
+            viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
+            convertedDisplayPrice, convertedCurrency, moderationRemoved, commissionGridId, itemSize,
+            null, null, null, null);
+    }
+
     /** Constructeur de compatibilité, sans {@code itemSize} (null) : l'arité d'avant la taille. */
     public PackageRequestResponse(
             UUID id, UUID senderId,
@@ -195,6 +239,7 @@ public record PackageRequestResponse(
             transportMode, contentCategory, description, targetPriceEur, photoUrl, pickupNeighborhood,
             deliveryNeighborhood, status, createdAt, negotiable, acceptedPaymentMethods, grossPriceEur, photos,
             viewerThreadId, viewerThreadStatus, promoCode, currency, availablePaymentMethods,
-            convertedDisplayPrice, convertedCurrency, moderationRemoved, commissionGridId, itemSize);
+            convertedDisplayPrice, convertedCurrency, moderationRemoved, commissionGridId, itemSize,
+            lengthCm, widthCm, heightCm, volumeM3);
     }
 }

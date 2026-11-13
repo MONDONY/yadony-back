@@ -55,8 +55,31 @@ public record PackageRequestCreateRequest(
     // Création : absente = pas de taille. Modification : ABSENTE (null) = taille conservée (ancienne
     // app) ; « NONE » = effacer la taille. Gardée en voiture, bus et « peu importe » ; toute autre
     // demande (avion, bateau, train, autre, mode absent) ramène la taille à null (ParcelFitRules).
-    @Pattern(regexp = "NONE|S|M|L|XL", message = "{validation.request.item-size.pattern}") String itemSize
+    @Pattern(regexp = "NONE|S|M|L|XL", message = "{validation.request.item-size.pattern}") String itemSize,
+    // Dimensions du colis en cm (bateau, lot 3) : obligatoires en bateau, facultatives en « peu importe »
+    // mais toutes trois ou aucune (PackageRequestService, 422 boat-dimensions-required /
+    // dimensions-incomplete). Le volume en m³ n'est JAMAIS lu du client : il se calcule côté serveur.
+    // Modification : absentes = dimensions conservées (ancienne app) ; ignorées hors bateau et « peu importe ».
+    @Min(1) @Max(400) Integer lengthCm,
+    @Min(1) @Max(400) Integer widthCm,
+    @Min(1) @Max(400) Integer heightCm
 ) {
+    /**
+     * Constructeur de compatibilité (sans dimensions) — l'ancienne forme canonique : les dimensions y sont
+     * absentes (null), comme chez une ancienne application.
+     */
+    public PackageRequestCreateRequest(
+            String departureCity, String arrivalCity, LocalDate desiredDate, Integer dateToleranceDays,
+            BigDecimal weightKg, String contentCategory, String description, BigDecimal totalBudgetEur,
+            String photoUrl, String pickupNeighborhood, String deliveryNeighborhood, boolean negotiable,
+            Set<PaymentMethod> acceptedPaymentMethods, List<String> photoKeys, Boolean saveAsDraft,
+            String promoCode, String currency, String transportMode, String itemSize) {
+        this(departureCity, arrivalCity, desiredDate, dateToleranceDays, weightKg, contentCategory,
+            description, totalBudgetEur, photoUrl, pickupNeighborhood, deliveryNeighborhood, negotiable,
+            acceptedPaymentMethods, photoKeys, saveAsDraft, promoCode, currency, transportMode, itemSize,
+            null, null, null);
+    }
+
     /**
      * Constructeur de compatibilité (sans promoCode ni currency) — évite de
      * retoucher tous les sites d'appel de test existants pour l'ajout de ces

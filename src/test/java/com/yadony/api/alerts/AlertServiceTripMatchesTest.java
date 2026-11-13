@@ -384,6 +384,44 @@ class AlertServiceTripMatchesTest {
         return a;
     }
 
+    /** Trajet bateau vendu au m³ : aucun kilo, prix au m³ (V382). */
+    private AnnouncementEntity perM3Trip(AnnouncementEntity base) {
+        base.setTransportMode(TransportMode.BOAT);
+        base.setAvailableKg(null);
+        base.setTotalKg(null);
+        base.setPricePerKg(null);
+        base.setVolumeCapacityM3(new BigDecimal("3.000"));
+        base.setAvailableVolumeM3(new BigDecimal("3.000"));
+        base.setPricePerM3(new BigDecimal("600"));
+        return base;
+    }
+
+    @Test
+    void getTripMatches_excludesPerM3Trips_untilBoatVolumeBooking() {
+        UUID travelerId = UUID.randomUUID();
+        AnnouncementEntity perKg = trip(travelerId, LocalDate.of(2026, 7, 10),
+                new BigDecimal("15.00"), new BigDecimal("8.50"));
+        AnnouncementEntity perM3 = perM3Trip(trip(UUID.randomUUID(), LocalDate.of(2026, 7, 12),
+                new BigDecimal("10.00"), new BigDecimal("7.00")));
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(senderAlert()));
+        when(announcementRepository.findActiveByCorridor("Paris", "Bamako"))
+                .thenReturn(List.of(perKg, perM3));
+        when(userRepository.findAllById(anyCollection()))
+                .thenReturn(List.of(traveler(travelerId, "Moussa", "Diallo", new BigDecimal("4.7"))));
+
+        assertThat(service.getTripMatches(uid, alertId)).hasSize(1);
+    }
+
+    @Test
+    void findSenderAlertsMatchingTrip_perM3Trip_excluded_untilBoatVolumeBooking() {
+        AnnouncementEntity trip = perM3Trip(tripAt("Paris", "Bamako", LocalDate.of(2026, 7, 10),
+                BigDecimal.ONE, BigDecimal.ONE, AnnouncementStatus.ACTIVE));
+
+        assertThat(service.findSenderAlertsMatchingTrip(trip)).isEmpty();
+        assertThat(service.isTripOpenToThirdParties(trip)).isFalse();
+        verifyNoInteractions(alertRepository);
+    }
+
     @Test
     void findSenderAlertsMatchingTrip_corridorAndDateMatch_returnsAlert() {
         when(alertRepository.findAllByActiveTrueAndDirection(AlertDirection.SENDER_WANTS_TRIPS))

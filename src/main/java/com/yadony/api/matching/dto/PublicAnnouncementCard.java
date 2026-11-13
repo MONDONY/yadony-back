@@ -18,6 +18,12 @@ import java.util.UUID;
  * prix net du voyageur ({@code pricePerKg}, {@code convertedPricePerKg}), taux de commission.
  * Le prix est {@code pricePerKgDisplay} (payé par l'expéditeur) dans {@code currency}.
  *
+ * <p><b>Bateau au m³.</b> Un trajet vendu au volume porte {@code availableVolumeM3} (m³ restants),
+ * {@code pricePerM3Display} (prix au m³ payé par l'expéditeur, brut « frais inclus » comme le prix au
+ * kilo, jamais le net du voyageur) et la fourchette d'arrivée estimée ({@code arrivalDate} au plus tôt,
+ * {@code arrivalDateMax} au plus tard) ; il n'a ni kilos ni prix au kilo. Hors bateau, ces champs
+ * sont absents (sérialisation {@code NON_NULL}).
+ *
  * <p><b>Le client lit {@code capacityUnit} avant d'afficher des kilos.</b> {@code availableKg}
  * n'a de sens que pour une capacité au poids : en {@link CapacityUnit#KG_FREE} (kilo libre, non
  * borné) c'est une valeur technique (≈ 1) qu'il ne faut jamais afficher comme « 1 kg disponible ».
@@ -30,9 +36,17 @@ public record PublicAnnouncementCard(
         String departureCity,
         String arrivalCity,
         LocalDate departureDate,
+        /** Arrivée estimée au plus tôt (début de fourchette en bateau, date d'arrivée d'un vol de nuit sinon). */
+        LocalDate arrivalDate,
+        /** Fin de la fourchette d'arrivée estimée (bateau) ; absente hors bateau. */
+        LocalDate arrivalDateMax,
         BigDecimal availableKg,
         CapacityUnit capacityUnit,
+        /** Bateau au m³ : volume restant en m³ ; absent sinon. */
+        BigDecimal availableVolumeM3,
         BigDecimal pricePerKgDisplay,
+        /** Bateau au m³ : prix au m³ payé par l'expéditeur (brut), jamais le net ; absent sinon. */
+        BigDecimal pricePerM3Display,
         String currency,
         PricingMode pricingMode,
         TransportMode transportMode,
@@ -47,9 +61,13 @@ public record PublicAnnouncementCard(
                 r.departureCity(),
                 r.arrivalCity(),
                 r.departureDate(),
+                r.arrivalDate(),
+                r.arrivalDateMax(),
                 r.availableKg(),
                 r.capacityUnit(),
+                r.availableVolumeM3(),
                 displayablePrice(r.pricePerKgDisplay()),
+                displayablePrice(r.pricePerM3Display()),
                 r.currency(),
                 r.pricingMode(),
                 r.transportMode(),

@@ -241,6 +241,68 @@ class PublicAnnouncementSearchControllerIT {
     }
 
     @Test
+    void filtresBateau_acceptes_negatifsRefuses() throws Exception {
+        mockMvc.perform(get(PUBLIC_PATH).param("minVolumeM3", "1.5").param("maxPricePerM3", "700")
+                        .param("arrivalBefore", LocalDate.now(ZoneOffset.UTC).plusDays(60).toString()))
+                .andExpect(status().isOk());
+        for (String[] bad : new String[][] {{"minVolumeM3", "-1"}, {"maxPricePerM3", "-0.01"},
+                {"minVolumeM3", "10000"}, {"maxPricePerM3", "10000001"}, {"minVolumeM3", "1.23456"},
+                {"minVolumeM3", "1E999999999"}, {"maxPricePerM3", "1E999999999"}, {"maxPricePerM3", "1E-999999999"}}) {
+            mockMvc.perform(get(PUBLIC_PATH).param(bad[0], bad[1]))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                    .andExpect(jsonPath("$.code").value("invalid-search"));
+        }
+    }
+
+    @Test
+    void filtresBateau_retrouventUnTrajetAuM3_sansPrixAuKiloNiKilos() throws Exception {
+        AnnouncementEntity kilo = seed("Marseille", "Dakar", AnnouncementStatus.ACTIVE);
+        AnnouncementEntity m3 = seed("Marseille", "Dakar", AnnouncementStatus.ACTIVE);
+        m3.setTransportMode(TransportMode.BOAT);
+        m3.setAvailableKg(null);
+        m3.setTotalKg(null);
+        m3.setPricePerKg(null);
+        m3.setVolumeCapacityM3(new BigDecimal("3.000"));
+        m3.setAvailableVolumeM3(new BigDecimal("2.000"));
+        m3.setPricePerM3(new BigDecimal("600"));
+        m3.setArrivalDate(m3.getDepartureDate().plusDays(20));
+        m3.setArrivalDateMax(m3.getDepartureDate().plusDays(30));
+        announcementRepository.save(m3);
+        String latest = m3.getDepartureDate().plusDays(30).toString();
+
+        // Sans filtre : les deux ressortent, le trajet au m³ sans kilos ni prix au kilo.
+        mockMvc.perform(get(PUBLIC_PATH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(2));
+        mockMvc.perform(get(PUBLIC_PATH).param("minVolumeM3", "1.5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(m3.getId().toString()));
+        mockMvc.perform(get(PUBLIC_PATH).param("minVolumeM3", "2.5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+        mockMvc.perform(get(PUBLIC_PATH).param("maxPricePerM3", "600"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(m3.getId().toString()));
+        mockMvc.perform(get(PUBLIC_PATH).param("maxPricePerM3", "599"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+        mockMvc.perform(get(PUBLIC_PATH).param("arrivalBefore", latest))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1));
+        mockMvc.perform(get(PUBLIC_PATH).param("arrivalBefore", m3.getDepartureDate().plusDays(29).toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+        // Un trajet au kilo reste trouvable par les filtres au kilo, le m³ n'y passe pas.
+        mockMvc.perform(get(PUBLIC_PATH).param("minAvailableKg", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(kilo.getId().toString()));
+    }
+
+    @Test
     void villeDePassage_neRetientQueLesVoyagesQuiS_ArretentLa() throws Exception {
         UUID voyage = UUID.randomUUID();
         AnnouncementEntity leg1 = seed("Paris", "Tanger", AnnouncementStatus.ACTIVE);
