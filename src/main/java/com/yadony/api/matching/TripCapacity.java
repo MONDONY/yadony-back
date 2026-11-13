@@ -119,6 +119,17 @@ public final class TripCapacity {
     }
 
     /**
+     * Volume restant d'un trajet vendu au m³, relu en base sous le verrou du trajet juste avant que l'argent d'un fil
+     * ne bouge ({@code NegotiationService#assertLinkedTripVolume}) : 409 {@code insufficient-volume} si {@code volumeM3}
+     * n'y tient plus (la place a été prise depuis la liaison du trajet). Un volume inconnu ne bloque rien.
+     */
+    public static void assertVolumeFitsRemaining(BigDecimal availableVolumeM3, BigDecimal volumeM3) {
+        if (!ParcelFitRules.fitsVolume(availableVolumeM3, volumeM3)) {
+            throw ParcelFitRules.insufficientVolume(HttpStatus.CONFLICT);
+        }
+    }
+
+    /**
      * Rend la place du colis au trajet et rouvre un trajet {@code FULL}. Inverse exact de {@link #reserve}.
      *
      * @return {@code true} si le trajet a changé (l'appelant le sauvegarde alors)

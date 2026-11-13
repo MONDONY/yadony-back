@@ -317,7 +317,7 @@ public class NegotiationService {
         thread.setTravelerId(travelerId);
         thread.setTravelerAnnouncementId(linkedTripAnn.getId());
         thread.setTravelerTravelDate(resolvedTravelDate);
-        thread.setTravelerAvailableKg(req.travelerAvailableKg());
+        thread.setTravelerAvailableKg(offerTravelerKg(req.travelerAvailableKg(), request, linkedTripAnn));
         thread.setStatus(NegotiationThreadStatus.OPEN);
         // Le fil hérite de la grille de sa demande (même null) : jamais de la grille du jour.
         thread.setCommissionGridId(request.getCommissionGridId());
@@ -971,6 +971,47 @@ public class NegotiationService {
         });
     }
 
+    /**
+     * Surréservation au m³ d'un fil, PREMIER TEMPS : juste avant que l'argent ne bouge (PaymentIntent carte de
+     * {@code initiate-payment}, dépôt mobile money, commission espèces), le volume de la demande doit encore tenir dans
+     * le volume restant du trajet lié. 409 {@code insufficient-volume} sinon : rien n'est prélevé, l'expéditeur choisit
+     * un autre trajet. Transaction courte appelée par le contrôleur carte ; les chemins mobile money et espèces passent
+     * par {@link #assertLinkedTripVolume} dans leur propre transaction.
+     *
+     * <p>Reste connu (second temps, non fait) : la place peut encore être prise PENDANT le paiement ; le colis payé est
+     * alors matérialisé quand même et le trajet ramené à 0 m³ (alerte de journal dans {@code TripCapacity.reserveVolume}).
+     * Le refus au scellé avec remboursement par le rail reste à écrire.
+     */
+    @Transactional
+    public void assertLinkedTripVolumeBeforePayment(UUID threadId) {
+        NegotiationThreadEntity thread = threadRepo.findById(threadId).orElse(null);
+        if (thread == null) {
+            return;
+        }
+        requestRepo.findById(thread.getPackageRequestId())
+            .ifPresent(request -> assertLinkedTripVolume(thread, request));
+    }
+
+    /**
+     * Volume de la demande contre le volume restant du trajet lié, relu en base sous le verrou de ligne du trajet (le
+     * même que l'acceptation d'une réservation directe, qui le prend avant de vérifier puis de prendre la place). Sans
+     * effet hors trajet vendu au m³, pour un trajet dédié (tout son volume est réservé à la demande, rien n'est pris à
+     * la matérialisation) ou sans volume connu.
+     */
+    void assertLinkedTripVolume(NegotiationThreadEntity thread, PackageRequestEntity request) {
+        UUID tripId = thread.getTravelerAnnouncementId();
+        if (tripId == null || request == null) {
+            return;
+        }
+        com.yadony.api.matching.AnnouncementEntity trip = announcementRepo.findById(tripId).orElse(null);
+        if (trip == null || !trip.isPricedPerM3() || trip.getLinkedPackageRequestId() != null) {
+            return;
+        }
+        announcementRepo.lockForUpdate(tripId);
+        com.yadony.api.matching.TripCapacity.assertVolumeFitsRemaining(
+            announcementRepo.findAvailableVolumeM3ById(tripId).orElse(null), request.getVolumeM3());
+    }
+
     static boolean isTripHandoverOver(com.yadony.api.matching.AnnouncementEntity ann, java.time.Instant now) {
         if (ann.getHandoverDeadline() != null) {
             return ann.isHandoverDeadlinePassed(now);
@@ -1359,6 +1400,11 @@ public class NegotiationService {
         // engagement d'argent : le trajet dédié du voyageur peut avoir été retiré par la
         // modération entre l'accord de prix et ce dépôt.
         assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
+        // Trajet au m³ : le volume de la demande doit encore tenir, relu sous le verrou du trajet (409
+        // insufficient-volume, rien n'est prélevé). Un dépôt déjà en cours a été contrôlé à son lancement.
+        if (!alreadyPending) {
+            assertLinkedTripVolume(thread, request);
+        }
         NegotiationMobileMoneyPort.PendingDeposit pending = mobileMoneyPort.createPendingDeposit(
             threadId, request.getSenderId(), thread.getTravelerId(), thread.getCurrentPriceEur(), rate, thread.getCurrency(),
             thread.getCommissionGridId(), gridQuote != null ? gridQuote.commission() : null);
@@ -1959,6 +2005,9 @@ public class NegotiationService {
         // removeByAdmin ait pu le voir (même raison : aucun BidEntity n'existe encore pour
         // ce fil). Même garde, avant tout débit.
         assertTravelerAnnouncementActive(thread.getTravelerAnnouncementId());
+        // Trajet au m³ : le volume de la demande doit encore tenir avant de débiter la commission (409
+        // insufficient-volume, rien n'est prélevé).
+        assertLinkedTripVolume(thread, request);
 
         AcceptBidResponse resp = cashGatePort.settleNegotiationCommission(
             thread.getTravelerId(), request.getSenderId(), threadId, thread.getCurrentPriceEur(), source,
@@ -2877,8 +2926,29 @@ public class NegotiationService {
             t.getCommissionGridId(),
             travelerCashCommissionEur,
             autoReminderSentAt(t),
-            threadTransportMode(request, linkedAnn)
+            threadTransportMode(request, linkedAnn),
+            request.getVolumeM3()
         );
+    }
+
+    /**
+     * Kilos annoncés par le voyageur dans son offre. Une offre sur une demande bateau, ou liée à un trajet vendu au m³,
+     * peut s'en passer : la place s'y compte en volume (celui de la demande, contrôlé à la liaison du trajet), et le fil
+     * reprend le poids de la demande (colonne obligatoire, purement informative ici). Ailleurs, les kilos restent
+     * obligatoires : 400 {@code validation}, comme l'ancienne contrainte du DTO.
+     */
+    static java.math.BigDecimal offerTravelerKg(java.math.BigDecimal travelerAvailableKg, PackageRequestEntity request,
+                                                com.yadony.api.matching.AnnouncementEntity linkedTrip) {
+        if (travelerAvailableKg != null) {
+            return travelerAvailableKg;
+        }
+        boolean boat = request.getTransportMode() == com.yadony.api.matching.TransportMode.BOAT
+            || (linkedTrip != null && linkedTrip.isPricedPerM3());
+        if (boat && request.getWeightKg() != null && request.getWeightKg().signum() > 0) {
+            return request.getWeightKg();
+        }
+        throw YadonyBusinessException.localized(HttpStatus.BAD_REQUEST, "validation",
+            "problem.validation.traveler-available-kg-required");
     }
 
     /**

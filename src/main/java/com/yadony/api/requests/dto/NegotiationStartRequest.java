@@ -21,7 +21,9 @@ public record NegotiationStartRequest(
     @NotNull @DecimalMin("0.01") @DecimalMax("1000000.0") BigDecimal proposedPriceEur,
     @NotNull LocalDate travelerTravelDate,
     // Maximum technique de la colonne (NUMERIC(8,2), V380) : au-delà, 422 et non une 500 SQL.
-    @NotNull @DecimalMin("0.01") @DecimalMax("999999.99") BigDecimal travelerAvailableKg,
+    // Facultatif pour une offre sur une demande bateau (ou sur un trajet vendu au m³) : la place se compte en volume,
+    // le fil reprend alors le poids de la demande (NegotiationService#offerTravelerKg). Obligatoire sinon (400).
+    @DecimalMin("0.01") @DecimalMax("999999.99") BigDecimal travelerAvailableKg,
     UUID travelerAnnouncementId,
     @Size(max = 280) String body,
     boolean createDedicatedTrip,

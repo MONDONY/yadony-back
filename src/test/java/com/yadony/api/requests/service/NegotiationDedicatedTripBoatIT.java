@@ -202,6 +202,20 @@ class NegotiationDedicatedTripBoatIT {
     }
 
     @Test
+    @DisplayName("start sans kilos sur une demande bateau : le fil reprend le poids de la demande, volume servi à l'app")
+    void start_dedicatedBoat_withoutKilos_usesRequestWeight() {
+        PackageRequestEntity request = boatRequest("0.800");
+
+        NegotiationThreadResponse thread = negotiationService.start(travelerId, new NegotiationStartRequest(
+                request.getId(), new BigDecimal("500"), DEP, null, null, null, true, boatTrip(DEP.plusDays(30))));
+
+        assertThat(jdbc.queryForObject("SELECT traveler_available_kg FROM negotiation_threads WHERE id = ?",
+                BigDecimal.class, thread.id())).isEqualByComparingTo("40");
+        assertThat(thread.volumeM3()).isEqualByComparingTo("0.800");
+        assertThat(thread.transportMode()).isEqualTo("BOAT");
+    }
+
+    @Test
     @DisplayName("start : 1 litre à 100 000 € → prix au m³ dérivé hors NUMERIC(10,2), 422 volume-price-too-high, rien d'écrit")
     void start_dedicatedBoat_derivedPricePerM3TooHigh_422() {
         PackageRequestEntity request = boatRequest("0.001");

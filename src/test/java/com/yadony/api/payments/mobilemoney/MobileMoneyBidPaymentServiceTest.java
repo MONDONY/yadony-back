@@ -602,6 +602,23 @@ class MobileMoneyBidPaymentServiceTest {
                 .extracting(e -> ((YadonyBusinessException) e).getErrorCode()).isEqualTo("forbidden");
     }
 
+    @Test
+    void status_servesFrozenPayoutTrigger_nullUntilFrozen() {
+        bid.setStatus(BidStatus.AWAITING_PAYMENT);
+        when(bidRepository.findById(bid.getId())).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        when(paymentRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+
+        assertThat(service.status(bid.getId(), sender.getId()).payoutTrigger()).isNull();
+
+        bid.setStatus(BidStatus.ACCEPTED);
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTrigger",
+                com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt",
+                java.time.LocalDateTime.now());
+        assertThat(service.status(bid.getId(), sender.getId()).payoutTrigger()).isEqualTo("DEPOSIT");
+    }
+
     // ── Ronde 1, point 4 : l'interrupteur d'urgence coupe aussi accept/initiate ─────────────
 
     @Test

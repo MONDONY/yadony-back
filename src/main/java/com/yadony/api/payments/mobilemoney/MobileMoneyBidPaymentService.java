@@ -861,7 +861,8 @@ public class MobileMoneyBidPaymentService {
         return new MobileMoneyPaymentStatusResponse(bid.getId(), bid.getStatus().name(),
                 payment.map(p -> p.getStatus().name()).orElse(null), bid.getAwaitingPaymentExpiresAt(),
                 payment.map(PaymentEntity::getAmount).orElse(null),
-                payment.map(PaymentEntity::getCurrency).orElse(announcement != null ? announcement.getCurrency() : null), view);
+                payment.map(PaymentEntity::getCurrency).orElse(announcement != null ? announcement.getCurrency() : null), view,
+                bid.isPayoutTriggerFrozen() ? bid.getPayoutTrigger().name() : null);
     }
 
     private static YadonyBusinessException notFound(String code, String messageKey) {
