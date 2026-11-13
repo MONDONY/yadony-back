@@ -44,6 +44,13 @@ public class BidEntity extends BaseEntity {
     @Column(name = "volume_m3", precision = 8, scale = 3)
     private BigDecimal volumeM3;
 
+    /**
+     * Volume réellement retiré du trajet au m³ par ce colis (V385), posé à la réservation, remis à 0 au rendu. Inférieur
+     * à {@link #volumeM3} pour un colis surréservé ; nul avant V385 ou si rien n'a été pris ({@link TripCapacity}).
+     */
+    @Column(name = "capacity_reserved_volume_m3", precision = 8, scale = 3)
+    private BigDecimal capacityReservedVolumeM3;
+
     /** Net négocié figé (= prix d'accord du thread) pour un bid issu d'une
      * demande. Prime sur le tarif de l'annonce dans le calcul d'affichage,
      * qui peut dériver. Null pour un bid d'offre directe. */
@@ -337,6 +344,31 @@ public class BidEntity extends BaseEntity {
     @Column(name = "pending_reschedule_id")
     private UUID pendingRescheduleId;
 
+    /**
+     * Moment où l'argent du colis part vers le transporteur (V383) : à la livraison tant que rien
+     * n'est décidé, figé à l'acceptation par {@link PayoutTriggerPolicy#freeze}, jamais recalculé.
+     * Aucun setter public : seule la règle l'écrit.
+     */
+    @Enumerated(EnumType.STRING)
+    @org.hibernate.annotations.ColumnDefault("'DELIVERY'")
+    @Column(name = "payout_trigger", nullable = false, length = 16)
+    private PayoutTrigger payoutTrigger = PayoutTrigger.DELIVERY;
+
+    /** Instant où {@link #payoutTrigger} a été figé (V383) ; nul tant que le colis n'a jamais été accepté. */
+    @Column(name = "payout_trigger_frozen_at")
+    private LocalDateTime payoutTriggerFrozenAt;
+
+    public PayoutTrigger getPayoutTrigger() { return payoutTrigger; }
+    public LocalDateTime getPayoutTriggerFrozenAt() { return payoutTriggerFrozenAt; }
+    /** La règle a été figée par une acceptation (ou par V383 pour un colis déjà accepté avant elle). */
+    public boolean isPayoutTriggerFrozen() { return payoutTriggerFrozenAt != null; }
+
+    /** Réservé à {@link PayoutTriggerPolicy#freeze}, qui garantit l'écriture unique. */
+    void freezePayoutTrigger(PayoutTrigger trigger, LocalDateTime at) {
+        this.payoutTrigger = trigger;
+        this.payoutTriggerFrozenAt = at;
+    }
+
     public UUID getPendingRescheduleId() { return pendingRescheduleId; }
     public void setPendingRescheduleId(UUID pendingRescheduleId) { this.pendingRescheduleId = pendingRescheduleId; }
 
@@ -352,6 +384,10 @@ public class BidEntity extends BaseEntity {
     public void setItemSize(ItemSize itemSize) { this.itemSize = itemSize; }
     public BigDecimal getVolumeM3() { return volumeM3; }
     public void setVolumeM3(BigDecimal volumeM3) { this.volumeM3 = volumeM3; }
+    public BigDecimal getCapacityReservedVolumeM3() { return capacityReservedVolumeM3; }
+    public void setCapacityReservedVolumeM3(BigDecimal capacityReservedVolumeM3) {
+        this.capacityReservedVolumeM3 = capacityReservedVolumeM3;
+    }
 
     public BigDecimal getNegotiatedNetEur() { return negotiatedNetEur; }
     public void setNegotiatedNetEur(BigDecimal negotiatedNetEur) { this.negotiatedNetEur = negotiatedNetEur; }

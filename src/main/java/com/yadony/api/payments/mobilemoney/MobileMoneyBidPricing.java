@@ -126,10 +126,12 @@ public class MobileMoneyBidPricing {
                 result.promoEffective(), result.promoEffective());
     }
 
-    /** Net du barème : poids × prix/kg (absent en mode GRID pur) + articles snapshotés du bid. */
+    /**
+     * Net du barème : poids × prix/kg (absent en mode GRID pur), ou volume × prix au m³ (bateau vendu au m³),
+     * + articles snapshotés du bid. Même part au barème que l'affichage ({@code BidNetTotal.scheduleNet}).
+     */
     private BigDecimal scheduleNet(BidEntity bid, AnnouncementEntity announcement) {
-        BigDecimal kgNet = bid.getWeightKg() != null && announcement.getPricePerKg() != null
-                ? bid.getWeightKg().multiply(announcement.getPricePerKg()) : BigDecimal.ZERO;
+        BigDecimal kgNet = com.yadony.api.matching.BidNetTotal.scheduleNet(bid, announcement);
         BigDecimal gridNet = gridItems.findByBidId(bid.getId()).stream()
                 .map(i -> i.getUnitPriceNetSnapshot().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

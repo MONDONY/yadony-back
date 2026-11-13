@@ -121,12 +121,64 @@ public final class ParcelFitRules {
 
     /**
      * Le volume d'un colis tient dans le volume restant d'un trajet au m³ ; un côté inconnu (trajet sans volume,
-     * demande sans dimensions) ne bloque rien (spec §5.6). Logique pure : la mise en relation reste fermée aux
-     * trajets au m³ jusqu'à la réservation au volume (BB2), qui s'en servira. Câblé en BB2 : aucun appelant en
-     * production avant (testée seule).
+     * demande sans dimensions) ne bloque rien (spec §5.6). Règle pure, partagée par la réservation
+     * ({@link #assertVolumeFits}) et la mise en relation ({@link #fitsTripVolume}).
      */
     public static boolean fitsVolume(BigDecimal availableVolumeM3, BigDecimal volumeM3) {
         return availableVolumeM3 == null || volumeM3 == null || volumeM3.compareTo(availableVolumeM3) <= 0;
+    }
+
+    /**
+     * Un colis de volume {@code volumeM3} peut-il être proposé sur ce trajet (mise en relation, rematch) ? Hors
+     * trajet vendu au m³, le volume ne compte pas : oui. Trajet au m³ : le volume doit être connu (sans lui, ni
+     * prix ni capacité, la réservation serait refusée en 422 {@code boat-dimensions-required}) et tenir dans le
+     * volume restant ({@link #fitsVolume}). Écart assumé à « côté inconnu ne bloque rien » : un colis sans
+     * dimensions n'est pas réservable sur un trajet au m³, le proposer mènerait à un refus.
+     */
+    public static boolean fitsTripVolume(AnnouncementEntity trip, BigDecimal volumeM3) {
+        if (trip == null || !trip.isPricedPerM3()) {
+            return true;
+        }
+        return volumeM3 != null && fitsVolume(trip.getAvailableVolumeM3(), volumeM3);
+    }
+
+    /**
+     * Volume en m³ d'un colis réservé sur ce trajet (devis, offre, paiement carte, proposition de prix), calculé
+     * côté serveur depuis les trois dimensions, jamais lu du client. Trajet non vendu au m³ (avion, route, bateau
+     * au kilo) : les dimensions sont ignorées et le colis n'a pas de volume ({@code null}), le volume facultatif
+     * d'un bateau au kilo n'étant jamais décrémenté ({@link TripCapacity}). Trajet au m³ : trois dimensions
+     * obligatoires, une ou deux seulement = 422 {@code dimensions-incomplete}, aucune = 422
+     * {@code boat-dimensions-required}. Les bornes (1 à 400 cm) sont posées par la validation de la requête.
+     */
+    public static BigDecimal resolveBidVolume(AnnouncementEntity trip, Integer lengthCm, Integer widthCm,
+                                              Integer heightCm) {
+        if (trip == null || !trip.isPricedPerM3()) {
+            return null;
+        }
+        int given = (lengthCm == null ? 0 : 1) + (widthCm == null ? 0 : 1) + (heightCm == null ? 0 : 1);
+        if (given == 3) {
+            return volumeM3(lengthCm, widthCm, heightCm);
+        }
+        if (given > 0) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "dimensions-incomplete",
+                    "problem.dimensions-incomplete");
+        }
+        throw boatDimensionsRequired();
+    }
+
+    /**
+     * Le volume d'un colis tient dans le volume restant du trajet au m³ au moment de la réservation, sinon 422
+     * {@code insufficient-volume} (avant toute écriture). Sans effet hors trajet au m³ ou sans volume.
+     */
+    public static void assertVolumeFits(AnnouncementEntity trip, BigDecimal volumeM3) {
+        if (trip != null && trip.isPricedPerM3() && !fitsVolume(trip.getAvailableVolumeM3(), volumeM3)) {
+            throw insufficientVolume(HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+    }
+
+    /** Volume restant insuffisant : 422 à la réservation, 409 à l'acceptation (la place a été prise entre-temps). */
+    static YadonyBusinessException insufficientVolume(HttpStatus status) {
+        return YadonyBusinessException.localized(status, "insufficient-volume", "problem.insufficient-volume");
     }
 
     /** Dimensions d'une demande de colis (cm) et volume calculé (m³) : toutes renseignées ou toutes nulles. */

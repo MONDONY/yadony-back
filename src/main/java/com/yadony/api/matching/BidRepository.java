@@ -629,6 +629,40 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     @Query("UPDATE BidEntity b SET b.status = b.status WHERE b.id = :id")
     int lockForUpdate(@Param("id") UUID id);
 
+    /**
+     * Verrou de ligne de tous les colis du trajet dans ces statuts, tenu jusqu'à la fin de la transaction, par un
+     * UPDATE neutre (exécutable sous H2, comme {@link #lockForUpdate}). À appeler AVANT de charger ces colis : la
+     * lecture qui suit voit leur dernier état commité. Un colis qui change de statut pendant l'attente du verrou
+     * (scan DEPART : ACCEPTED → HANDED_OVER) est réévalué par PostgreSQL après le commit concurrent.
+     *
+     * @return le nombre de colis verrouillés
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE BidEntity b SET b.status = b.status WHERE b.announcementId = :announcementId "
+            + "AND b.deletedAt IS NULL AND b.status IN :statuses")
+    int lockByAnnouncementIdAndStatusIn(@Param("announcementId") UUID announcementId,
+                                        @Param("statuses") java.util.Collection<BidStatus> statuses);
+
+    /**
+     * Heure serveur (UTC) de l'étape DEPART du colis (dépôt ou remise au transporteur), null tant qu'elle n'est pas
+     * enregistrée. Un seul DEPART par colis (index unique V48) ; {@code MIN} rend une ligne même sans DEPART.
+     */
+    @Query("SELECT MIN(t.scannedAt) FROM TrackingEventEntity t WHERE t.bidId = :bidId "
+            + "AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART")
+    LocalDateTime findDepartScannedAt(@Param("bidId") UUID bidId);
+
+    /** Heure de l'étape DEPART de chaque colis donné qui en a une (lecture groupée d'une liste). */
+    @Query("SELECT t.bidId AS bidId, MIN(t.scannedAt) AS scannedAt FROM TrackingEventEntity t "
+            + "WHERE t.bidId IN :bidIds AND t.eventType = com.yadony.api.tracking.TrackingEventType.DEPART "
+            + "GROUP BY t.bidId")
+    List<DepartScan> findDepartScannedAtByBidIdIn(@Param("bidIds") java.util.Collection<UUID> bidIds);
+
+    /** Heure de l'étape DEPART d'un colis. */
+    interface DepartScan {
+        UUID getBidId();
+        LocalDateTime getScannedAt();
+    }
+
     /** Expéditeur et voyageur d'un colis. */
     interface BidParties {
         UUID getSenderId();

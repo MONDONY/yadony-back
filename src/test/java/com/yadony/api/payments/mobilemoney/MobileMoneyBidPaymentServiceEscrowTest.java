@@ -70,6 +70,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     @Mock AdminAlertService adminAlert;
     @Mock com.yadony.api.common.AuditService audit;
     @Mock PlatformTransactionManager transactionManager;
+    @Mock com.yadony.api.matching.PayoutTriggerPolicy payoutTriggerPolicy;
 
     private MobileMoneyBidPaymentService service;
     private PaymentEntity payment;
@@ -80,7 +81,8 @@ class MobileMoneyBidPaymentServiceEscrowTest {
     @BeforeEach
     void setUp() {
         service = new MobileMoneyBidPaymentService(bidRepository, announcementRepository, null, paymentRepository,
-                operations, submission, null, null, null, audit, events, null, null, transactionManager, null, null, new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK"))));
+                operations, submission, null, null, null, audit, events, null, null, transactionManager, null, null, new MobileMoneyOperationViews(TestMessages.resolver(), new PawapayValidationHints(Map.of("ORANGE_CIV", "SMS_LINK"))),
+                payoutTriggerPolicy);
         ReflectionTestUtils.setField(service, "adminAlert", adminAlert);
         announcement = new AnnouncementEntity();
         ReflectionTestUtils.setField(announcement, "id", UUID.randomUUID());
@@ -136,6 +138,46 @@ class MobileMoneyBidPaymentServiceEscrowTest {
                 });
         verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_ESCROW"), eq(bid.getSenderId()), any());
         verify(submission, never()).submitRefund(any(), any(), any());
+    }
+
+    @Test
+    void confirmEscrow_freezesPayoutTriggerOnTheTrip_beforeTheBidTurnsAccepted() {
+        PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
+        when(paymentRepository.markEscrowIfPending(eq(payment.getId()), any())).thenReturn(1);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+        when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+        java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
+        // Le gel simulé écrit une vraie règle DEPOSIT (champ posé comme le ferait PayoutTriggerPolicy, réservé
+        // au package matching) : l'audit doit relire la règle figée, pas une constante.
+        org.mockito.Mockito.doAnswer(inv -> {
+                    BidEntity frozen = inv.getArgument(0);
+                    statusAtFreeze.add(frozen.getStatus());
+                    org.springframework.test.util.ReflectionTestUtils.setField(frozen, "payoutTrigger",
+                            com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+                    return null;
+                })
+                .when(payoutTriggerPolicy).freeze(bid, announcement);
+
+        service.confirmEscrow(op.getId(), payment.getId());
+
+        assertThat(statusAtFreeze).containsExactly(BidStatus.AWAITING_PAYMENT);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_ESCROW"), eq(bid.getSenderId()), payload.capture());
+        assertThat(payload.getValue()).containsEntry("payoutTrigger", "DEPOSIT");
+    }
+
+    @Test
+    void confirmEscrow_lostRace_neverFreezes() {
+        PawapayOperationEntity op = deposit(PawapayOperationStatus.COMPLETED);
+        when(paymentRepository.markEscrowIfPending(eq(payment.getId()), any())).thenReturn(0);
+        payment.setStatus(PaymentStatus.ESCROW);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Optional.of(payment));
+
+        service.confirmEscrow(op.getId(), payment.getId());
+
+        verifyNoInteractions(payoutTriggerPolicy);
     }
 
     /** Ordre unique colis → paiement (PROD_CHECKLIST 9.25) : le colis est verrouillé avant le claim. */

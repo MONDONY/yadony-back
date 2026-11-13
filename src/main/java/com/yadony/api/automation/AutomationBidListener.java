@@ -7,6 +7,7 @@ import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
+import com.yadony.api.matching.ParcelFitRules;
 import com.yadony.api.matching.events.BidCreatedEvent;
 import com.yadony.api.payments.cash.PaymentMethod;
 import com.yadony.api.notifications.NotificationDispatcher;
@@ -119,7 +120,9 @@ public class AutomationBidListener {
         // même si son exécution est bloquée (plafond) ou échoue : un colis visé par
         // un refus ne doit jamais être auto-accepté par une autre règle.
         boolean rejectMatched = false;
-        if (rejectRule.isPresent() && event.getWeightKg() != null
+        // Règle « poids » : kilos seulement. Un trajet bateau vendu au m³ n'a pas de kilos (nuls) : elle ne s'y
+        // applique pas, sa place (le volume) est contrôlée à l'acceptation (TripCapacity, 409 insufficient-volume).
+        if (rejectRule.isPresent() && event.getWeightKg() != null && announcement.getAvailableKg() != null
                 && event.getWeightKg().compareTo(announcement.getAvailableKg()) > 0) {
             rejectMatched = true;
             executor.tryExecuteBidAction(rejectRule.get(), event.getTravelerId(), event.getBidId(),
@@ -149,8 +152,13 @@ public class AutomationBidListener {
         if (!rejectMatched && acceptRule.isPresent()) {
             AutomationRuleEntity rule = acceptRule.get();
             BigDecimal minRating = configNumber(rule, "minRating", new BigDecimal("4.0"));
-            boolean weightOk = event.getWeightKg() == null
-                    || event.getWeightKg().compareTo(announcement.getAvailableKg()) <= 0;
+            // Place restante : volume du colis pour un trajet au m³ (jamais d'acceptation automatique d'un colis
+            // qui ne tient plus, ni d'un colis dont le volume est inconnu), kilos sinon, comme avant.
+            boolean weightOk = announcement.isPricedPerM3()
+                    ? persistedBid != null && persistedBid.getVolumeM3() != null
+                            && ParcelFitRules.fitsVolume(announcement.getAvailableVolumeM3(), persistedBid.getVolumeM3())
+                    : event.getWeightKg() == null || announcement.getAvailableKg() == null
+                            || event.getWeightKg().compareTo(announcement.getAvailableKg()) <= 0;
             boolean ratingOk = sender != null && sender.getAverageRating() != null
                     && sender.getAverageRating().compareTo(minRating) >= 0;
             if (weightOk && ratingOk) {

@@ -247,6 +247,16 @@ public class AnnouncementService {
                 || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
     }
 
+    /**
+     * Le passage vers ou depuis le bateau est figé dès qu'un colis ou une offre vivante (statut de
+     * {@link #CURRENCY_LOCKING_BID_STATUSES} : en attente de paiement, en attente, payé, en négociation, ou
+     * engagé) ou un fil de négociation vivant lié à ce trajet existe : chacun a été réservé sous la règle de
+     * versement du mode courant.
+     */
+    private boolean isTransportModeLocked(java.util.UUID announcementId) {
+        return isCurrencyLocked(announcementId);
+    }
+
     private boolean isCurrencyLocked(java.util.UUID announcementId) {
         return bidRepository.existsByAnnouncementIdAndStatusIn(announcementId, List.copyOf(CURRENCY_LOCKING_BID_STATUSES))
                 || negotiationThreadRepository.existsActiveByTravelerAnnouncementId(announcementId);
@@ -1780,6 +1790,16 @@ public class AnnouncementService {
         transportModeGuard.assertTripModeAllowed(request.transportMode(), oldTransportMode);
         // Passer à bateau demande le profil vérifié ; un trajet qui reste bateau n'est pas recontrôlé.
         transportModeGuard.assertBoatCarrierAllowed(request.transportMode(), oldTransportMode, user);
+        // Entrer dans le bateau ou en sortir change la règle de versement que figera l'acceptation
+        // (PayoutTriggerPolicy : versé au dépôt, sans remboursement, pour un colis bateau d'un transporteur
+        // vérifié). Un expéditeur qui a réservé, payé ou négocié sous une règle ne doit pas se la voir changer
+        // avant l'acceptation : refusé dès qu'un colis, une offre ou un fil vivant existe.
+        if (request.transportMode() != null
+                && (oldTransportMode == TransportMode.BOAT) != (request.transportMode() == TransportMode.BOAT)
+                && isTransportModeLocked(id)) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "transport-mode-locked",
+                    "problem.transport-mode-locked");
+        }
         // Règles bateau (fourchette, un seul prix, volume), sauf pour un trajet bateau d'avant le lot 3
         // (au kilo, sans fourchette ni volume) modifié par un client qui n'envoie aucun champ bateau :
         // il reste tel quel, comme l'interrupteur et le profil ne le recontrôlent pas. Sa fourchette

@@ -4,6 +4,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -33,15 +35,29 @@ public record BidCheckoutRequest(
         // Modifiable ensuite via PATCH /payments/intents/{id}/save-payment-method.
         Boolean savePaymentMethod,
         // Taille du colis (S, M, L, XL), facultative (ancienne app : absente = acceptée comme avant).
-        @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}") String itemSize
+        @Pattern(regexp = "S|M|L|XL", message = "{validation.request.item-size.pattern}") String itemSize,
+        // Dimensions du colis (cm), obligatoires sur un trajet bateau vendu au m³ (volume calculé par le
+        // serveur, jamais envoyé), ignorées ailleurs. Aucun montant : le serveur recalcule le prix.
+        @Min(1) @Max(400) Integer lengthCm,
+        @Min(1) @Max(400) Integer widthCm,
+        @Min(1) @Max(400) Integer heightCm
 ) {
+    /** Constructeur sans dimensions (forme d'avant le bateau au m³). */
+    public BidCheckoutRequest(UUID announcementId, BigDecimal weightKg,
+                              String description, String contentCategory, String recipientName,
+                              String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
+                              List<BidGridItemRequest> gridItems, Boolean savePaymentMethod, String itemSize) {
+        this(announcementId, weightKg, description, contentCategory, recipientName, recipientPhone,
+                disclaimerSigned, photoKeys, gridItems, savePaymentMethod, itemSize, null, null, null);
+    }
+
     /** Constructeur sans taille (forme d'avant le contrôle de taille). */
     public BidCheckoutRequest(UUID announcementId, BigDecimal weightKg,
                               String description, String contentCategory, String recipientName,
                               String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
                               List<BidGridItemRequest> gridItems, Boolean savePaymentMethod) {
         this(announcementId, weightKg, description, contentCategory,
-                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, savePaymentMethod, null);
+                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, savePaymentMethod, (String) null);
     }
 
     /** Constructeur historique (sans savePaymentMethod) — équivalent au défaut null. */
@@ -50,6 +66,6 @@ public record BidCheckoutRequest(
                               String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
                               List<BidGridItemRequest> gridItems) {
         this(announcementId, weightKg, description, contentCategory,
-                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, null, null);
+                recipientName, recipientPhone, disclaimerSigned, photoKeys, gridItems, null, (String) null);
     }
 }

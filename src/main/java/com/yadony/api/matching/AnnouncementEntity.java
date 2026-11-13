@@ -568,8 +568,8 @@ public class AnnouncementEntity extends BaseEntity {
      * @return {@code true} si l'annonce a changé (l'appelant la sauvegarde alors)
      */
     public boolean reserveCapacity(BigDecimal weightKg) {
-        // Trajet bateau au m³ (availableKg nul) : aucun kilo à suivre ; la réservation d'un tel
-        // trajet est refusée en amont (BoatVolumeBooking) tant que le volume n'est pas géré.
+        // Trajet bateau au m³ (availableKg nul) : aucun kilo à suivre, son volume est pris et rendu par
+        // TripCapacity, seul point d'entrée des acceptations et des rendus.
         if (capacityUnit == CapacityUnit.KG_FREE || weightKg == null || availableKg == null) {
             return false;
         }

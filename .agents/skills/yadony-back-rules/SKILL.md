@@ -193,7 +193,7 @@ public class DeliveryEventListener {
 
 - `capture_method: manual` pour TOUS les PaymentIntents (mode escrow)
 - Commission : 12% via `application_fee_amount`
-- **JAMAIS capturer sans `DeliveryConfirmedEvent`** (sauf admin force-release à J+48)
+- **JAMAIS capturer sans `DeliveryConfirmedEvent`** (sauf admin force-release à J+48, et colis bateau figé DEPOSIT : versé au `ParcelDepositedEvent`, puis aucun remboursement automatique, 409 `deposit-paid-no-refund`)
 - Toujours valider la signature webhook avant traitement
 
 ---
@@ -265,4 +265,4 @@ SELECT * FROM flyway_schema_history ORDER BY installed_rank;
 - [ ] Actions significatives → entrées `audit_log`
 - [ ] Endpoints admin → `@PreAuthorize("hasRole('ADMIN')")`
 - [ ] Fichiers KYC → presigned URLs uniquement
-- [ ] Pas de capture PaymentIntent sans `DeliveryConfirmedEvent`
+- [ ] Pas de capture PaymentIntent sans `DeliveryConfirmedEvent`, sauf colis bateau figé DEPOSIT : versé au `ParcelDepositedEvent`

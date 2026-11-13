@@ -16,4 +16,4 @@ Poids et budget dépendent du mode. Par la route et par bateau (quand ils sont p
 La taille du colis (S à XL) est facultative : elle écarte les voyageurs dont la taille max est plus petite.
 Quand le bateau est proposé, indiquez les dimensions du colis (longueur, largeur, hauteur en cm, 400 au plus chacune) : Yadony en calcule le volume en m³, obligatoire pour publier la demande (un brouillon peut s'en passer). Pour « Peu importe », les dimensions sont facultatives, mais toutes les trois si vous en donnez.
 Quand le bateau est proposé, un trajet bateau annonce son arrivée en fourchette de dates et son prix au m³ ; si le voyageur annonce un retard, vous en êtes prévenu.
-Un voyageur transporte le colis, le paiement par carte est sécurisé et libéré à la livraison confirmée, et le suivi se fait par QR de la remise à la réception.
+Un voyageur transporte le colis, le paiement par carte est sécurisé et libéré à la livraison confirmée (sauf un colis bateau accepté par un transporteur vérifié : il est payé au dépôt du colis, voir les modes de transport), et le suivi se fait par QR de la remise à la réception.

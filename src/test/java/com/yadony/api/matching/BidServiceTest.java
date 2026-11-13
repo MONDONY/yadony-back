@@ -74,6 +74,7 @@ class BidServiceTest {
     @Mock private TripRescheduleRepository rescheduleRepository;
     @Mock private com.yadony.api.common.commission.CommissionGridService commissionGridService;
     @Mock private com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery;
+    @Mock private PayoutTriggerPolicy payoutTriggerPolicy;
     @Mock private HttpServletRequest httpRequest;
 
     @InjectMocks private BidService bidService;
@@ -1668,6 +1669,56 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("règle de versement figée sur le trajet et le voyageur, avant le passage à ACCEPTED, et auditée")
+        void acceptBid_freezesPayoutTriggerBeforeAccepting() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = buildBid();
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.save(any())).thenReturn(announcement);
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
+            // Le gel simulé écrit une vraie règle DEPOSIT (pas la valeur par défaut) : la réponse et l'audit
+            // doivent relire la règle figée, pas une constante.
+            org.mockito.Mockito.doAnswer(inv -> {
+                        BidEntity frozen = inv.getArgument(0);
+                        statusAtFreeze.add(frozen.getStatus());
+                        frozen.freezePayoutTrigger(PayoutTrigger.DEPOSIT, java.time.LocalDateTime.now());
+                        return null;
+                    })
+                    .when(payoutTriggerPolicy).freeze(bid, announcement, traveler);
+
+            BidResponse result = bidService.acceptBid(BID_ID, TRAVELER_UID);
+
+            assertThat(statusAtFreeze).containsExactly(BidStatus.PAYMENT_ESCROWED);
+            assertThat(result.payoutTrigger()).isEqualTo("DEPOSIT");
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
+            verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_ACCEPTED"), eq(traveler.getId()), payload.capture());
+            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DEPOSIT");
+        }
+
+        @Test
+        @DisplayName("refus avant le passage à ACCEPTED (capacité) : la règle n'est jamais figée")
+        void acceptBid_refused_neverFreezes() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            announcement.setAvailableKg(BigDecimal.valueOf(3));
+            BidEntity bid = buildBid();
+            when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+
+            assertThatThrownBy(() -> bidService.acceptBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOf(YadonyBusinessException.class);
+            org.mockito.Mockito.verifyNoInteractions(payoutTriggerPolicy);
+        }
+
+        @Test
         @DisplayName("autorisation carte expirée → 409, demande non acceptée, aucune capacité prise")
         void acceptBid_cardAuthorizationLost_throwsConflict() {
             UserEntity traveler = buildTraveler();
@@ -1686,6 +1737,8 @@ class BidServiceTest {
             assertThat(bid.getStatus()).isEqualTo(BidStatus.PAYMENT_ESCROWED);
             assertThat(announcement.getAvailableKg()).isEqualByComparingTo(BigDecimal.valueOf(20));
             verify(eventPublisher, never()).publishEvent(any(BidAcceptedEvent.class));
+            // Refus avant le passage à ACCEPTED : la règle de versement n'est jamais figée.
+            org.mockito.Mockito.verifyNoInteractions(payoutTriggerPolicy);
         }
 
         @Test
@@ -2936,6 +2989,54 @@ class BidServiceTest {
 
         assertThat(result.trackingNumber()).isEqualTo("DON-ABCD1234");
         assertThat(result.recipientPhone()).isEqualTo("+221700000000");
+    }
+
+    @Test
+    @DisplayName("depositedAt : null avant le dépôt (aucune lecture), heure UTC du DEPART ensuite")
+    void getBidById_depositedAt_nullBeforeDeposit_departTimeAfter() {
+        BidEntity bid = buildBid();
+        when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+        when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(buildSender()));
+        java.time.LocalDateTime depart = java.time.LocalDateTime.of(2026, 11, 26, 9, 30);
+
+        bid.setStatus(BidStatus.ACCEPTED);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).depositedAt()).isNull();
+        verify(bidRepository, never()).findDepartScannedAt(any());
+
+        bid.setStatus(BidStatus.HANDED_OVER);
+        when(bidRepository.findDepartScannedAt(BID_ID)).thenReturn(depart);
+        assertThat(bidService.getBidById(BID_ID, TRAVELER_UID).depositedAt())
+                .isEqualTo(depart.atOffset(java.time.ZoneOffset.UTC));
+    }
+
+    @Test
+    @DisplayName("depositedAt d'une liste : une lecture groupée, chaque colis reçoit son DEPART, aucune lecture à l'unité")
+    void getMyBids_depositedAt_prefetchedOnce() {
+        UserEntity sender = buildSender();
+        BidEntity deposited = buildBid();
+        deposited.setStatus(BidStatus.IN_TRANSIT);
+        BidEntity accepted = buildBid();
+        setId(accepted, UUID.randomUUID());
+        accepted.setStatus(BidStatus.ACCEPTED);
+        java.time.LocalDateTime depart = java.time.LocalDateTime.of(2026, 11, 26, 9, 30);
+        BidRepository.DepartScan scan = new BidRepository.DepartScan() {
+            public UUID getBidId() { return BID_ID; }
+            public java.time.LocalDateTime getScannedAt() { return depart; }
+        };
+        when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+        when(bidRepository.findBySenderId(SENDER_ID)).thenReturn(List.of(deposited, accepted));
+        when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+        when(bidRepository.findDepartScannedAtByBidIdIn(List.of(BID_ID))).thenReturn(List.of(scan));
+
+        List<BidResponse> result = bidService.getMyBids(SENDER_UID);
+
+        assertThat(result).filteredOn(r -> r.id().equals(BID_ID)).singleElement()
+                .extracting(BidResponse::depositedAt).isEqualTo(depart.atOffset(java.time.ZoneOffset.UTC));
+        assertThat(result).filteredOn(r -> r.id().equals(accepted.getId())).singleElement()
+                .extracting(BidResponse::depositedAt).isNull();
+        verify(bidRepository, never()).findDepartScannedAt(any());
     }
 
     @Test
@@ -4260,6 +4361,103 @@ class BidServiceTest {
             bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
 
             assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+        }
+
+        @Test
+        @DisplayName("colis payé au dépôt, déposé, transporteur payé → 409 deposit-paid-no-refund, rien ne change")
+        void refuseParcel_depositPaid_409() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = depositBid(BidStatus.HANDED_OVER);
+            bidService.setDepositPayoutPort(id -> true);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.refuseParcel(BID_ID, TRAVELER_UID, "raison", null))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("deposit-paid-no-refund");
+                    });
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+            verify(bidRepository).lockForUpdate(BID_ID);
+            verify(bidRepository, never()).save(any());
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("colis payé au dépôt pas encore déposé (ACCEPTED) → refus permis, remboursé comme avant")
+        void refuseParcel_depositBidBeforeScan_allowedAndRefunded() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UserEntity sender = buildSender();
+            BidEntity bid = depositBid(BidStatus.ACCEPTED);
+            java.util.List<UUID> asked = new java.util.ArrayList<>();
+            bidService.setDepositPayoutPort(id -> asked.add(id));
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.save(any())).thenReturn(sender);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+            assertThat(asked).isEmpty();
+            verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.ParcelRefusedEvent.class));
+        }
+
+        @Test
+        @DisplayName("colis payé au dépôt, déposé, aucun argent versé (espèces) → refus permis comme avant")
+        void refuseParcel_depositedNotPaid_allowed() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UserEntity sender = buildSender();
+            BidEntity bid = depositBid(BidStatus.HANDED_OVER);
+            bidService.setDepositPayoutPort(id -> false);
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(sender));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.save(any())).thenReturn(sender);
+
+            bidService.refuseParcel(BID_ID, TRAVELER_UID, "Colis non conforme", null);
+
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.PARCEL_REFUSED);
+        }
+
+        @Test
+        @DisplayName("annulation d'un colis payé au dépôt, déposé, transporteur payé → 409 deposit-paid-no-refund")
+        void cancelBid_depositPaid_409() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement();
+            BidEntity bid = depositBid(BidStatus.HANDED_OVER);
+            bidService.setDepositPayoutPort(id -> true);
+
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+
+            assertThatThrownBy(() -> bidService.cancelBid(BID_ID, TRAVELER_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("deposit-paid-no-refund"));
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+            verify(eventPublisher, never()).publishEvent(any());
+        }
+
+        private BidEntity depositBid(BidStatus status) {
+            BidEntity bid = buildBid();
+            bid.setStatus(status);
+            org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTrigger",
+                    com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+            org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt",
+                    java.time.LocalDateTime.now());
+            return bid;
         }
 
         @Test

@@ -267,6 +267,9 @@ public class NegotiationController {
         // aucun bid n'existe encore pour ce fil (matérialisé seulement après paiement),
         // donc removeByAdmin ne peut pas le voir via BidRepository.
         service.assertTravelerAnnouncementActive(thread.travelerAnnouncementId());
+        // Trajet au m³ : le volume de la demande doit encore tenir, relu sous le verrou du trajet, AVANT de créer le
+        // PaymentIntent (409 insufficient-volume, rien n'est autorisé ni prélevé).
+        service.assertLinkedTripVolumeBeforePayment(id);
         // Auto-appliqué : le code a été saisi par l'expéditeur à la publication de
         // sa demande (étape budget) et porté sur le thread dès sa création — jamais
         // resaisi ici. Le param reste un override défensif tant qu'aucun contexte
@@ -316,7 +319,9 @@ public class NegotiationController {
     @PreAuthorize("hasAnyRole('SENDER', 'TRAVELER')")
     public com.yadony.api.payments.mobilemoney.dto.MobileMoneyNegotiationStatusResponse mobileMoneyStatus(@PathVariable UUID id) {
         var thread = service.requireParticipantThread(requireUserId(), id);
-        return mobileMoney.status(id, thread.getDepositExpiresAt());
+        // Règle de versement du colis matérialisé (DEPOSIT : transporteur payé au dépôt), null sans colis.
+        return mobileMoney.status(id, thread.getDepositExpiresAt())
+                .withPayoutTrigger(mobileMoney.payoutTriggerOf(thread.getMaterializedBidId()));
     }
 
     /** Opérateurs que le voyageur du fil accepte, dans la devise du fil : l'expéditeur choisit son réseau avant de payer. */

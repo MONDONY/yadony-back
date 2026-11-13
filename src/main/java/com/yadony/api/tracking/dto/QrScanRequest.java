@@ -33,8 +33,22 @@ public record QrScanRequest(
         @Size(max = 500) String photoUrl,
         LocalDateTime offlineTimestamp,
         ScanMethod scanMethod,
-        @Size(max = 12) String trackingNumber
+        @Size(max = 12) String trackingNumber,
+        /**
+         * Jeton secret du colis, lu par l'app dans le QR scanné (paramètre {@code k} de l'URL). Exigé seulement au
+         * DEPART d'un colis payé au dépôt ({@code payoutTrigger = DEPOSIT}) : preuve que le transporteur a le colis
+         * en main (422 {@code boat-deposit-qr-required} sinon). Ignoré partout ailleurs.
+         */
+        @Size(max = 64) String qrToken
 ) {
+    /** Contrat antérieur au jeton du QR (dépôt payé). */
+    public QrScanRequest(UUID bidId, TrackingEventType eventType, BigDecimal gpsLat, BigDecimal gpsLon,
+                         String gpsLabel, String photoUrl, LocalDateTime offlineTimestamp,
+                         ScanMethod scanMethod, String trackingNumber) {
+        this(bidId, eventType, gpsLat, gpsLon, gpsLabel, photoUrl, offlineTimestamp, scanMethod, trackingNumber,
+                null);
+    }
+
     /** Contrat antérieur à la provenance QR / numéro. */
     public QrScanRequest(UUID bidId, TrackingEventType eventType, BigDecimal gpsLat, BigDecimal gpsLon,
                          String gpsLabel, String photoUrl, LocalDateTime offlineTimestamp) {

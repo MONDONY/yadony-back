@@ -138,21 +138,25 @@ class RematchServiceTest {
         assertThat(captor.getValue().getAnnouncementId()).isEqualTo(alt.getId());
     }
 
+    private static AnnouncementEntity asPerM3(AnnouncementEntity a, String availableVolumeM3) {
+        a.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
+        a.setAvailableKg(null);
+        a.setTotalKg(null);
+        a.setPricePerKg(null);
+        a.setPricePerM3(BigDecimal.valueOf(600));
+        a.setVolumeCapacityM3(BigDecimal.valueOf(3));
+        a.setAvailableVolumeM3(new BigDecimal(availableVolumeM3));
+        return a;
+    }
+
     @Test
-    @DisplayName("trajet bateau au m³ : jamais proposé en alternative avant BB2, même pour un colis à la grille")
-    void perM3Trip_isNeverSuggested() {
+    @DisplayName("trajet bateau au m³ : jamais proposé à un colis sans volume (au kilo ou à la grille)")
+    void perM3Trip_notSuggestedToParcelWithoutVolume() {
         AnnouncementEntity cancelled = cancelledAnnouncement();
         BidEntity bid = buildBid(UUID.randomUUID(), BigDecimal.valueOf(5));
         CancellationEntity cancellation = buildCancellation();
         AnnouncementEntity perKg = buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(1));
-        AnnouncementEntity perM3 = buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(2));
-        perM3.setTransportMode(com.yadony.api.matching.TransportMode.BOAT);
-        perM3.setAvailableKg(null);
-        perM3.setTotalKg(null);
-        perM3.setPricePerKg(null);
-        perM3.setPricePerM3(BigDecimal.valueOf(600));
-        perM3.setVolumeCapacityM3(BigDecimal.valueOf(3));
-        perM3.setAvailableVolumeM3(BigDecimal.valueOf(3));
+        AnnouncementEntity perM3 = asPerM3(buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(2)), "3");
 
         when(announcementRepository.findAll(any(Specification.class))).thenReturn(List.of(perKg, perM3));
         when(userRepository.findAllById(anyCollection())).thenReturn(List.of());
@@ -162,6 +166,28 @@ class RematchServiceTest {
 
         assertThat(result.get(bid.getSenderId()).suggestionCount()).isEqualTo(1);
         verify(rematchSuggestionRepository, times(1)).save(any(RematchSuggestionEntity.class));
+    }
+
+    @Test
+    @DisplayName("colis au m³ : un trajet au m³ dont le volume restant suffit est proposé, pas celui qui est trop plein")
+    void perM3Parcel_suggestedOnlyWhereVolumeFits() {
+        AnnouncementEntity cancelled = cancelledAnnouncement();
+        BidEntity bid = buildBid(UUID.randomUUID(), BigDecimal.valueOf(5));
+        bid.setVolumeM3(new BigDecimal("0.500"));
+        CancellationEntity cancellation = buildCancellation();
+        AnnouncementEntity fits = asPerM3(buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(1)), "0.5");
+        AnnouncementEntity tooFull = asPerM3(buildAnnouncement(UUID.randomUUID(), LocalDate.now().plusDays(2)), "0.499");
+
+        when(announcementRepository.findAll(any(Specification.class))).thenReturn(List.of(fits, tooFull));
+        when(userRepository.findAllById(anyCollection())).thenReturn(List.of());
+
+        Map<UUID, RematchService.RematchInfo> result = rematchService.generateForCancellations(
+                cancelled, List.of(bid), List.of(cancellation));
+
+        assertThat(result.get(bid.getSenderId()).suggestionCount()).isEqualTo(1);
+        ArgumentCaptor<RematchSuggestionEntity> captor = ArgumentCaptor.forClass(RematchSuggestionEntity.class);
+        verify(rematchSuggestionRepository).save(captor.capture());
+        assertThat(captor.getValue().getAnnouncementId()).isEqualTo(fits.getId());
     }
 
     @Test

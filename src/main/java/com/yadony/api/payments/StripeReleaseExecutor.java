@@ -469,8 +469,11 @@ public class StripeReleaseExecutor {
     /** Publié dans la transaction : les écouteurs AFTER_COMMIT (cache, notification) partent au commit. */
     private void publishReleased(StripeReleaseIntentEntity intent, PaymentEntity payment) {
         if (intent.getBidId() != null && intent.getTravelerId() != null && payment != null) {
-            eventPublisher.publishEvent(PaymentReleasedEvent.card(intent.getBidId(), intent.getTravelerId(),
-                    intent.getSenderId(), payment.getAmount(), payment.getCommissionAmount(), payment.getCurrency()));
+            PaymentReleasedEvent released = PaymentReleasedEvent.card(intent.getBidId(), intent.getTravelerId(),
+                    intent.getSenderId(), payment.getAmount(), payment.getCommissionAmount(), payment.getCurrency());
+            // Versé au dépôt du colis : textes dédiés (transporteur, et expéditeur prévenu).
+            eventPublisher.publishEvent(DeliveryEventListener.SOURCE_DEPOSIT.equals(intent.getSource())
+                    ? released.atDeposit() : released);
         }
     }
 

@@ -108,7 +108,8 @@ class BidQuoteServiceGridTest {
                 annGridItemRepository, blockService, blockVisibility, commissionRateResolver, promoService,
                 storageService, bidPhotoService, firebaseContact, pawapayProperties, paymentService,
                 TestMessages.resolver(), rescheduleRepository, recipientLinkRepository, commissionGridService,
-                org.mockito.Mockito.mock(com.yadony.api.tracking.TravelerTrackingQuery.class));
+                org.mockito.Mockito.mock(com.yadony.api.tracking.TravelerTrackingQuery.class),
+                org.mockito.Mockito.mock(PayoutTriggerPolicy.class));
         lenient().when(commissionGridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
     }
 
@@ -399,7 +400,7 @@ class BidQuoteServiceGridTest {
     private BidEntity materialize(PackageRequestAcceptedEvent event) {
         ThreadAcceptedBidListener listener = new ThreadAcceptedBidListener(bidRepository,
                 announcementRepository, auditService, eventPublisher, storageService, bidPhotoService,
-                promoService, mock(CommissionVoucherService.class));
+                promoService, mock(CommissionVoucherService.class), mock(PayoutTriggerPolicy.class));
         when(bidRepository.findByLinkedNegotiationThreadId(THREAD_ID)).thenReturn(Optional.empty());
         when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
             BidEntity b = inv.getArgument(0);

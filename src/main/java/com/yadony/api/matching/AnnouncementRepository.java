@@ -134,6 +134,13 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     @Query("UPDATE AnnouncementEntity a SET a.currency = a.currency WHERE a.id = :id")
     int lockForUpdate(@Param("id") UUID id);
 
+    /**
+     * Volume restant d'un trajet lu en base (requête scalaire, jamais l'entité en cache de la session) : à lire après
+     * {@link #lockForUpdate}, pour voir le dernier état commité même si le trajet a déjà été chargé dans la transaction.
+     */
+    @Query("SELECT a.availableVolumeM3 FROM AnnouncementEntity a WHERE a.id = :id")
+    Optional<java.math.BigDecimal> findAvailableVolumeM3ById(@Param("id") UUID id);
+
     long countByTravelerIdAndCreatedAtBetween(UUID travelerId, LocalDateTime from, LocalDateTime to);
 
     long countByTravelerIdAndCreatedAtBetweenAndStatusNot(

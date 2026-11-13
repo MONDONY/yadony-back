@@ -2,6 +2,8 @@ package com.yadony.api.matching.dto;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
@@ -19,6 +21,10 @@ import java.util.UUID;
  *   <li><b>MIXED</b> — {@code weightKg} ET {@code gridItems}.</li>
  * </ul>
  * Le promo est ainsi reflété dans l'aperçu pour TOUS les modes, pas seulement KG.
+ *
+ * <p>Trajet bateau vendu au m³ : les trois dimensions du colis ({@code lengthCm}, {@code widthCm},
+ * {@code heightCm}, 1 à 400 cm) sont obligatoires, le volume est calculé par le serveur (jamais envoyé) et le
+ * poids éventuel n'est pas tarifé. Ignorées pour tout autre trajet.
  */
 public record BidQuoteRequest(
         @NotNull(message = "{validation.bid.announcement.required}")
@@ -32,5 +38,16 @@ public record BidQuoteRequest(
         String promoCode,
 
         /** Articles de la grille sélectionnés (modes GRID/MIXED). Null/vide en mode KG pur. */
-        @Valid List<BidGridItemRequest> gridItems
-) {}
+        @Valid List<BidGridItemRequest> gridItems,
+
+        /** Dimensions du colis en cm, trajet au m³ seulement (mêmes noms que la demande de colis). */
+        @Min(1) @Max(400) Integer lengthCm,
+        @Min(1) @Max(400) Integer widthCm,
+        @Min(1) @Max(400) Integer heightCm
+) {
+    /** Sans dimensions : la forme d'avant le bateau au m³. */
+    public BidQuoteRequest(UUID announcementId, BigDecimal weightKg, String promoCode,
+                           List<BidGridItemRequest> gridItems) {
+        this(announcementId, weightKg, promoCode, gridItems, null, null, null);
+    }
+}

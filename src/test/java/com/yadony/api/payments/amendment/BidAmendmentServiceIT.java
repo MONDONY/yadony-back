@@ -817,6 +817,149 @@ class BidAmendmentServiceIT {
      * Échéance de réponse passée. Décalage relatif aux colonnes écrites par Hibernate (UTC via
      * {@code hibernate.jdbc.time_zone}), jamais {@code now()} : le fuseau de la JVM fausserait la comparaison.
      */
+    // ── Trajet bateau vendu au m³ (V384) ─────────────────────────────────────
+
+    @Test
+    @DisplayName("m³ : options, devis et création ; volume retiré du trajet (2 → 1,5), net = 0,5 × 80 €")
+    void create_volumeOnM3Trip_reservesVolume() {
+        UUID annId = persistM3Announcement("2.000");
+        UUID bidId = persistAcceptedM3Bid(annId, sender.getId());
+
+        var options = service.options(bidId, sender.getFirebaseUid());
+        assertThat(options.availableVolumeM3()).isEqualByComparingTo("2.000");
+        assertThat(options.pricePerM3Display()).isNotNull();
+        assertThat(options.availableKg()).isNull();
+        assertThat(options.pricePerKgDisplay()).isNull();
+
+        // 0,5 m³ × 80 € = 40 € net, commission figée 12 % = 4,80 €, brut 44,80 €.
+        assertThat(service.quote(bidId, sender.getFirebaseUid(),
+                new com.yadony.api.payments.amendment.dto.AmendmentQuoteRequest(null, null, new BigDecimal("0.5")))
+                .grossAmount()).isEqualByComparingTo("44.80");
+
+        AmendmentCreateResponse created = service.create(bidId, sender.getFirebaseUid(), m3("0.5"));
+
+        BidAmendmentResponse view = created.amendment();
+        assertThat(view.addedVolumeM3()).isEqualByComparingTo("0.500");
+        assertThat(view.grossAmount()).isEqualByComparingTo("44.80");
+        assertThat(availableVolume(annId)).isEqualByComparingTo("1.500");
+        assertThat(jdbc.queryForObject("SELECT capacity_reserved_volume_m3 FROM bid_amendments WHERE id = ?",
+                BigDecimal.class, view.id())).isEqualByComparingTo("0.500");
+        assertThat(jdbc.queryForObject("SELECT net_amount FROM bid_amendments WHERE id = ?",
+                BigDecimal.class, view.id())).isEqualByComparingTo("40.00");
+        assertThat(jdbc.queryForObject("SELECT payload::text FROM audit_log WHERE entity_id = ?", String.class,
+                view.id())).contains("addedVolumeM3");
+    }
+
+    @Test
+    @DisplayName("m³ : retrait par l'expéditeur, volume rendu une seule fois et trajet FULL rouvert")
+    void cancel_volumeAmendment_releasesVolumeOnce() {
+        UUID annId = persistM3Announcement("0.500");
+        UUID bidId = persistAcceptedM3Bid(annId, sender.getId());
+
+        BidAmendmentResponse view = service.create(bidId, sender.getFirebaseUid(), m3("0.5")).amendment();
+        assertThat(availableVolume(annId)).isEqualByComparingTo("0");
+        assertThat(jdbc.queryForObject("SELECT status FROM announcements WHERE id = ?", String.class, annId))
+                .isEqualTo("FULL");
+
+        service.cancel(bidId, view.id(), sender.getFirebaseUid());
+
+        assertThat(availableVolume(annId)).isEqualByComparingTo("0.500");
+        assertThat(jdbc.queryForObject("SELECT status FROM announcements WHERE id = ?", String.class, annId))
+                .isEqualTo("ACTIVE");
+        assertThat(jdbc.queryForObject("SELECT capacity_reserved_volume_m3 FROM bid_amendments WHERE id = ?",
+                BigDecimal.class, view.id())).isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("m³ : plus de volume que le restant → 409 amendment-capacity-unavailable, rien n'est créé")
+    void create_volumeAboveAvailable_409() {
+        UUID annId = persistM3Announcement("0.400");
+        UUID bidId = persistAcceptedM3Bid(annId, sender.getId());
+
+        assertThatThrownBy(() -> service.create(bidId, sender.getFirebaseUid(), m3("0.5")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("amendment-capacity-unavailable");
+                });
+        assertThat(availableVolume(annId)).isEqualByComparingTo("0.400");
+        assertThat(amendmentCount(bidId)).isZero();
+    }
+
+    @Test
+    @DisplayName("trajet au kilo : un ajout de volume → 422 amendment-not-eligible")
+    void create_volumeOnKgTrip_422() {
+        UUID annId = persistAnnouncement("6.00", false);
+        UUID bidId = persistAcceptedBid(annId, sender.getId());
+
+        assertThatThrownBy(() -> service.create(bidId, sender.getFirebaseUid(), m3("0.5")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("amendment-not-eligible");
+                });
+        assertThat(amendmentCount(bidId)).isZero();
+        assertThat(availableKg(annId)).isEqualByComparingTo("6.00");
+    }
+
+    private static CreateAmendmentRequest m3(String volume) {
+        return new CreateAmendmentRequest(null, null, PaymentMethod.CASH, new BigDecimal(volume));
+    }
+
+    private BigDecimal availableVolume(UUID annId) {
+        return jdbc.queryForObject("SELECT available_volume_m3 FROM announcements WHERE id = ?", BigDecimal.class,
+                annId);
+    }
+
+    /** Trajet bateau vendu au m³, espèces, 80 €/m³ net, 2,5 m³ proposés. */
+    private UUID persistM3Announcement(String availableVolume) {
+        return tx.execute(status -> {
+            AnnouncementEntity announcement = new AnnouncementEntity();
+            announcement.setTravelerId(traveler.getId());
+            announcement.setDepartureCity("Marseille");
+            announcement.setArrivalCity("Dakar");
+            announcement.setDepartureDate(LocalDate.now().plusDays(10));
+            announcement.setArrivalDate(LocalDate.now().plusDays(30));
+            announcement.setArrivalDateMax(LocalDate.now().plusDays(40));
+            announcement.setTransportMode(TransportMode.BOAT);
+            announcement.setPickupAddressLabel("Port de Marseille");
+            announcement.setPickupLat(new BigDecimal("43.310000"));
+            announcement.setPickupLng(new BigDecimal("5.366000"));
+            announcement.setDeliveryAddressLabel("Port de Dakar");
+            announcement.setDeliveryLat(new BigDecimal("14.670833"));
+            announcement.setDeliveryLng(new BigDecimal("-17.073056"));
+            announcement.setAvailableKg(null);
+            announcement.setTotalKg(null);
+            announcement.setPricePerKg(null);
+            announcement.setPricePerKgEur(null);
+            announcement.setCapacityUnit(CapacityUnit.KG_EXACT);
+            announcement.setPricePerM3(new BigDecimal("80.00"));
+            announcement.setVolumeCapacityM3(new BigDecimal("2.500"));
+            announcement.setAvailableVolumeM3(new BigDecimal(availableVolume));
+            announcement.setCurrency("EUR");
+            announcement.setTimezone("Europe/Paris");
+            announcement.setStatus(AnnouncementStatus.ACTIVE);
+            announcement.setAcceptedPaymentMethods(EnumSet.of(PaymentMethod.CASH, PaymentMethod.STRIPE));
+            entityManager.persist(announcement);
+            return announcement.getId();
+        });
+    }
+
+    private UUID persistAcceptedM3Bid(UUID announcementId, UUID senderId) {
+        return tx.execute(status -> {
+            BidEntity bid = new BidEntity();
+            bid.setAnnouncementId(announcementId);
+            bid.setSenderId(senderId);
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            bid.setCurrency("EUR");
+            bid.setVolumeM3(new BigDecimal("0.500"));
+            bid.setCommissionRate(new BigDecimal("0.12"));
+            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setQrToken("qr-" + UUID.randomUUID());
+            bid.setTrackingNumber("DON-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
+            entityManager.persist(bid);
+            return bid.getId();
+        });
+    }
+
     private void lapse(UUID id) {
         jdbc.update("UPDATE bid_amendments SET expires_at = created_at - interval '1 minute' WHERE id = ?", id);
     }

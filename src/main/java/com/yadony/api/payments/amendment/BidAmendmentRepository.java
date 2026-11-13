@@ -56,6 +56,15 @@ public interface BidAmendmentRepository extends JpaRepository<BidAmendmentEntity
     long countByBidIdAndAcceptedAtNotNull(UUID bidId);
 
     /**
+     * Une modification du colis payée par la plateforme (rail autre que {@code rail}, en pratique hors espèces) est-elle
+     * dans l'un de ces statuts ? Sert à savoir si un versement de modification est parti ({@code PAYOUT_PENDING},
+     * {@code PAID_OUT}).
+     */
+    boolean existsByBidIdAndRailNotAndStatusIn(UUID bidId,
+                                              com.yadony.api.payments.supplement.BidSupplementRail rail,
+                                              Collection<BidAmendmentStatus> statuses);
+
+    /**
      * Somme des nets des modifications du colis dans l'un des {@code statuses} (0 si aucune). Liste
      * positive : une modification close après acceptation ({@code CANCELLED}, {@code EXPIRED}...) ou
      * remboursée n'est jamais comptée, même avec {@code accepted_at} renseigné.

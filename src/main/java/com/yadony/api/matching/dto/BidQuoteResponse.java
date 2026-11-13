@@ -1,5 +1,7 @@
 package com.yadony.api.matching.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.math.BigDecimal;
 import java.util.UUID;
 
@@ -8,7 +10,7 @@ import java.util.UUID;
  * sans calculer localement.
  */
 public record BidQuoteResponse(
-        /** Montant net voyageur total (= gridNetEur + kgNetEur). */
+        /** Montant net voyageur total (= gridNetEur + kgNetEur + volumeNetEur). */
         BigDecimal netEur,
         /** Part nette issue des articles de la grille (= Σ unitPriceNet × quantité). 0 si mode KG. */
         BigDecimal gridNetEur,
@@ -42,5 +44,20 @@ public record BidQuoteResponse(
          * {@code "COMMISSION_MINIMUM"} quand un code promo valide est fourni mais ne change rien
          * (le minimum annule tout le gain) : il n'est alors ni appliqué ni consommé. {@code null} sinon.
          */
-        String promoIneffectiveReason
-) {}
+        String promoIneffectiveReason,
+        /**
+         * Part nette issue du volume d'un trajet bateau vendu au m³ (= volumeM3 × pricePerM3, arrondie à l'unité
+         * mineure de la devise) ; 0 pour tout autre trajet ({@code kgNetEur} vaut alors 0 au m³). Toujours
+         * sérialisée, champ ajouté : les anciennes apps l'ignorent et lisent {@code netEur} / {@code totalEur}.
+         */
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal volumeNetEur
+) {
+    /** Sans part au volume (forme d'avant le bateau au m³) : {@code volumeNetEur} = 0. */
+    public BidQuoteResponse(BigDecimal netEur, BigDecimal gridNetEur, BigDecimal kgNetEur, BigDecimal rate,
+                            BigDecimal commissionEur, BigDecimal totalEur, boolean promoApplied, String promoLabel,
+                            String currency, boolean minimumApplied, BigDecimal minimumAmount,
+                            UUID commissionGridId, String promoIneffectiveReason) {
+        this(netEur, gridNetEur, kgNetEur, rate, commissionEur, totalEur, promoApplied, promoLabel, currency,
+                minimumApplied, minimumAmount, commissionGridId, promoIneffectiveReason, BigDecimal.ZERO);
+    }
+}

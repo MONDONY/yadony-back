@@ -180,6 +180,34 @@ class TripRescheduleServiceTest {
     }
 
     @Test
+    void reschedule_depositPaidParcel_isOnlyInformed_noWithdrawOffered() {
+        BidEntity paidAtDeposit = bid(BidStatus.HANDED_OVER);
+        org.springframework.test.util.ReflectionTestUtils.setField(paidAtDeposit, "payoutTrigger", PayoutTrigger.DEPOSIT);
+        org.springframework.test.util.ReflectionTestUtils.setField(paidAtDeposit, "payoutTriggerFrozenAt",
+                LocalDateTime.now().minusDays(2));
+        BidEntity depositedNotPaid = bid(BidStatus.HANDED_OVER);
+        org.springframework.test.util.ReflectionTestUtils.setField(depositedNotPaid, "payoutTrigger",
+                PayoutTrigger.DEPOSIT);
+        org.springframework.test.util.ReflectionTestUtils.setField(depositedNotPaid, "payoutTriggerFrozenAt",
+                LocalDateTime.now().minusDays(2));
+        service.setDepositPayoutPort(id -> id.equals(paidAtDeposit.getId()));
+        when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList()))
+                .thenReturn(List.of(paidAtDeposit, depositedNotPaid));
+
+        TripRescheduleResponse response = service.reschedule(announcementId, "uid-traveler",
+                request(newDate, LocalTime.of(23, 0)));
+
+        assertThat(response.parcelsAwaitingDecision()).isEqualTo(1);
+        assertThat(paidAtDeposit.getPendingRescheduleId()).isNull();
+        assertThat(depositedNotPaid.getPendingRescheduleId()).isEqualTo(response.rescheduleId());
+        ArgumentCaptor<TripRescheduledEvent> event = ArgumentCaptor.forClass(TripRescheduledEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().targets())
+                .extracting(TripRescheduledEvent.Target::decisionRequired)
+                .containsExactly(false, true);
+    }
+
+    @Test
     void reschedule_tripMarkedInProgressComesBackOnTheMarket() {
         announcement.setStatus(AnnouncementStatus.IN_PROGRESS);
         when(bidRepository.findByAnnouncementIdAndStatusIn(eq(announcementId), anyList())).thenReturn(List.of());

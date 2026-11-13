@@ -83,6 +83,10 @@ public class MobileMoneyNegotiationPaymentService {
     @Autowired(required = false)
     private AdminAlertService adminAlert;
 
+    /** Lecture de la règle de versement du colis matérialisé ({@link #payoutTriggerOf}) ; même motif, optionnel. */
+    @Autowired(required = false)
+    private com.yadony.api.matching.BidRepository bidRepository;
+
     public MobileMoneyNegotiationPaymentService(PaymentRepository paymentRepository, UserRepository userRepository,
                                                 PawapayOperationService operations, PawapaySubmissionService submission,
                                                 PawapayProviderResolver providers, FirebaseContactService firebaseContact,
@@ -284,6 +288,21 @@ public class MobileMoneyNegotiationPaymentService {
                 .filter(p -> p.getRail() == PaymentRail.PAWAPAY);
         Optional<PawapayOperationEntity> deposit = payment.flatMap(p -> operations.findLatest(p.getId(), PawapayOperationKind.DEPOSIT));
         return status(threadId, deadline, payment, deposit);
+    }
+
+    /**
+     * Règle de versement figée du colis matérialisé par un fil ({@code DELIVERY} ou {@code DEPOSIT}), {@code null} sans
+     * colis (fil pas encore payé) ou règle pas encore figée.
+     */
+    @Transactional(readOnly = true)
+    public String payoutTriggerOf(UUID materializedBidId) {
+        if (materializedBidId == null || bidRepository == null) {
+            return null;
+        }
+        return bidRepository.findById(materializedBidId)
+                .filter(com.yadony.api.matching.BidEntity::isPayoutTriggerFrozen)
+                .map(b -> b.getPayoutTrigger().name())
+                .orElse(null);
     }
 
     private MobileMoneyNegotiationStatusResponse status(UUID threadId, LocalDateTime deadline, Optional<PaymentEntity> payment,

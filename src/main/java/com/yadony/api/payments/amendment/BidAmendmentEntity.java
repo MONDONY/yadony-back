@@ -64,6 +64,14 @@ public class BidAmendmentEntity extends BaseEntity {
     @Column(name = "capacity_reserved_kg", nullable = false, precision = 8, scale = 2)
     private BigDecimal capacityReservedKg = BigDecimal.ZERO;
 
+    /** Volume ajouté par la demande (trajet vendu au m³, V384) ; nul pour un ajout de kilos ou d'articles. */
+    @Column(name = "added_volume_m3", precision = 8, scale = 3)
+    private BigDecimal addedVolumeM3;
+
+    /** Volume réellement retiré du trajet : remis à 0 quand il est rendu (une seule fois). */
+    @Column(name = "capacity_reserved_volume_m3", nullable = false, precision = 8, scale = 3)
+    private BigDecimal capacityReservedVolumeM3 = BigDecimal.ZERO;
+
     @Column(name = "net_amount", nullable = false, precision = 14, scale = 2)
     private BigDecimal netAmount;
 
@@ -175,6 +183,12 @@ public class BidAmendmentEntity extends BaseEntity {
     public void setAddedWeightKg(BigDecimal addedWeightKg) { this.addedWeightKg = addedWeightKg; }
     public BigDecimal getCapacityReservedKg() { return capacityReservedKg; }
     public void setCapacityReservedKg(BigDecimal capacityReservedKg) { this.capacityReservedKg = capacityReservedKg; }
+    public BigDecimal getAddedVolumeM3() { return addedVolumeM3; }
+    public void setAddedVolumeM3(BigDecimal addedVolumeM3) { this.addedVolumeM3 = addedVolumeM3; }
+    public BigDecimal getCapacityReservedVolumeM3() { return capacityReservedVolumeM3; }
+    public void setCapacityReservedVolumeM3(BigDecimal capacityReservedVolumeM3) {
+        this.capacityReservedVolumeM3 = capacityReservedVolumeM3;
+    }
     public BigDecimal getNetAmount() { return netAmount; }
     public void setNetAmount(BigDecimal netAmount) { this.netAmount = netAmount; }
     public BigDecimal getCommissionAmount() { return commissionAmount; }

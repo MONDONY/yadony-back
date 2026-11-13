@@ -158,11 +158,16 @@ public class BidAmendmentEligibility {
         return YadonyBusinessException.localized(status, code, "problem.amendment-unavailable", String.valueOf(code));
     }
 
-    /** Des kilos libres vendus au kilo (ou une capacité libre), ou des articles de grille. */
+    /**
+     * Des kilos libres vendus au kilo (ou une capacité libre), du volume libre sur un trajet vendu au m³, ou des
+     * articles de grille.
+     */
     private static boolean hasSomethingToAdd(AnnouncementEntity announcement, Facts facts) {
         boolean freeKg = announcement.getPricePerKg() != null
                 && (announcement.getCapacityUnit() == CapacityUnit.KG_FREE
                 || (announcement.getAvailableKg() != null && announcement.getAvailableKg().signum() > 0));
-        return freeKg || facts.hasGridItems().getAsBoolean();
+        boolean freeVolume = announcement.isPricedPerM3()
+                && announcement.getAvailableVolumeM3() != null && announcement.getAvailableVolumeM3().signum() > 0;
+        return freeKg || freeVolume || facts.hasGridItems().getAsBoolean();
     }
 }

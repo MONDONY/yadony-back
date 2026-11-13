@@ -1110,6 +1110,49 @@ class NotificationDispatcherTest {
         assertThat(body.getValue()).contains("100,00").doesNotContain("€").doesNotContain("112");
     }
 
+    /** Colis payé au dépôt, rail carte : « Colis déposé : … versé » au transporteur, l'expéditeur prévenu une fois. */
+    @Test
+    void onPaymentReleased_atDeposit_card_travelerDepositText_senderNotifiedOnce() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(PaymentReleasedEvent.card(bidId, travelerId, senderId,
+                new BigDecimal("112.00"), new BigDecimal("12.00"), "EUR").atDeposit());
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"), body.capture(), any());
+        assertThat(body.getValue()).startsWith("Colis déposé").contains("100,00");
+        ArgumentCaptor<String> senderBody = ArgumentCaptor.forClass(String.class);
+        verify(fcmService, org.mockito.Mockito.times(1)).sendToUser(eq(senderId), eq("Colis déposé"),
+                senderBody.capture(), any());
+        assertThat(senderBody.getValue()).contains("transporteur a été payé");
+    }
+
+    /** Colis payé au dépôt, rail mobile money : texte dédié au transporteur, expéditeur prévenu. */
+    @Test
+    void onPaymentReleased_atDeposit_mobileMoney_depositText() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(new PaymentReleasedEvent(bidId, travelerId, senderId, new BigDecimal("15000"),
+                "XOF", true).atDeposit());
+
+        verify(fcmService).sendToUser(eq(travelerId), eq("Versement envoyé"),
+                org.mockito.ArgumentMatchers.startsWith("Colis déposé"), any());
+        verify(fcmService).sendToUser(eq(senderId), eq("Colis déposé"), any(), any());
+    }
+
+    /** Versement ordinaire (livraison) : l'expéditeur n'est pas notifié, texte inchangé. */
+    @Test
+    void onPaymentReleased_notAtDeposit_senderNotNotified() {
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onPaymentReleased(PaymentReleasedEvent.card(bidId, travelerId, senderId,
+                new BigDecimal("112.00"), new BigDecimal("12.00"), "EUR"));
+
+        verify(fcmService, never()).sendToUser(eq(senderId), any(), any(), any());
+        verify(fcmService).sendToUser(eq(travelerId), eq("Paiement reçu !"),
+                org.mockito.ArgumentMatchers.argThat((String s) -> !s.startsWith("Colis déposé")), any());
+    }
+
     /**
      * Tâche 16 (pawaPay) : le rail mobile money bascule sur un texte "Versement envoyé" dans
      * la devise locale ; le rail carte (constructeur 4-arg legacy, EUR/mobileMoney=false par

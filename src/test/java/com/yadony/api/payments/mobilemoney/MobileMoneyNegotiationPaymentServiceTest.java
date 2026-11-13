@@ -84,6 +84,25 @@ class MobileMoneyNegotiationPaymentServiceTest {
         payoutAccounts.give(travelerId, "XOF", "ORANGE_SEN", "WAVE_SEN");
     }
 
+    @Test
+    void payoutTriggerOf_materializedBid_frozenRuleOnly() {
+        assertThat(service.payoutTriggerOf(null)).isNull();
+        com.yadony.api.matching.BidRepository bids = org.mockito.Mockito.mock(com.yadony.api.matching.BidRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "bidRepository", bids);
+        UUID bidId = UUID.randomUUID();
+        com.yadony.api.matching.BidEntity bid = new com.yadony.api.matching.BidEntity();
+        when(bids.findById(bidId)).thenReturn(java.util.Optional.of(bid));
+
+        assertThat(service.payoutTriggerOf(bidId)).isNull();
+
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTrigger",
+                com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "payoutTriggerFrozenAt",
+                java.time.LocalDateTime.now());
+        assertThat(service.payoutTriggerOf(bidId)).isEqualTo("DEPOSIT");
+        assertThat(service.status(threadId, null).withPayoutTrigger("DEPOSIT").payoutTrigger()).isEqualTo("DEPOSIT");
+    }
+
     /** Même props, avec un résolveur RÉEL adossé à {@link #client} mocké — seule façon de faire lever
      * {@code PawapayProviderResolver.UnsupportedNumberException} (constructeur package-private,
      * inaccessible depuis ce package) : jumeau de la construction de service dans

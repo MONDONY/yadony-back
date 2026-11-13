@@ -141,6 +141,12 @@ Endpoints publics attendus : `/api/v1/auth/**`, `/actuator/health`,
   l'acceptation du bid afin d'éviter l'expiration de l'autorisation. Le versement au
   voyageur (`Transfer`) n'a lieu qu'après `DeliveryConfirmedEvent`, ou force-release
   admin J+48. Ne pas confondre capture et versement.
+- Pas de capture ni de versement sans `DeliveryConfirmedEvent`, SAUF : force-release admin,
+  colis non réclamé, et colis bateau figé DEPOSIT (`bids.payout_trigger = DEPOSIT`, figé à
+  l'acceptation) : versé au `ParcelDepositedEvent` (scan DEPART avec QR de l'expéditeur et
+  photo). Après ce versement, aucun remboursement automatique : annulation, refus du colis
+  et annulation du trajet répondent 409 `deposit-paid-no-refund` (support, litige). Ne
+  jamais verser au dépôt un colis DELIVERY.
 - La commission dony est de 12 % configurable. Respecter le modèle de paiement en
   place; ne pas ajouter `application_fee_amount` à un flux qui utilise les separate
   charges and transfers.

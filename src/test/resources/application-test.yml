@@ -85,6 +85,9 @@ yadony:
   payments:
     auto-heal:
       enabled: false
+    # Rattrapage du dépôt : appelé directement par ses tests.
+    deposit-retry:
+      enabled: false
     release-recovery:
       enabled: false
     bank-payout-sync:

@@ -526,7 +526,7 @@ public class StripeService {
 - Valider la signature des webhooks Stripe avant tout traitement
 - **Montant net TOUJOURS recalculé côté serveur** (grid items snapshotés + poids × prix/kg) dans `PaymentService.createEscrow`. Un `totalNetEur` reçu du client est purement indicatif et recoupé (422 `amount-mismatch` sinon) — ne jamais le prendre comme source de vérité du montant.
 
-**Invariant de capture (separate charges & transfers) :** dans le modèle actuel non-legacy, le `PaymentIntent` est **capturé dès l'acceptation du bid** (`BidAcceptedEventListener`) — l'autorisation Stripe expirant ~7 j, insuffisant pour un acheminement vers l'Afrique. La protection escrow tient au **Transfer** : le voyageur n'est payé qu'au `Transfer.create` déclenché par `DeliveryConfirmedEvent` (`DeliveryEventListener.releaseV2`) ou force-release admin J+48. L'invariant réel est donc « pas de **versement voyageur** sans `DeliveryConfirmedEvent` », pas « pas de capture ». (Legacy destination-charge : capture bien à la livraison.) Vérifier que les CGU / l'UI de paiement informent l'expéditeur qu'il est débité à l'acceptation.
+**Invariant de capture (separate charges & transfers) :** dans le modèle actuel non-legacy, le `PaymentIntent` est **capturé dès l'acceptation du bid** (`BidAcceptedEventListener`) — l'autorisation Stripe expirant ~7 j, insuffisant pour un acheminement vers l'Afrique. La protection escrow tient au **Transfer** : le voyageur n'est payé qu'au `Transfer.create` déclenché par `DeliveryConfirmedEvent` (`DeliveryEventListener.releaseV2`) ou force-release admin J+48. L'invariant réel est donc « pas de **versement voyageur** sans `DeliveryConfirmedEvent` », pas « pas de capture ». **Exception colis bateau (décision du propriétaire du 11/11) :** pas de capture sans `DeliveryConfirmedEvent`, SAUF colis bateau figé DEPOSIT (`bids.payout_trigger = DEPOSIT`, figé à l'acceptation par `PayoutTriggerPolicy`) : versé au `ParcelDepositedEvent` (scan DEPART avec QR de l'expéditeur et photo, `DeliveryEventListener.handleParcelDeposited`, même claim et même clé Stripe que la livraison). Après ce versement, aucun remboursement automatique : annulation, refus du colis et annulation du trajet répondent 409 `deposit-paid-no-refund` (port `cancellation.DepositPayoutPort`), le support ouvre un litige. Un colis DELIVERY n'est jamais versé au dépôt. (Legacy destination-charge : capture bien à la livraison.) Vérifier que les CGU / l'UI de paiement informent l'expéditeur qu'il est débité à l'acceptation.
 
 ### 9. File Storage (Cloudflare R2)
 
@@ -690,7 +690,7 @@ public class AnnouncementService {
 5. ❌ Inject services directly across packages (use Spring Events)
 6. ❌ Put cancellation logic in `matching/` package (dedicated `cancellation/` package)
 7. ❌ Return raw exceptions from controllers (use `GlobalExceptionHandler`)
-8. ❌ Capture Stripe PaymentIntent without `DeliveryConfirmedEvent` (except admin force-release)
+8. ❌ Capture Stripe PaymentIntent without `DeliveryConfirmedEvent` (except admin force-release, and colis bateau figé DEPOSIT : versé au `ParcelDepositedEvent`)
 9. ❌ Expose direct public URLs for KYC files (presigned URLs only)
 10. ❌ Use Redis in MVP (Caffeine only)
 11. ❌ Create generic `Utils.java` (shared code goes in `common/`)

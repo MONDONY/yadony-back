@@ -69,4 +69,40 @@ class EscrowSchedulerTest {
 
         verify(adminAlertRepository, never()).save(any());
     }
+
+    @Test
+    void depositedParcelUnpaidAfter48h_raisesADedicatedAlertOnce_evenWithoutAnOldEscrow() {
+        UUID paymentId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        when(paymentRepository.findByStatusAndCreatedAtBefore(eq(PaymentStatus.ESCROW), any())).thenReturn(List.of());
+        // Deux lignes pour le même paiement (deux colis rattachés au même fil) : une seule alerte.
+        when(paymentRepository.findDepositedUnreleasedEscrows(any()))
+                .thenReturn(List.of(payment(paymentId, bidId), payment(paymentId, bidId)));
+        when(adminAlertRepository.findByTypeAndResolved("DEPOSIT_J48_NOT_PAID", false)).thenReturn(List.of());
+
+        scheduler.checkEscrowTimeouts();
+
+        ArgumentCaptor<AdminAlertEntity> saved = ArgumentCaptor.forClass(AdminAlertEntity.class);
+        verify(adminAlertRepository, org.mockito.Mockito.times(1)).save(saved.capture());
+        AdminAlertEntity alert = saved.getValue();
+        assertThat(alert.getType()).isEqualTo("DEPOSIT_J48_NOT_PAID");
+        assertThat(alert.getSeverity()).isEqualTo("WARN");
+        assertThat(alert.getDetail()).contains("déposé").contains(paymentId.toString()).contains("48 h");
+        assertThat(alert.getPayload()).contains(paymentId.toString());
+    }
+
+    @Test
+    void depositedParcelAlreadyAlerted_noSecondAlert() {
+        UUID paymentId = UUID.randomUUID();
+        when(paymentRepository.findByStatusAndCreatedAtBefore(eq(PaymentStatus.ESCROW), any())).thenReturn(List.of());
+        when(paymentRepository.findDepositedUnreleasedEscrows(any()))
+                .thenReturn(List.of(payment(paymentId, UUID.randomUUID())));
+        AdminAlertEntity existing = new AdminAlertEntity();
+        existing.setPayload("{\"paymentId\":\"" + paymentId + "\"}");
+        when(adminAlertRepository.findByTypeAndResolved("DEPOSIT_J48_NOT_PAID", false)).thenReturn(List.of(existing));
+
+        scheduler.checkEscrowTimeouts();
+
+        verify(adminAlertRepository, never()).save(any());
+    }
 }

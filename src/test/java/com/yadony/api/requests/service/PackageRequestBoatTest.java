@@ -53,7 +53,7 @@ import static org.mockito.Mockito.when;
 /**
  * Demande bateau (lot 3, BA4) : dimensions obligatoires en bateau, volume calculé côté serveur, budget
  * sans plafond Yadony (seul le garde-fou technique de 1 000 000 reste), avion et « peu importe »
- * inchangés. Le matching au m³ reste fermé jusqu'à BB2 (voir {@code MatchingServiceTest}).
+ * inchangés. Le matching au m³ compare le volume de la demande au volume restant (voir {@code MatchingServiceTest}).
  */
 @ExtendWith(MockitoExtension.class)
 class PackageRequestBoatTest {

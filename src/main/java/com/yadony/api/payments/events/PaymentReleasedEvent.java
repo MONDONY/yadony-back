@@ -36,6 +36,11 @@ public class PaymentReleasedEvent {
      * alors sur {@code amount}. {@code amount} garde sa sémantique historique (voir plus haut).
      */
     private final BigDecimal travelerNet;
+    /**
+     * Versement d'un colis payé au dépôt (règle {@code DEPOSIT}) : textes « colis déposé » pour le transporteur, et
+     * l'expéditeur est prévenu que le transporteur a été payé. Faux pour tout autre versement.
+     */
+    private final boolean deposit;
 
     /**
      * Rail carte : {@code amount} reste le brut (sémantique historique), la devise est celle
@@ -63,11 +68,16 @@ public class PaymentReleasedEvent {
      */
     public PaymentReleasedEvent(UUID bidId, UUID travelerId, UUID senderId, BigDecimal amount,
                                 String currency, boolean mobileMoney) {
-        this(bidId, travelerId, senderId, amount, currency, mobileMoney, null);
+        this(bidId, travelerId, senderId, amount, currency, mobileMoney, null, false);
     }
 
     private PaymentReleasedEvent(UUID bidId, UUID travelerId, UUID senderId, BigDecimal amount,
                                  String currency, boolean mobileMoney, BigDecimal travelerNet) {
+        this(bidId, travelerId, senderId, amount, currency, mobileMoney, travelerNet, false);
+    }
+
+    private PaymentReleasedEvent(UUID bidId, UUID travelerId, UUID senderId, BigDecimal amount,
+                                 String currency, boolean mobileMoney, BigDecimal travelerNet, boolean deposit) {
         this.bidId = bidId;
         this.travelerId = travelerId;
         this.senderId = senderId;
@@ -75,6 +85,12 @@ public class PaymentReleasedEvent {
         this.currency = currency;
         this.mobileMoney = mobileMoney;
         this.travelerNet = travelerNet;
+        this.deposit = deposit;
+    }
+
+    /** Le même versement, marqué « payé au dépôt » (montants et rail inchangés). */
+    public PaymentReleasedEvent atDeposit() {
+        return new PaymentReleasedEvent(bidId, travelerId, senderId, amount, currency, mobileMoney, travelerNet, true);
     }
 
     public UUID getBidId()       { return bidId; }
@@ -84,4 +100,5 @@ public class PaymentReleasedEvent {
     public String getCurrency()  { return currency; }
     public boolean isMobileMoney(){ return mobileMoney; }
     public BigDecimal getTravelerNet() { return travelerNet; }
+    public boolean isDeposit()   { return deposit; }
 }

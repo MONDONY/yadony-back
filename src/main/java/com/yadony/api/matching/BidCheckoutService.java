@@ -99,9 +99,6 @@ public class BidCheckoutService {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
 
-        // Trajet bateau au m³ : pas encore réservable (même garde que BidService.assertCanBidOn).
-        BoatVolumeBooking.assertBookableByKg(announcement);
-
         // FLUTTER-GA : même garde que la création d'une demande (BidService.assertCanBidOn),
         // absente du paiement carte direct — reprise d'un paiement en attente comprise.
         HandoverDeadlineRules.assertNotPassed(announcement);
@@ -187,10 +184,16 @@ public class BidCheckoutService {
         // valeur stockée factice (>= 1) sans signification. On ne plafonne donc
         // pas le poids dans ce cas, sinon le poids saisi librement (>= 5) serait
         // rejeté à tort par le « weight-exceeds-capacity » 422.
-        boolean isKgFree = announcement.getCapacityUnit() == CapacityUnit.KG_FREE;
-        if (!isKgFree && req.weightKg() != null
-                && req.weightKg().compareTo(announcement.getAvailableKg()) > 0) {
-            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "weight-exceeds-capacity", "problem.weight-exceeds-capacity");
+        TripCapacity.assertWeightBookable(announcement, req.weightKg());
+
+        // Trajet bateau vendu au m³ : volume calculé par le serveur depuis les dimensions (422
+        // boat-dimensions-required sans elles), comparé au volume restant (422 insufficient-volume), et prix
+        // borné (422 volume-price-too-high), AVANT le bid et l'escrow. Hors trajet au m³ : dimensions ignorées.
+        BigDecimal volumeM3 = ParcelFitRules.resolveBidVolume(announcement,
+                req.lengthCm(), req.widthCm(), req.heightCm());
+        ParcelFitRules.assertVolumeFits(announcement, volumeM3);
+        if (volumeM3 != null) {
+            BidNetTotal.bookableVolumeNet(announcement, volumeM3);
         }
 
         // Taille et poids max par colis du trajet : refus 422 AVANT le bid et l'escrow (aucun paiement).
@@ -201,10 +204,11 @@ public class BidCheckoutService {
         boolean hasGrid = !gridItems.isEmpty();
         boolean hasKg   = req.weightKg() != null && req.weightKg().compareTo(BigDecimal.ZERO) > 0;
 
-        if (!hasGrid && !hasKg) {
+        if (!hasGrid && !hasKg && volumeM3 == null) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "bid-empty", "problem.bid-empty");
         }
 
+        // Colis au volume : KG (barème unitaire), comme BidService.createBid.
         BidPricingMode bidMode = hasGrid && hasKg ? BidPricingMode.MIXED
                                : hasGrid          ? BidPricingMode.GRID
                                :                    BidPricingMode.KG;
@@ -219,6 +223,7 @@ public class BidCheckoutService {
         bid.setCurrency(announcement.getCurrency());
         bid.setWeightKg(hasKg ? req.weightKg() : null);
         bid.setItemSize(itemSize);
+        bid.setVolumeM3(volumeM3);
         bid.setPricingMode(bidMode);
         bid.setDescription(req.description());
         bid.setContentCategory(normalizedContentCategory);
@@ -259,10 +264,9 @@ public class BidCheckoutService {
         eventPublisher.publishEvent(new com.yadony.api.matching.events.BidDescriptionSubmittedEvent(
                 saved.getId(), sender.getId(), saved.getDescription()));
 
-        BigDecimal kgNet = hasKg && announcement.getPricePerKg() != null
-            ? saved.getWeightKg().multiply(announcement.getPricePerKg())
-            : BigDecimal.ZERO;
-        BigDecimal totalNet = gridNet.add(kgNet);
+        // Part au barème (poids × prix au kilo, ou volume × prix au m³) : la même règle que le recalcul
+        // serveur de PaymentService.createEscrow, sinon 422 amount-mismatch.
+        BigDecimal totalNet = gridNet.add(BidNetTotal.scheduleNet(saved, announcement));
 
         // Délégation à PaymentService — crée le PaymentIntent Stripe
         CreatePaymentRequest paymentReq = new CreatePaymentRequest();

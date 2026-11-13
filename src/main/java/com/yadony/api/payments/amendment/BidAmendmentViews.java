@@ -45,7 +45,8 @@ public final class BidAmendmentViews {
                 a.getClosedReason() == null ? null : a.getClosedReason().name(),
                 blocksHandover(a, window.now(), window),
                 forSender || a.getCommissionStatus() == null ? null : a.getCommissionStatus().name(),
-                null);
+                null,
+                a.getAddedVolumeM3());
     }
 
     /**

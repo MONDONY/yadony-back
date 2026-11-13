@@ -660,6 +660,75 @@ class AnnouncementBoatPublishIT {
         assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().isPricedPerM3()).isFalse();
     }
 
+    private BidEntity bidOn(String tripId, UserEntity sender, BidStatus status) {
+        BidEntity bid = new BidEntity();
+        bid.setAnnouncementId(UUID.fromString(tripId));
+        bid.setSenderId(sender.getId());
+        bid.setWeightKg(new BigDecimal("5"));
+        bid.setStatus(status);
+        bid.setCurrency("EUR");
+        return bidRepository.save(bid);
+    }
+
+    /**
+     * Revue BB1 I1 : un trajet avion déjà payé passé au bateau avant l'acceptation figerait le colis
+     * « versé au dépôt, sans remboursement » alors que l'expéditeur a payé « gardé jusqu'à la livraison ».
+     * Tout passage vers ou depuis le bateau est refusé dès qu'un colis ou une offre vivante existe.
+     */
+    @Test
+    void editPlaneToBoat_withLiveBid_409_transportModeLocked() throws Exception {
+        seed(true, false);
+        String id = createTrip("PLANE", false);
+        UserEntity sender = userRepository.save(sender());
+        for (BidStatus live : List.of(BidStatus.PAYMENT_ESCROWED, BidStatus.AWAITING_PAYMENT, BidStatus.PENDING,
+                BidStatus.NEGOTIATING)) {
+            BidEntity bid = bidOn(id, sender, live);
+
+            putTrip(id, tripBody("BOAT", false)).andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("transport-mode-locked"))
+                    .andExpect(jsonPath("$.type").value(endsWith("transport-mode-locked")));
+            bidRepository.delete(bid);
+        }
+        assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().getTransportMode())
+                .isEqualTo(TransportMode.PLANE);
+    }
+
+    @Test
+    void editBoatToPlane_withPaidBid_409_transportModeLocked() throws Exception {
+        seed(true, false);
+        String id = createTrip("BOAT", false);
+        UserEntity sender = userRepository.save(sender());
+        bidOn(id, sender, BidStatus.PAYMENT_ESCROWED);
+
+        putTrip(id, tripBody("PLANE", false)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("transport-mode-locked"));
+        assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().getTransportMode())
+                .isEqualTo(TransportMode.BOAT);
+    }
+
+    @Test
+    void editPlaneToBoat_withOnlyClosedBids_200() throws Exception {
+        seed(true, false);
+        String id = createTrip("PLANE", false);
+        UserEntity sender = userRepository.save(sender());
+        bidOn(id, sender, BidStatus.REJECTED);
+        bidOn(id, sender, BidStatus.CANCELLED);
+
+        putTrip(id, tripBody("BOAT", false)).andExpect(status().isOk());
+        assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().getTransportMode())
+                .isEqualTo(TransportMode.BOAT);
+    }
+
+    @Test
+    void editPlaneTrip_staysPlane_withLiveBid_notModeLocked() throws Exception {
+        seed(true, false);
+        String id = createTrip("PLANE", false);
+        UserEntity sender = userRepository.save(sender());
+        bidOn(id, sender, BidStatus.PAYMENT_ESCROWED);
+
+        putTrip(id, tripBody("PLANE", false)).andExpect(status().isOk());
+    }
+
     @Test
     void editBoatPerM3ToPlane_clearsBoatFields() throws Exception {
         seed(true, false);
