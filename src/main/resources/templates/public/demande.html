@@ -78,6 +78,10 @@
           <dt>Tolérance</dt>
           <dd th:text="${dateTolerance}">± 3 jours</dd>
         </div>
+        <div class="row" th:if="${transportMode != null}">
+          <dt>Transport</dt>
+          <dd th:text="${transportMode}">Bateau</dd>
+        </div>
         <div class="row" th:if="${weight != null}">
           <dt>Poids</dt>
           <dd th:text="${weight} + ' kg'">10 kg</dd>

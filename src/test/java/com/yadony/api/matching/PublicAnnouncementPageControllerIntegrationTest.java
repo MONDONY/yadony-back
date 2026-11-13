@@ -155,6 +155,42 @@ class PublicAnnouncementPageControllerIntegrationTest {
     }
 
     @Test
+    void annonce_showsRoadForBus() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setTransportMode(TransportMode.BUS);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("transportMode", "Route"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("<dt>Transport</dt>")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Route")));
+    }
+
+    @Test
+    void annonce_roadTripHasNoFlightWording() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+        a.setTransportMode(TransportMode.CAR);
+        announcementRepository.saveAndFlush(a);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Escales"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Avion"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(" vol "))));
+    }
+
+    @Test
+    void annonce_planeShowsTransportRowAvion() throws Exception {
+        AnnouncementEntity a = persistAnnouncement(AnnouncementStatus.ACTIVE);
+
+        mockMvc.perform(get("/public/annonce/" + a.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(model().attribute("transportMode", "Avion"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("<dt>Transport</dt>")));
+    }
+
+    @Test
     void arrivalRangeLabel_sameYearSameDayOrOpenEnded() {
         AnnouncementEntity a = new AnnouncementEntity();
         a.setArrivalDate(LocalDate.of(2027, 1, 12));

@@ -328,4 +328,27 @@ class PublicPackageRequestPageControllerIntegrationTest {
                 .andExpect(content().string(org.hamcrest.Matchers.not(containsString("yadony://demande/pas-un-uuid"))))
                 .andExpect(content().string(org.hamcrest.Matchers.not(containsString("Ouvrir dans Yadony"))));
     }
+
+    @Test
+    void demande_withMode_showsTransportRow_roadForBus() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.OPEN);
+        r.setTransportMode(TransportMode.BUS);
+        packageRequestRepository.saveAndFlush(r);
+
+        mockMvc.perform(get("/public/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("<dt>Transport</dt>")))
+                .andExpect(content().string(containsString("Route")));
+    }
+
+    @Test
+    void demande_anyModeHasNoTransportRow() throws Exception {
+        PackageRequestEntity r = persistRequest(PackageRequestStatus.OPEN);
+        r.setTransportMode(null);
+        packageRequestRepository.saveAndFlush(r);
+
+        mockMvc.perform(get("/public/demande/" + r.getId()).header("User-Agent", BROWSER_UA))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("<dt>Transport</dt>"))));
+    }
 }

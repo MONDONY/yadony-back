@@ -82,6 +82,10 @@
           <dt>Départ</dt>
           <dd th:text="${departureDate}">jeudi 20 août 2026</dd>
         </div>
+        <div class="row" th:if="${transportMode != null}">
+          <dt>Transport</dt>
+          <dd th:text="${transportMode}">Route</dd>
+        </div>
         <div class="row" th:if="${arrivalRange != null}">
           <dt>Arrivée estimée</dt>
           <dd th:text="${arrivalRange}">du 12 décembre au 20 décembre 2026</dd>
