@@ -122,7 +122,13 @@ class ThreadAcceptedBidListenerTest {
             trip.setTransportMode(TransportMode.BOAT);
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(trip));
             java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
-            doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+            // Le gel simulé écrit une vraie règle DEPOSIT : l'audit doit relire la règle figée, pas une constante.
+            doAnswer(inv -> {
+                        BidEntity frozen = inv.getArgument(0);
+                        statusAtFreeze.add(frozen.getStatus());
+                        frozen.freezePayoutTrigger(PayoutTrigger.DEPOSIT, java.time.LocalDateTime.now());
+                        return null;
+                    })
                     .when(payoutTriggerPolicy).freeze(any(BidEntity.class), eq(trip));
 
             listener.onPackageRequestAccepted(buildEvent());
@@ -132,7 +138,7 @@ class ThreadAcceptedBidListenerTest {
             verify(announcementRepository, times(1)).findById(ANNOUNCEMENT_ID);
             ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
             verify(auditService).log(eq("BID"), any(), eq("CREATED_FROM_THREAD"), eq(SENDER_ID), payload.capture());
-            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DELIVERY");
+            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DEPOSIT");
         }
 
         @Test

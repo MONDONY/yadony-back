@@ -148,7 +148,15 @@ class MobileMoneyBidPaymentServiceEscrowTest {
         when(bidRepository.findByIdForUpdate(bid.getId())).thenReturn(Optional.of(bid));
         when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
         java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
-        org.mockito.Mockito.doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+        // Le gel simulé écrit une vraie règle DEPOSIT (champ posé comme le ferait PayoutTriggerPolicy, réservé
+        // au package matching) : l'audit doit relire la règle figée, pas une constante.
+        org.mockito.Mockito.doAnswer(inv -> {
+                    BidEntity frozen = inv.getArgument(0);
+                    statusAtFreeze.add(frozen.getStatus());
+                    org.springframework.test.util.ReflectionTestUtils.setField(frozen, "payoutTrigger",
+                            com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+                    return null;
+                })
                 .when(payoutTriggerPolicy).freeze(bid, announcement);
 
         service.confirmEscrow(op.getId(), payment.getId());
@@ -157,7 +165,7 @@ class MobileMoneyBidPaymentServiceEscrowTest {
         assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(audit).log(eq("PAYMENT"), eq(payment.getId()), eq("MM_ESCROW"), eq(bid.getSenderId()), payload.capture());
-        assertThat(payload.getValue()).containsEntry("payoutTrigger", "DELIVERY");
+        assertThat(payload.getValue()).containsEntry("payoutTrigger", "DEPOSIT");
     }
 
     @Test

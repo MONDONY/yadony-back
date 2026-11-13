@@ -851,7 +851,15 @@ class CashCommissionServiceTest {
         void finalize_freezesPayoutTriggerOnTheTrip_beforeTheBidTurnsAccepted() {
             bid.setCommissionStatus(CommissionStatus.CHARGED);
             java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
-            org.mockito.Mockito.doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+            // Le gel simulé écrit une vraie règle DEPOSIT (champ réservé au package matching) : l'audit
+            // d'acceptation espèces doit relire la règle figée, pas une constante.
+            org.mockito.Mockito.doAnswer(inv -> {
+                        BidEntity frozen = inv.getArgument(0);
+                        statusAtFreeze.add(frozen.getStatus());
+                        org.springframework.test.util.ReflectionTestUtils.setField(frozen, "payoutTrigger",
+                                com.yadony.api.matching.PayoutTrigger.DEPOSIT);
+                        return null;
+                    })
                     .when(payoutTriggerPolicy).freeze(bid, announcement);
 
             try (MockedStatic<PaymentIntent> pi = mockStatic(PaymentIntent.class)) {
@@ -860,6 +868,10 @@ class CashCommissionServiceTest {
 
             assertThat(statusAtFreeze).containsExactly(BidStatus.PENDING);
             assertThat(bid.getStatus()).isEqualTo(BidStatus.ACCEPTED);
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+            verify(auditService).log(eq("BID"), eq(bid.getId()), eq("BID_ACCEPTED"), eq(travelerId), payload.capture());
+            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DEPOSIT");
         }
 
         @Test

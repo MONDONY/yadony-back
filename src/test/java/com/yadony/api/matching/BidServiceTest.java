@@ -1682,17 +1682,24 @@ class BidServiceTest {
             when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
             java.util.List<BidStatus> statusAtFreeze = new java.util.ArrayList<>();
-            org.mockito.Mockito.doAnswer(inv -> statusAtFreeze.add(((BidEntity) inv.getArgument(0)).getStatus()))
+            // Le gel simulé écrit une vraie règle DEPOSIT (pas la valeur par défaut) : la réponse et l'audit
+            // doivent relire la règle figée, pas une constante.
+            org.mockito.Mockito.doAnswer(inv -> {
+                        BidEntity frozen = inv.getArgument(0);
+                        statusAtFreeze.add(frozen.getStatus());
+                        frozen.freezePayoutTrigger(PayoutTrigger.DEPOSIT, java.time.LocalDateTime.now());
+                        return null;
+                    })
                     .when(payoutTriggerPolicy).freeze(bid, announcement, traveler);
 
             BidResponse result = bidService.acceptBid(BID_ID, TRAVELER_UID);
 
             assertThat(statusAtFreeze).containsExactly(BidStatus.PAYMENT_ESCROWED);
-            assertThat(result.payoutTrigger()).isEqualTo("DELIVERY");
+            assertThat(result.payoutTrigger()).isEqualTo("DEPOSIT");
             @SuppressWarnings("unchecked")
             ArgumentCaptor<java.util.Map<String, Object>> payload = ArgumentCaptor.forClass(java.util.Map.class);
             verify(auditService).log(eq("BID"), eq(BID_ID), eq("BID_ACCEPTED"), eq(traveler.getId()), payload.capture());
-            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DELIVERY");
+            assertThat(payload.getValue()).containsEntry("payoutTrigger", "DEPOSIT");
         }
 
         @Test

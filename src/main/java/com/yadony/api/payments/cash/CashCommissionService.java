@@ -1740,6 +1740,14 @@ public class CashCommissionService {
         bid.applyHandoverFrom(announcement);
         bidRepo.save(bid);
 
+        // Même trace que l'acceptation carte (BID_ACCEPTED) : la règle de versement figée est un geste
+        // d'argent, elle doit se relire dans audit_log et pas seulement dans les journaux applicatifs.
+        auditService.log("BID", bid.getId(), "BID_ACCEPTED", travelerId,
+                Map.<String, Object>of("announcementId", announcement.getId().toString(),
+                        "weightKg", bid.getWeightKg() != null ? bid.getWeightKg().toString() : "null",
+                        "paymentMethod", bid.getPaymentMethod() != null ? bid.getPaymentMethod().name() : "null",
+                        "payoutTrigger", bid.getPayoutTrigger().name()));
+
         events.publishEvent(new BidAcceptedEvent(
                 bid.getId(), bid.getSenderId(), travelerId, bid.getAnnouncementId(),
                 bid.getPaymentMethod() != null && bid.getPaymentMethod().isMobileMoney()));

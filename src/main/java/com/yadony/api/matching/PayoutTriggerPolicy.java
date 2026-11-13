@@ -82,8 +82,10 @@ public class PayoutTriggerPolicy {
         PayoutTrigger trigger = decide(trip, traveler);
         bid.freezePayoutTrigger(trigger, LocalDateTime.now(clock));
         if (trigger == PayoutTrigger.DEPOSIT) {
-            log.info("Colis {} accepté : versement au transporteur au dépôt (trajet {})",
-                    bid.getId(), trip.getId());
+            // Chemin du fil : le colis est figé avant son premier enregistrement (id encore nul) ;
+            // l'expéditeur et le trajet l'identifient alors.
+            log.info("Colis {} de l'expéditeur {} accepté : versement au transporteur au dépôt (trajet {})",
+                    bid.getId() != null ? bid.getId() : "(nouveau, issu d'un fil)", bid.getSenderId(), trip.getId());
         }
     }
 
