@@ -143,7 +143,9 @@ class AnnouncementBoatSearchIT {
     /**
      * Ordre réel de {@code buildSort} contre la base : le prix (pivot EUR) mène, un trajet Pro non GP Pro
      * n'est jamais mis en tête, le GP Pro ne fait que départager les prix égaux, puis l'id, et les trajets
-     * au m³ (sans pivot) ferment la liste dans les deux sens.
+     * au m³ (sans pivot) ferment la liste dans les deux sens. Des trajets au kilo en F CFA (prix brut très
+     * supérieur, pivot EUR faible) et en EUR s'intercalent : un tri sur {@code pricePerKg} brut les placerait
+     * tout au bout (FLUTTER-KV) et ferait échouer ce test dans les deux sens.
      */
     @Test
     void priceSort_pivotLeads_gpProBreaksTies_thenId_perM3Last_inBothDirections() {
@@ -151,21 +153,28 @@ class AnnouncementBoatSearchIT {
         UUID gpTie = saveKilo("5", true, false);
         UUID proTie = saveKilo("5", false, true);
         UUID plainTie = saveKilo("5", false, false);
+        // 2 000 F CFA/kg (environ 3,05 EUR) : brut 2 000, pivot sous les 4 EUR.
+        UUID xofLow = saveKiloIn("XOF", "2000", "3.05");
+        // 3 000 F CFA/kg (environ 4,57 EUR) : brut 3 000, pivot entre 4 et 4,80 EUR.
+        UUID xofMid = saveKiloIn("XOF", "3000", "4.57");
+        // 4,80 EUR : en EUR le brut égale le pivot.
+        UUID eurMid = saveKiloIn("EUR", "4.80", "4.80");
         List<UUID> plainTies = new java.util.ArrayList<>(List.of(plane, proTie, plainTie));
         plainTies.sort(java.util.Comparator.comparing(UUID::toString));
 
         List<UUID> asc = ids(search("price", "asc", AnnouncementSearchExtras.NONE));
         List<UUID> desc = ids(search("price", "desc", AnnouncementSearchExtras.NONE));
 
-        // Croissant : 4 € (même non GP Pro) d'abord ; à 5 € le GP Pro, puis les autres par id ; 8 € ; m³ en fin.
-        assertThat(asc.subList(0, 6)).containsExactly(cheap, gpTie, plainTies.get(0), plainTies.get(1),
-                plainTies.get(2), boatPerKg);
-        assertThat(asc.subList(6, 9)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
-        // Décroissant : 8 € d'abord ; à 5 € le GP Pro reste devant (le départage ne s'inverse pas), puis l'id ;
-        // 4 € ; m³ toujours en fin.
-        assertThat(desc.subList(0, 6)).containsExactly(boatPerKg, gpTie, plainTies.get(0), plainTies.get(1),
-                plainTies.get(2), cheap);
-        assertThat(desc.subList(6, 9)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
+        // Croissant (pivot EUR) : 3,05 ; 4 (même non GP Pro) ; 4,57 ; 4,80 ; à 5 le GP Pro puis les autres par id ;
+        // 8 ; m³ en fin.
+        assertThat(asc.subList(0, 9)).containsExactly(xofLow, cheap, xofMid, eurMid, gpTie,
+                plainTies.get(0), plainTies.get(1), plainTies.get(2), boatPerKg);
+        assertThat(asc.subList(9, 12)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
+        // Décroissant : 8 ; à 5 le GP Pro reste devant (le départage ne s'inverse pas), puis l'id ; 4,80 ; 4,57 ; 4 ;
+        // 3,05 ; m³ toujours en fin.
+        assertThat(desc.subList(0, 9)).containsExactly(boatPerKg, gpTie,
+                plainTies.get(0), plainTies.get(1), plainTies.get(2), eurMid, xofMid, cheap, xofLow);
+        assertThat(desc.subList(9, 12)).containsExactlyInAnyOrder(bigEur, smallEur, xof);
     }
 
     @Test
@@ -226,6 +235,14 @@ class AnnouncementBoatSearchIT {
         AnnouncementEntity a = kilo(TransportMode.PLANE, pricePerKg, DEPARTURE.plusDays(1), null);
         a.setTravelerIsGpPro(gpPro);
         a.setTravelerIsPro(pro);
+        return save(a);
+    }
+
+    /** Trajet au kilo dans une devise donnée : prix brut dans la devise du trajet, pivot EUR posé à la main. */
+    private UUID saveKiloIn(String currency, String pricePerKg, String pricePerKgEur) {
+        AnnouncementEntity a = kilo(TransportMode.PLANE, pricePerKg, DEPARTURE.plusDays(1), null);
+        a.setCurrency(currency);
+        a.setPricePerKgEur(new BigDecimal(pricePerKgEur));
         return save(a);
     }
 
