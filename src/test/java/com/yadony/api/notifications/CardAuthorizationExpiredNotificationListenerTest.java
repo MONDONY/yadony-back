@@ -46,9 +46,8 @@ class CardAuthorizationExpiredNotificationListenerTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
-        verify(dispatcher).notifyUser(eq(SENDER_ID), eq("Autorisation de paiement expirée"),
-                eq("Le voyageur n'a pas répondu à temps et l'autorisation de votre carte a expiré. "
-                        + "Vous n'avez pas été débité, vous pouvez refaire votre demande."),
+        verify(dispatcher).notifyUser(eq(SENDER_ID), eq("Paiement par carte expiré"),
+                eq("Voyageur sans réponse : vous n'êtes pas débité. Refaites la demande."),
                 data.capture());
         assertThat(data.getValue())
                 .containsEntry("type", "BID_EXPIRED")

@@ -77,6 +77,7 @@ class NotificationTextsTest {
         map.put("bidRejected", NotificationTexts.bidRejected(m));
         map.put("handoverDeadlinePassed", NotificationTexts.handoverDeadlinePassed(m));
         map.put("handoverDeadlinePassedRefunded", NotificationTexts.handoverDeadlinePassedRefunded(m));
+        map.put("cardAuthorizationExpired", NotificationTexts.cardAuthorizationExpired(m));
         map.put("handoverExpired", NotificationTexts.handoverExpired(m, false));
         map.put("handoverExpired commission rendue", NotificationTexts.handoverExpired(m, true));
         map.put("bidRejectedTripWithdrawn", NotificationTexts.bidRejectedTripWithdrawn(m));
@@ -638,6 +639,14 @@ class NotificationTextsTest {
                 "Drop-off deadline passed", "The drop-off deadline has passed: request cancelled."));
         assertThat(NotificationTexts.handoverDeadlinePassedRefunded(TestMessages.en()).body())
                 .isEqualTo("The drop-off deadline has passed: request cancelled and refunded.");
+    }
+
+    @Test
+    void cardAuthorizationExpired_bothLanguages() {
+        assertThat(NotificationTexts.cardAuthorizationExpired(TestMessages.fr())).isEqualTo(new NotificationText(
+                "Paiement par carte expiré", "Voyageur sans réponse : vous n'êtes pas débité. Refaites la demande."));
+        assertThat(NotificationTexts.cardAuthorizationExpired(TestMessages.en())).isEqualTo(new NotificationText(
+                "Card payment expired", "The traveler did not reply: you were not charged. Please resend."));
     }
 
     // Log prod du 19/10 : « Votre recharge de 2 000 F CFA avec MTN MoMo n'a pas abouti : Le
