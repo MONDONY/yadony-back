@@ -26,7 +26,7 @@ import java.util.UUID;
 @Table(name = "conversations")
 public class ConversationEntity extends BaseEntity {
 
-    @Column(name = "bid_id", nullable = false)
+    @Column(name = "bid_id")
     private UUID bidId;
 
     /** Participant A : expéditeur (SENDER_TRAVELER) ou destinataire (RECIPIENT_TRAVELER). */
@@ -89,6 +89,24 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "traveler_last_message_at", insertable = false, updatable = false)
     private LocalDateTime travelerLastMessageAt;
 
+    /** Annonce visée par une conversation INQUIRY (V383) ; conservée après promotion. */
+    @Column(name = "announcement_id")
+    private UUID announcementId;
+
+    /** Demandeur d'une conversation INQUIRY (V383) ; égal à {@code senderId} tant qu'elle l'est. */
+    @Column(name = "asker_id")
+    private UUID askerId;
+
+    /** Quota de messages INQUIRY levé (bid créé) ; nul tant que le quota s'applique. */
+    @Column(name = "quota_lifted_at")
+    private LocalDateTime quotaLiftedAt;
+
+    @Column(name = "inquiry_first_message_at")
+    private LocalDateTime inquiryFirstMessageAt;
+
+    @Column(name = "last_activity_at")
+    private LocalDateTime lastActivityAt;
+
     public ConversationEntity() {}
 
     public ConversationEntity(UUID bidId, UUID senderId, UUID travelerId, String firestoreConversationId) {
@@ -104,6 +122,46 @@ public class ConversationEntity extends BaseEntity {
         ConversationEntity c = new ConversationEntity(bidId, recipientId, travelerId, firestoreConversationId);
         c.kind = ConversationKind.RECIPIENT_TRAVELER;
         return c;
+    }
+
+    /**
+     * Conversation avant réservation : {@code sender_id} porte le demandeur, {@code traveler_id}
+     * le propriétaire de l'annonce, sans bid.
+     */
+    public static ConversationEntity forInquiry(UUID askerId, UUID announcementId, UUID ownerId,
+                                                String firestoreConversationId) {
+        ConversationEntity c = new ConversationEntity(null, askerId, ownerId, firestoreConversationId);
+        c.kind = ConversationKind.INQUIRY;
+        c.askerId = askerId;
+        c.announcementId = announcementId;
+        return c;
+    }
+
+    public boolean isInquiry() {
+        return kind == ConversationKind.INQUIRY;
+    }
+
+    public boolean isQuotaLifted() {
+        return quotaLiftedAt != null;
+    }
+
+    /** Un bid est créé : la conversation devient SENDER_TRAVELER et le quota est levé. */
+    public void promoteToBid(UUID bidId, LocalDateTime at) {
+        this.bidId = bidId;
+        this.kind = ConversationKind.SENDER_TRAVELER;
+        this.quotaLiftedAt = at;
+    }
+
+    /** Le bid est annulé : retour à INQUIRY, sans bid, quota réappliqué. */
+    public void relockToInquiry(LocalDateTime at) {
+        if (announcementId == null || askerId == null) {
+            throw new IllegalStateException(
+                    "Impossible de re-verrouiller en INQUIRY sans announcement_id ni asker_id");
+        }
+        this.bidId = null;
+        this.kind = ConversationKind.INQUIRY;
+        this.quotaLiftedAt = null;
+        this.lastActivityAt = at;
     }
 
     public boolean isRecipientConversation() {
@@ -237,6 +295,12 @@ public class ConversationEntity extends BaseEntity {
             messagesPurgedAt = at;
         }
     }
+
+    public UUID getAnnouncementId() { return announcementId; }
+    public UUID getAskerId() { return askerId; }
+    public LocalDateTime getQuotaLiftedAt() { return quotaLiftedAt; }
+    public LocalDateTime getInquiryFirstMessageAt() { return inquiryFirstMessageAt; }
+    public LocalDateTime getLastActivityAt() { return lastActivityAt; }
 
     public LocalDateTime getTravelerLastMessageAt() { return travelerLastMessageAt; }
 }
