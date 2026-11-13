@@ -195,6 +195,11 @@ class NotificationTextsTest {
         map.put("loyalSender", NotificationTexts.loyalSender(m, NOM, DEPART, ARRIVEE));
         map.put("paymentReleased", NotificationTexts.paymentReleased(m, "12500,00 €"));
         map.put("mobileMoneyPayoutSent", NotificationTexts.mobileMoneyPayoutSent(m, NotificationTexts.amount(MONTANT, "XOF")));
+        // Versement au dépôt (colis bateau payé au dépôt) : mêmes caps que le versement à la livraison.
+        map.put("paymentReleasedAtDeposit", NotificationTexts.paymentReleasedAtDeposit(m, "12500,00 €"));
+        map.put("mobileMoneyPayoutSentAtDeposit", NotificationTexts.mobileMoneyPayoutSentAtDeposit(m,
+                NotificationTexts.amount(MONTANT, "XOF")));
+        map.put("depositPaidForSender", NotificationTexts.depositPaidForSender(m));
         map.put("mobileMoneyPaymentConfirmed", NotificationTexts.mobileMoneyPaymentConfirmed(m));
         map.put("mobileMoneyPaymentReceived", NotificationTexts.mobileMoneyPaymentReceived(m));
         map.put("mobileMoneyPaymentPending", NotificationTexts.mobileMoneyPaymentPending(m, 99));
