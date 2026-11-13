@@ -17,33 +17,33 @@ class ParcelStepsTest {
 
     @Test
     void aucunEvenement_attenteDuDepart() {
-        assertThat(ParcelSteps.currentStep(List.of())).isEqualTo("En attente du scan de départ");
+        assertThat(ParcelSteps.currentStep(List.of(), null)).isEqualTo("En attente du scan de départ");
     }
 
     @Test
     void depart_seul_enRoute_sansTiretCadratin() {
-        String step = ParcelSteps.currentStep(List.of(event(TrackingEventType.DEPART)));
+        String step = ParcelSteps.currentStep(List.of(event(TrackingEventType.DEPART)), null);
         assertThat(step).isEqualTo("Remis au voyageur, en route");
         assertThat(step).doesNotContain("—");
     }
 
     @Test
     void transit_lEmporteSurDepart() {
-        assertThat(ParcelSteps.currentStep(List.of(event(TrackingEventType.DEPART), event(TrackingEventType.TRANSIT))))
+        assertThat(ParcelSteps.currentStep(List.of(event(TrackingEventType.DEPART), event(TrackingEventType.TRANSIT)), null))
                 .isEqualTo("En transit");
     }
 
     @Test
     void arrivee_lEmporteSurTout() {
-        assertThat(ParcelSteps.currentStep(List.of(event(TrackingEventType.TRANSIT), event(TrackingEventType.ARRIVEE))))
+        assertThat(ParcelSteps.currentStep(List.of(event(TrackingEventType.TRANSIT), event(TrackingEventType.ARRIVEE)), null))
                 .isEqualTo("Livraison confirmée");
     }
 
     @Test
     void libelles() {
-        assertThat(ParcelSteps.label(TrackingEventType.DEPART)).isEqualTo("Colis remis au voyageur");
-        assertThat(ParcelSteps.label(TrackingEventType.TRANSIT)).isEqualTo("En transit");
-        assertThat(ParcelSteps.label(TrackingEventType.ARRIVEE)).isEqualTo("Arrivée confirmée");
+        assertThat(ParcelSteps.label(TrackingEventType.DEPART, null)).isEqualTo("Colis remis au voyageur");
+        assertThat(ParcelSteps.label(TrackingEventType.TRANSIT, null)).isEqualTo("En transit");
+        assertThat(ParcelSteps.label(TrackingEventType.ARRIVEE, null)).isEqualTo("Arrivée confirmée");
     }
 
     @Test

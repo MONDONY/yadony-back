@@ -16,20 +16,12 @@ final class ParcelSteps {
     private ParcelSteps() {
     }
 
-    static String label(TrackingEventType type) {
-        return label(type, null);
-    }
-
     static String label(TrackingEventType type, TransportMode mode) {
         return switch (type) {
             case DEPART -> mode == TransportMode.BOAT ? "Dépôt à l'entrepôt" : "Colis remis au voyageur";
             case TRANSIT -> "En transit";
             case ARRIVEE -> "Arrivée confirmée";
         };
-    }
-
-    static String currentStep(List<TrackingEventEntity> events) {
-        return currentStep(events, null);
     }
 
     static String currentStep(List<TrackingEventEntity> events, TransportMode mode) {
