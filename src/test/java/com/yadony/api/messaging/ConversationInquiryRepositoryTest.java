@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ConversationInquiryRepositoryTest {
 
     @Autowired ConversationRepository repo;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private ConversationEntity newInquiry(UUID asker, UUID announcement, UUID owner) {
         return repo.saveAndFlush(ConversationEntity.forInquiry(asker, announcement, owner,
@@ -206,6 +207,54 @@ class ConversationInquiryRepositoryTest {
         assertThat(repo.findByParticipantExcludingHidden(owner, java.util.Set.of(hidden), all).getContent())
                 .extracting(ConversationEntity::getId).contains(c.getId());
         assertThat(repo.countActiveByParticipant(owner)).isEqualTo(1);
+    }
+
+    // ── Ligne supprimée (purge INQUIRY, deleted_at) : invisible de toutes les requêtes participant ──
+
+    @Test
+    void deletedRow_isInvisibleToEveryParticipantQuery() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        ConversationEntity c = newInquiry(asker, UUID.randomUUID(), owner);
+        repo.markInquiryFirstMessage(c.getId(), LocalDateTime.now(ZoneOffset.UTC));
+        ConversationEntity archived = newInquiry(asker, UUID.randomUUID(), owner);
+        archived.archiveForUser(asker);
+        repo.saveAndFlush(archived);
+        org.springframework.data.domain.Pageable all = org.springframework.data.domain.Pageable.unpaged();
+        java.util.Set<UUID> hidden = java.util.Set.of(UUID.randomUUID());
+
+        // Témoin : avant la suppression, chaque requête voit le fil.
+        assertThat(repo.findByParticipant(asker, all).getContent()).extracting(ConversationEntity::getId).contains(c.getId());
+        assertThat(repo.findByParticipant(owner, all).getContent()).extracting(ConversationEntity::getId).contains(c.getId());
+        assertThat(repo.findByParticipantExcludingHidden(asker, hidden, all).getContent())
+                .extracting(ConversationEntity::getId).contains(c.getId());
+        assertThat(repo.countActiveByParticipant(asker)).isEqualTo(1);
+        assertThat(repo.countActiveByParticipant(owner)).isEqualTo(1);
+        assertThat(repo.findByIdAndParticipant(c.getId(), asker)).isPresent();
+        assertThat(repo.findByIdAndParticipantIgnoreArchived(c.getId(), asker)).isPresent();
+        assertThat(repo.findByIdAndParticipantIgnoreDeleted(c.getId(), asker)).isPresent();
+        assertThat(repo.findArchivedByParticipant(asker, all).getContent())
+                .extracting(ConversationEntity::getId).contains(archived.getId());
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        jdbc.update("UPDATE conversations SET deleted_at = ? WHERE id IN (?, ?)", now, c.getId(), archived.getId());
+
+        assertThat(repo.findByParticipant(asker, all).getContent()).extracting(ConversationEntity::getId)
+                .doesNotContain(c.getId(), archived.getId());
+        assertThat(repo.findByParticipant(owner, all).getContent()).extracting(ConversationEntity::getId)
+                .doesNotContain(c.getId());
+        assertThat(repo.findByParticipantExcludingHidden(asker, hidden, all).getContent())
+                .extracting(ConversationEntity::getId).doesNotContain(c.getId());
+        assertThat(repo.findByParticipantExcludingHidden(owner, hidden, all).getContent())
+                .extracting(ConversationEntity::getId).doesNotContain(c.getId());
+        assertThat(repo.countActiveByParticipant(asker)).isZero();
+        assertThat(repo.countActiveByParticipant(owner)).isZero();
+        for (UUID user : new UUID[] {asker, owner}) {
+            assertThat(repo.findByIdAndParticipant(c.getId(), user)).isEmpty();
+            assertThat(repo.findByIdAndParticipantIgnoreArchived(c.getId(), user)).isEmpty();
+            assertThat(repo.findByIdAndParticipantIgnoreDeleted(c.getId(), user)).isEmpty();
+        }
+        assertThat(repo.findArchivedByParticipant(asker, all).getContent())
+                .extracting(ConversationEntity::getId).doesNotContain(archived.getId());
     }
 
     @Test

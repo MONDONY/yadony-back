@@ -102,6 +102,22 @@ class MessagingNotifyControllerTest {
         verify(conversationService).ensureFirestoreDocument(conv);
     }
 
+    @Test
+    void notify_deletedConversation_isTreatedAsClosed_noRepairNoWriteNoPush() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        var conv = inquiry(asker, owner);
+        conv.setDeletedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+
+        var response = controller.notify("test-secret", new NotifyMessageRequest("conv_inq_1", "uid-asker", "Salut"));
+
+        org.assertj.core.api.Assertions.assertThat(response.getStatusCode().value()).isEqualTo(200);
+        org.assertj.core.api.Assertions.assertThat(response.getBody().recipientFirebaseUid()).isNull();
+        verifyNoInteractions(conversationService, notificationDispatcher, userRepository);
+        verify(conversationRepository, never()).markInquiryActivity(any(), any());
+        verify(conversationRepository, never()).markInquiryFirstMessage(any(), any());
+        verify(conversationRepository, never()).markTravelerMessaged(any(), any());
+    }
+
     // ── Messagerie avant réservation (INQUIRY) ───────────────────────────────
 
     private ConversationEntity inquiry(UUID askerId, UUID ownerId) {

@@ -59,7 +59,10 @@ public class MessagingNotifyController {
 
         // Conversation destinataire fermée (changement de destinataire) : plus aucune
         // notification ni crédit de non-lus, l'ancien destinataire n'y a plus accès.
-        if (conv.isClosed()) {
+        // Conversation supprimée (purge d'une INQUIRY inactive) : traitée comme fermée. Un message
+        // tardif ne doit ni recréer le document Firestore (réparation) ni dater une activité, sans
+        // quoi le fil revivrait dans Firestore alors que la ligne, supprimée, n'est plus jamais purgée.
+        if (conv.isClosed() || conv.getDeletedAt() != null) {
             return ResponseEntity.ok(new NotifyMessageResponse(null));
         }
 

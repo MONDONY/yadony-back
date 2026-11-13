@@ -411,6 +411,11 @@ public class ConversationService {
     // transaction ouverte ici tenait une connexion JDBC pendant cet appel. Les deux
     // lectures d'utilisateurs ont leur propre transaction courte.
     public void ensureFirestoreDocument(ConversationEntity conv) {
+        // Ligne supprimée (purge d'une INQUIRY inactive) : rien à réparer, le document a été effacé
+        // exprès. Le recréer ferait revivre le fil dans Firestore sans plus jamais le purger.
+        if (conv.getDeletedAt() != null) {
+            return;
+        }
         String firestoreId = conv.getFirestoreConversationId();
         try {
             if (firestoreService.conversationExists(firestoreId)) {

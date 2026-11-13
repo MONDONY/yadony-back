@@ -226,6 +226,17 @@ class ConversationServiceInquiryTest {
     }
 
     @Test
+    void repairOfADeletedRow_touchesNeitherFirestoreNorUsers() {
+        ConversationEntity conv = ConversationEntity.forInquiry(askerId, announcementId, ownerId, "conv_inq_gone");
+        conv.setDeletedAt(java.time.LocalDateTime.now());
+
+        service.ensureFirestoreDocument(conv);
+
+        verifyNoInteractions(firestoreService);
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
     void repairOfOrdinaryConversationDoesNotAddInquiryFields() {
         ConversationEntity conv = new ConversationEntity(UUID.randomUUID(), askerId, ownerId, "conv_o");
         when(firestoreService.conversationExists("conv_o")).thenReturn(false);

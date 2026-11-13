@@ -60,6 +60,8 @@ class ConversationInquiryControllerIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired AnnouncementRepository announcementRepository;
     @Autowired ConversationRepository conversationRepository;
+    @Autowired InquiryInactivityScheduler inquiryInactivityScheduler;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @MockitoBean FirestoreService firestoreService;
     @MockitoBean NotificationDispatcher notificationDispatcher;
 
@@ -272,6 +274,47 @@ class ConversationInquiryControllerIntegrationTest {
         conversationRepository.saveAndFlush(stale);
 
         assertThat(conversationRepository.findById(id).orElseThrow().getInquiryFirstMessageAt()).isNotNull();
+    }
+
+    @Test
+    void purgedInquiry_leavesEveryList_andALateNotifyNeitherRepairsNorPushes() throws Exception {
+        UUID id = open();
+        conversationRepository.markInquiryFirstMessage(id, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+        java.time.LocalDateTime longAgo = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(40)
+                .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        jdbc.update("UPDATE conversations SET last_activity_at = ?, created_at = ? WHERE id = ?", longAgo, longAgo, id);
+        String firestoreId = "conv_inq_" + id;
+        org.mockito.Mockito.when(firestoreService.purgeInquiryConversation(firestoreId)).thenReturn(true);
+
+        inquiryInactivityScheduler.purgeStaleInquiries();
+
+        assertThat(jdbc.queryForObject("SELECT deleted_at FROM conversations WHERE id = ?", Object.class, id)).isNotNull();
+        for (UserEntity participant : new UserEntity[] {asker, owner}) {
+            mockMvc.perform(get("/conversations").header(CAP, "inquiry").with(authentication(as(participant))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[*].id", not(hasItem(id.toString()))));
+            mockMvc.perform(get("/conversations/{id}", id).header(CAP, "inquiry").with(authentication(as(participant))))
+                    .andExpect(status().isForbidden());
+        }
+
+        // La Cloud Function signale un message tardif (règles : repli « parent absent ») : 200, et
+        // ni le document Firestore ni la ligne ne reviennent, aucune notification ne part.
+        org.mockito.Mockito.reset(firestoreService, notificationDispatcher);
+        mockMvc.perform(post("/internal/messaging/notify").header("X-Internal-Secret", "test-internal-secret")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                "conversationId", firestoreId,
+                                "senderFirebaseUid", asker.getFirebaseUid(),
+                                "messagePreview", "Toujours là ?"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recipientFirebaseUid").doesNotExist());
+        org.mockito.Mockito.verifyNoInteractions(firestoreService, notificationDispatcher);
+        assertThat(jdbc.queryForObject("SELECT deleted_at FROM conversations WHERE id = ?", Object.class, id)).isNotNull();
+        assertThat(jdbc.queryForObject("SELECT last_activity_at FROM conversations WHERE id = ?",
+                java.time.LocalDateTime.class, id)).isEqualTo(longAgo);
+
+        // Une nouvelle question ouvre un fil neuf : la ligne purgée ne revient pas.
+        assertThat(open()).isNotEqualTo(id);
     }
 
     private void notifyMessage(ConversationEntity conv, UserEntity from) throws Exception {
