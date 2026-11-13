@@ -81,21 +81,21 @@ public final class AudiencePresets {
                     and(cond("kyc", "IN", list("VERIFIED")), cond("published_trip", "NEVER")),
                     Map.of(
                             "fr", new Message("Ton identité est vérifiée, publie ton trajet",
-                                    "Tu peux maintenant publier ton trajet et proposer ton espace bagage. "
-                                            + "Fixe ton prix au kilo et reçois des demandes de colis."),
+                                    "Tu peux maintenant publier ton trajet et proposer de la place pour des colis. "
+                                            + "Fixe ton prix et reçois des demandes d'envoi."),
                             "en", new Message("You're verified, publish your trip",
-                                    "You can now publish your trip and offer your luggage space. "
-                                            + "Set your price per kilo and start receiving parcel requests."))),
+                                    "You can now publish your trip and offer space for parcels. "
+                                            + "Set your price and start receiving parcel requests."))),
 
             new AudiencePreset("trajet_bientot", "Trajet qui part bientôt",
                     "Voyageurs dont un trajet encore en vente part dans les 3 jours.",
                     and(cond("trip_departing", "WITHIN_DAYS", 3)),
                     Map.of(
                             "fr", new Message("Ton départ approche",
-                                    "Vérifie que ton annonce est à jour (date, kilos disponibles, prix) pour recevoir "
+                                    "Vérifie que ton annonce est à jour (date, place disponible, prix) pour recevoir "
                                             + "des demandes avant de partir."),
                             "en", new Message("Your departure is coming up",
-                                    "Check that your listing is up to date (date, available kilos, price) so you "
+                                    "Check that your listing is up to date (date, available space, price) so you "
                                             + "can receive requests before you leave."))),
 
             new AudiencePreset("versement_a_configurer", "Versement à configurer",

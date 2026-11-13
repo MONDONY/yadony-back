@@ -32,6 +32,18 @@ class AudiencePresetsTest {
     }
 
     @Test
+    @DisplayName("aucun modèle ne suppose l'avion : ni bagage, ni valise, ni kilos (modes de transport)")
+    void messagesAreNeutralAboutTheTransportMode() {
+        for (AudiencePreset preset : AudiencePresets.all()) {
+            preset.messages().forEach((lang, m) -> {
+                String text = (m.title() + " " + m.body()).toLowerCase(java.util.Locale.ROOT);
+                assertThat(text).as(preset.key() + "/" + lang)
+                        .doesNotContain("bagage", "luggage", "valise", "suitcase", "kilo", "avion", "flight");
+            });
+        }
+    }
+
+    @Test
     @DisplayName("chaque règle est valide et se compile en SQL")
     void everyRuleCompiles() {
         for (AudiencePreset preset : AudiencePresets.all()) {
