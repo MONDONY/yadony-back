@@ -130,8 +130,10 @@ public class InquiryInactivityScheduler {
 
     /**
      * Firestore montre un message plus récent que la limite (le notify qui date l'activité est au
-     * mieux-effort) : à garder, {@code last_activity_at} rafraîchi. Une date illisible vaut « à
-     * garder » (jamais « inactive »).
+     * mieux-effort) : à garder, {@code last_activity_at} rafraîchi. La date retenue est la plus
+     * récente du {@code lastMessageAt} du parent (posé dès la création) et du dernier message
+     * ({@link FirestoreService#lastMessageInstant}). Une date illisible vaut « à garder » (jamais
+     * « inactive »).
      */
     private boolean keepBecauseActive(ConversationEntity conv, LocalDateTime cutoff) {
         String firestoreId = conv.getFirestoreConversationId();

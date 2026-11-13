@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -301,55 +302,12 @@ class InquiryInactivitySchedulerTest {
         assertThat(new FirestoreService(null).lastMessageInstant("conv_x")).isEmpty();
     }
 
-    @Test
-    void lastMessageInstant_readsTheParentLastMessageAt() throws Exception {
-        Firestore firestore = mock(Firestore.class);
-        CollectionReference conversations = mock(CollectionReference.class);
-        DocumentReference convRef = mock(DocumentReference.class);
-        DocumentSnapshot snap = mock(DocumentSnapshot.class);
-        when(firestore.collection("conversations")).thenReturn(conversations);
-        when(conversations.document("conv_x")).thenReturn(convRef);
-        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
-        when(snap.exists()).thenReturn(true);
-        when(snap.get("lastMessageAt")).thenReturn("2026-11-10T08:00:00Z");
-
-        assertThat(new FirestoreService(firestore).lastMessageInstant("conv_x"))
-                .contains(Instant.parse("2026-11-10T08:00:00Z"));
-    }
-
-    private FirestoreService unreadableParent(Object value) throws Exception {
-        Firestore firestore = mock(Firestore.class);
-        CollectionReference conversations = mock(CollectionReference.class);
-        DocumentReference convRef = mock(DocumentReference.class);
-        DocumentSnapshot snap = mock(DocumentSnapshot.class);
-        when(firestore.collection("conversations")).thenReturn(conversations);
-        when(conversations.document("conv_x")).thenReturn(convRef);
-        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
-        when(snap.exists()).thenReturn(true);
-        when(snap.get("lastMessageAt")).thenReturn(value);
-        return new FirestoreService(firestore);
-    }
-
-    @Test
-    void lastMessageInstant_unexpectedType_isUnreadable_notEmpty() throws Exception {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> unreadableParent(1731484800000L).lastMessageInstant("conv_x"))
-                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
-    }
-
-    @Test
-    void lastMessageInstant_malformedString_isUnreadable() throws Exception {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> unreadableParent("hier soir").lastMessageInstant("conv_x"))
-                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
-    }
-
-    @Test
-    void lastMessageInstant_readsAFirestoreTimestamp() throws Exception {
-        Instant at = Instant.parse("2026-11-10T08:00:00Z");
-        assertThat(unreadableParent(com.google.cloud.Timestamp.ofTimeSecondsAndNanos(at.getEpochSecond(), 0))
-                .lastMessageInstant("conv_x")).contains(at);
-    }
-
-    private FirestoreService withFallback(Object sentAt, boolean noMessage) throws Exception {
+    /**
+     * Firestore simulé : document parent ({@code lastMessageAt}, ou document absent) ET dernier message
+     * ({@code sentAt}, ou aucun message). Les deux sont toujours lus : stubs indulgents pour les branches.
+     */
+    private static Firestore firestoreWith(boolean parentExists, Object parentLastMessageAt,
+                                           boolean hasMessage, Object latestSentAt) {
         Firestore firestore = mock(Firestore.class);
         CollectionReference conversations = mock(CollectionReference.class);
         CollectionReference messages = mock(CollectionReference.class);
@@ -358,41 +316,111 @@ class InquiryInactivitySchedulerTest {
         com.google.cloud.firestore.QuerySnapshot result = mock(com.google.cloud.firestore.QuerySnapshot.class);
         DocumentReference convRef = mock(DocumentReference.class);
         DocumentSnapshot snap = mock(DocumentSnapshot.class);
-        when(firestore.collection("conversations")).thenReturn(conversations);
-        when(conversations.document("conv_x")).thenReturn(convRef);
-        when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
-        when(snap.exists()).thenReturn(true);
-        when(snap.get("lastMessageAt")).thenReturn(null);
-        when(convRef.collection("messages")).thenReturn(messages);
-        when(messages.orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)).thenReturn(ordered);
-        when(ordered.limit(1)).thenReturn(limited);
-        when(limited.get()).thenReturn(ApiFutures.immediateFuture(result));
-        when(result.isEmpty()).thenReturn(noMessage);
-        if (!noMessage) {
+        lenient().when(firestore.collection("conversations")).thenReturn(conversations);
+        lenient().when(conversations.document("conv_x")).thenReturn(convRef);
+        lenient().when(convRef.get()).thenReturn(ApiFutures.immediateFuture(snap));
+        lenient().when(snap.exists()).thenReturn(parentExists);
+        lenient().when(snap.get("lastMessageAt")).thenReturn(parentLastMessageAt);
+        lenient().when(convRef.collection("messages")).thenReturn(messages);
+        lenient().when(messages.orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)).thenReturn(ordered);
+        lenient().when(ordered.limit(1)).thenReturn(limited);
+        lenient().when(limited.get()).thenReturn(ApiFutures.immediateFuture(result));
+        lenient().when(result.isEmpty()).thenReturn(!hasMessage);
+        if (hasMessage) {
             com.google.cloud.firestore.QueryDocumentSnapshot doc = mock(com.google.cloud.firestore.QueryDocumentSnapshot.class);
-            when(doc.get("sentAt")).thenReturn(sentAt);
-            when(result.getDocuments()).thenReturn(java.util.List.of(doc));
+            lenient().when(doc.get("sentAt")).thenReturn(latestSentAt);
+            lenient().when(result.getDocuments()).thenReturn(java.util.List.of(doc));
         }
-        return new FirestoreService(firestore);
+        return firestore;
+    }
+
+    private static java.util.Optional<Instant> lastMessage(boolean parentExists, Object parentLastMessageAt,
+                                                           boolean hasMessage, Object latestSentAt) {
+        return new FirestoreService(firestoreWith(parentExists, parentLastMessageAt, hasMessage, latestSentAt))
+                .lastMessageInstant("conv_x");
     }
 
     @Test
-    void lastMessageInstant_absentField_andNoMessage_isEmpty() throws Exception {
-        assertThat(withFallback(null, true).lastMessageInstant("conv_x")).isEmpty();
+    void lastMessageInstant_readsTheParentLastMessageAt_whenThereIsNoMessage() {
+        assertThat(lastMessage(true, "2026-11-10T08:00:00Z", false, null))
+                .contains(Instant.parse("2026-11-10T08:00:00Z"));
     }
 
     @Test
-    void lastMessageInstant_fallsBackOnTheLatestMessage() throws Exception {
-        assertThat(withFallback("2026-11-09T08:00:00Z", false).lastMessageInstant("conv_x"))
+    void lastMessageInstant_takesTheLatestMessage_whenTheParentOnlyCarriesTheCreationDate() {
+        // lastMessageAt du parent est posé dès la création : un message plus récent doit l'emporter.
+        assertThat(lastMessage(true, "2026-09-01T08:00:00Z", true, "2026-11-10T08:00:00Z"))
+                .contains(Instant.parse("2026-11-10T08:00:00Z"));
+    }
+
+    @Test
+    void lastMessageInstant_keepsTheParentDate_whenItIsTheMostRecent() {
+        assertThat(lastMessage(true, "2026-11-10T08:00:00Z", true, "2026-09-01T08:00:00Z"))
+                .contains(Instant.parse("2026-11-10T08:00:00Z"));
+    }
+
+    @Test
+    void lastMessageInstant_withoutParentDocument_usesTheLatestMessage() {
+        assertThat(lastMessage(false, null, true, "2026-11-09T08:00:00Z"))
                 .contains(Instant.parse("2026-11-09T08:00:00Z"));
     }
 
     @Test
-    void lastMessageInstant_unreadableFallback_isUnreadable() throws Exception {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> withFallback(42, false).lastMessageInstant("conv_x"))
+    void lastMessageInstant_unexpectedParentType_isUnreadable_notEmpty() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> lastMessage(true, 1731484800000L, false, null))
                 .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> withFallback(null, false).lastMessageInstant("conv_x"))
+        // Même avec un message lisible : une date illisible ne vaut jamais « inactive ».
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> lastMessage(true, 1731484800000L, true, "2026-11-09T08:00:00Z"))
                 .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+    }
+
+    @Test
+    void lastMessageInstant_malformedParentString_isUnreadable() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> lastMessage(true, "hier soir", false, null))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+    }
+
+    @Test
+    void lastMessageInstant_readsFirestoreTimestamps() {
+        Instant parent = Instant.parse("2026-11-08T08:00:00Z");
+        Instant message = Instant.parse("2026-11-10T08:00:00Z");
+        assertThat(lastMessage(true, com.google.cloud.Timestamp.ofTimeSecondsAndNanos(parent.getEpochSecond(), 0),
+                true, com.google.cloud.Timestamp.ofTimeSecondsAndNanos(message.getEpochSecond(), 0)))
+                .contains(message);
+    }
+
+    @Test
+    void lastMessageInstant_absentField_andNoMessage_isEmpty() {
+        assertThat(lastMessage(true, null, false, null)).isEmpty();
+        assertThat(lastMessage(false, null, false, null)).isEmpty();
+    }
+
+    @Test
+    void lastMessageInstant_unreadableLatestMessage_isUnreadable() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> lastMessage(true, null, true, 42))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> lastMessage(true, null, true, null))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> lastMessage(true, "2026-11-10T08:00:00Z", true, "pas une date"))
+                .isInstanceOf(FirestoreService.UnreadableTimestampException.class);
+    }
+
+    @Test
+    void keepBecauseActive_usesTheMostRecentOfTheParentDateAndTheLatestMessage() {
+        // Bout en bout avec le vrai FirestoreService : parent à la date de création (avant la limite),
+        // dernier message récent. La conversation est gardée et son activité datée du message.
+        ConversationEntity conv = inquiry("conv_x");
+        stale(conv);
+        InquiryInactivityScheduler withRealFirestore = new InquiryInactivityScheduler(conversationRepository,
+                new FirestoreService(firestoreWith(true, "2026-09-01T08:00:00Z", true, "2026-11-10T08:00:00Z")),
+                auditService, List.of(hold), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(withRealFirestore.purgeStaleInquiries()).isZero();
+
+        verify(conversationRepository).markInquiryActivity(conv.getId(), LocalDateTime.of(2026, 11, 10, 8, 0));
+        verify(conversationRepository, never()).reserveStaleInquiry(any(), any(), any());
     }
 
     @Test

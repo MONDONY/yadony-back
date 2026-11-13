@@ -489,14 +489,16 @@ public class FirestoreService {
     }
 
     /**
-     * Date du dernier message d'une conversation : {@code lastMessageAt} du document parent, à
-     * défaut le message le plus récent ({@code sentAt}). Lecture seule.
+     * Date du dernier message d'une conversation : la plus récente de {@code lastMessageAt} du document
+     * parent et du {@code sentAt} du message le plus récent. Les deux sont lus, car {@code lastMessageAt}
+     * est posé dès la création du fil : à lui seul, il ne prouve pas l'absence d'un message plus
+     * récent. Lecture seule.
      *
      * <ul>
-     *   <li>vide : Firestore désactivé, ou vraiment aucun message (champ absent ou nul ET aucun
+     *   <li>vide : Firestore désactivé, ou vraiment aucune date (champ absent ou nul ET aucun
      *       message) ;</li>
-     *   <li>{@link UnreadableTimestampException} : valeur présente de type inattendu ou mal formée
-     *       (parent comme repli) ;</li>
+     *   <li>{@link UnreadableTimestampException} : une des deux valeurs est présente mais de type
+     *       inattendu ou mal formée (message sans {@code sentAt} compris) ;</li>
      *   <li>{@link RuntimeException} : échec Firestore.</li>
      * </ul>
      * Dans les deux derniers cas l'appelant ne doit PAS purger.
@@ -509,21 +511,23 @@ public class FirestoreService {
             var convRef = firestore.collection("conversations").document(conversationId);
             var snap = convRef.get().get();
             Object parent = snap.exists() ? snap.get("lastMessageAt") : null;
-            if (parent != null) {
-                return java.util.Optional.of(toInstant(parent, conversationId, "lastMessageAt"));
-            }
             var last = convRef.collection("messages")
                     .orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)
                     .limit(1).get().get();
-            if (last.isEmpty()) {
-                return java.util.Optional.empty();
+            Object sentAt = null;
+            if (!last.isEmpty()) {
+                sentAt = last.getDocuments().get(0).get("sentAt");
+                if (sentAt == null) {
+                    throw new UnreadableTimestampException(
+                            "message sans sentAt dans la conversation " + conversationId);
+                }
             }
-            Object sentAt = last.getDocuments().get(0).get("sentAt");
-            if (sentAt == null) {
-                throw new UnreadableTimestampException(
-                        "message sans sentAt dans la conversation " + conversationId);
+            Instant parentAt = parent == null ? null : toInstant(parent, conversationId, "lastMessageAt");
+            Instant messageAt = sentAt == null ? null : toInstant(sentAt, conversationId, "sentAt");
+            if (parentAt == null || messageAt == null) {
+                return java.util.Optional.ofNullable(parentAt != null ? parentAt : messageAt);
             }
-            return java.util.Optional.of(toInstant(sentAt, conversationId, "sentAt"));
+            return java.util.Optional.of(parentAt.isAfter(messageAt) ? parentAt : messageAt);
         } catch (UnreadableTimestampException e) {
             throw e;
         } catch (Exception e) {

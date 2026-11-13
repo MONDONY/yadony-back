@@ -156,8 +156,6 @@ public class ConversationService {
         return conv;
     }
 
-    private static final String INQUIRY_WELCOME = "Posez vos questions au voyageur avant de réserver.";
-
     /**
      * Ouvre (ou retrouve) la conversation de questions d'un demandeur avec le propriétaire d'une
      * annonce, avant toute réservation. Idempotent : un fil ouvert du couple (même déjà promu en
@@ -227,7 +225,9 @@ public class ConversationService {
             data.put("travelerName", fullName(owner));
             data.put("createdAt", now);
             data.put("lastMessageAt", now);
-            data.put("lastMessagePreview", INQUIRY_WELCOME);
+            // Aucun aperçu (un texte en dur serait en français pour tous) : l'app affiche sa propre note
+            // d'introduction tant qu'aucun message n'a été échangé.
+            data.put("lastMessagePreview", null);
             firestoreService.createConversation(firestoreId, data);
         } catch (Exception e) {
             log.warn("Firestore inquiry init failed for announcement {}: {}", announcementId, e.getMessage());

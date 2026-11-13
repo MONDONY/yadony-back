@@ -102,7 +102,9 @@ class ConversationServiceInquiryTest {
                 .containsEntry("announcementId", announcementId.toString())
                 .containsEntry("senderName", "Fatou D.")
                 .containsEntry("travelerName", "Moussa K.")
-                .containsKeys("createdAt", "lastMessageAt", "lastMessagePreview");
+                .containsKeys("createdAt", "lastMessageAt", "lastMessagePreview")
+                // Pas d'aperçu en dur (français pour tous) : l'app affiche sa propre note d'introduction.
+                .containsEntry("lastMessagePreview", null);
         verify(firestoreService, never()).addSystemMessage(anyString(), anyString());
         verify(auditService).log(eq("conversation"), eq(conv.getId()), eq("INQUIRY_CREATED"), eq(askerId), anyMap());
         verify(blockVisibility).isHidden(askerId, ownerId);
