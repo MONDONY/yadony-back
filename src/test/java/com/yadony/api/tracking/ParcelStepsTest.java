@@ -1,5 +1,6 @@
 package com.yadony.api.tracking;
 
+import com.yadony.api.matching.TransportMode;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -43,5 +44,26 @@ class ParcelStepsTest {
         assertThat(ParcelSteps.label(TrackingEventType.DEPART)).isEqualTo("Colis remis au voyageur");
         assertThat(ParcelSteps.label(TrackingEventType.TRANSIT)).isEqualTo("En transit");
         assertThat(ParcelSteps.label(TrackingEventType.ARRIVEE)).isEqualTo("Arrivée confirmée");
+    }
+
+    @Test
+    void bateau_departEstUnDepotALEntrepot() {
+        assertThat(ParcelSteps.label(TrackingEventType.DEPART, TransportMode.BOAT)).isEqualTo("Dépôt à l'entrepôt");
+        assertThat(ParcelSteps.currentStep(List.of(event(TrackingEventType.DEPART)), TransportMode.BOAT))
+                .isEqualTo("Déposé à l'entrepôt");
+        // Les étapes suivantes restent communes à tous les modes.
+        assertThat(ParcelSteps.label(TrackingEventType.TRANSIT, TransportMode.BOAT)).isEqualTo("En transit");
+        assertThat(ParcelSteps.label(TrackingEventType.ARRIVEE, TransportMode.BOAT)).isEqualTo("Arrivée confirmée");
+    }
+
+    @Test
+    void autresModesEtModeInconnu_gardentLesLibellesNeutres() {
+        for (TransportMode mode : new TransportMode[] {TransportMode.PLANE, TransportMode.CAR, TransportMode.BUS,
+                TransportMode.TRAIN, TransportMode.OTHER, null}) {
+            assertThat(ParcelSteps.label(TrackingEventType.DEPART, mode)).as("%s", mode)
+                    .isEqualTo("Colis remis au voyageur");
+            assertThat(ParcelSteps.currentStep(List.of(event(TrackingEventType.DEPART)), mode)).as("%s", mode)
+                    .isEqualTo("Remis au voyageur, en route");
+        }
     }
 }

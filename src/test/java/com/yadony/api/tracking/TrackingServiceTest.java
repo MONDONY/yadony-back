@@ -306,6 +306,37 @@ class TrackingServiceTest {
         assertThat(resp.currentStep()).isEqualTo("DELIVERED");
     }
 
+    private TrackingSearchResponse searchWithDepartScan(com.yadony.api.matching.TransportMode mode) {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        AnnouncementEntity ann = buildAnnouncement();
+        ann.setTransportMode(mode);
+        PaymentEntity payment = new PaymentEntity();
+        payment.setStatus(PaymentStatus.ESCROW);
+        TrackingEventEntity depart = new TrackingEventEntity();
+        depart.setEventType(TrackingEventType.DEPART);
+        when(bidRepository.findByTrackingNumber("TRK000001")).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(paymentRepository.findByBidId(bidId)).thenReturn(Optional.of(payment));
+        when(trackingEventRepository.findByBidIdOrderByScannedAtAsc(bidId)).thenReturn(List.of(depart));
+        stubSenderAsCurrentUser();
+        return service.searchByTrackingNumber("TRK000001", "uid-sender");
+    }
+
+    // Généricité : en bateau, le scan de départ est un dépôt à l'entrepôt, jamais « remis au voyageur ».
+    @Test
+    void trackingSearch_boatDepartScan_saysWarehouseNotHandedToTraveler() {
+        TrackingSearchResponse boat = searchWithDepartScan(com.yadony.api.matching.TransportMode.BOAT);
+
+        assertThat(boat.currentStep()).isEqualTo("DEPARTED");
+        assertThat(boat.stepLabel()).containsIgnoringCase("entrepôt").doesNotContainIgnoringCase("voyageur");
+
+        for (com.yadony.api.matching.TransportMode mode : new com.yadony.api.matching.TransportMode[] {
+                com.yadony.api.matching.TransportMode.PLANE, com.yadony.api.matching.TransportMode.CAR, null}) {
+            assertThat(searchWithDepartScan(mode).stepLabel()).as("%s", mode)
+                    .containsIgnoringCase("remis au voyageur");
+        }
+    }
+
     @Test
     void trackingSearch_exposesTripMode() {
         BidEntity bid = buildBid(BidStatus.PENDING, "qt");

@@ -111,6 +111,23 @@ class RecipientControllerTrackingTest {
                 .andExpect(content().string(not(containsString("Lyon"))));
     }
 
+    // Généricité : en bateau, l'étape de départ est un dépôt à l'entrepôt (statut JSON et page).
+    @Test
+    void boatTrip_departStepIsWarehouseDeposit_inStatusAndPage() throws Exception {
+        trip.setTransportMode(TransportMode.BOAT);
+        announcementRepository.save(trip);
+        scanned(OffsetDateTime.now(ZoneOffset.UTC).minusHours(3).toLocalDateTime());
+
+        mockMvc.perform(get("/tracking/public/{t}/status", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.events[0].label").value("Dépôt à l'entrepôt"))
+                .andExpect(jsonPath("$.currentStep").value("Déposé à l'entrepôt"));
+        mockMvc.perform(get("/tracking/public/{t}", token).header("Accept-Language", "fr"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Dépôt à l&#39;entrepôt")))
+                .andExpect(content().string(not(containsString("<strong>Colis remis au voyageur</strong>"))));
+    }
+
     @Test
     void statusJsonOmitsTrackingBeforeParcelIsCarried() throws Exception {
         bid.setStatus(BidStatus.ACCEPTED);

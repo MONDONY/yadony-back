@@ -19,6 +19,8 @@ public record ParcelScanView(
         String travelerName,
         List<RecipientController.RecipientEventDto> events,
         /** Mode du trajet ({@code PLANE}, {@code BOAT}...), null si inconnu : la page n'en déduit jamais l'avion. */
-        String transportMode
+        String transportMode,
+        /** Volume du colis en m³ (« 0,096 m³ »), vide si le colis n'est pas vendu au volume. */
+        String volume
 ) {
 }
