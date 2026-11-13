@@ -285,6 +285,15 @@ public class ConversationEntity extends BaseEntity {
     public UUID getSenderId() { return senderId; }
     public UUID getTravelerId() { return travelerId; }
     public String getFirestoreConversationId() { return firestoreConversationId; }
+
+    /**
+     * Un fil de questions porte l'identifiant du document Firestore {@code conv_inq_<uuid>}, or l'UUID
+     * n'existe qu'après l'insertion : le service l'enregistre sous un identifiant provisoire puis
+     * l'aligne ici, dans la même transaction.
+     */
+    void assignFirestoreConversationId(String firestoreConversationId) {
+        this.firestoreConversationId = Objects.requireNonNull(firestoreConversationId, "firestoreConversationId");
+    }
     public LocalDateTime getSenderDeletedAt() { return senderDeletedAt; }
     public LocalDateTime getTravelerDeletedAt() { return travelerDeletedAt; }
     public LocalDateTime getSenderArchivedAt() { return senderArchivedAt; }

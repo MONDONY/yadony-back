@@ -1,5 +1,6 @@
 package com.yadony.api.messaging;
 
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -9,6 +10,7 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -23,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -150,6 +153,82 @@ public class ConversationService {
         }
 
         return conv;
+    }
+
+    private static final String INQUIRY_WELCOME = "Posez vos questions au voyageur avant de réserver.";
+
+    /**
+     * Ouvre (ou retrouve) la conversation de questions d'un demandeur avec le propriétaire d'une
+     * annonce, avant toute réservation. Idempotent : un fil ouvert du couple (même déjà promu en
+     * conversation de réservation) est renvoyé tel quel, ce qui évite l'index unique des fils INQUIRY.
+     */
+    @Transactional
+    public ConversationEntity getOrCreateInquiry(UUID askerId, UUID announcementId) {
+        Optional<ConversationEntity> existing =
+            conversationRepository.findByAskerAndAnnouncement(askerId, announcementId);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        UserEntity asker = userRepository.findById(askerId)
+            .orElseThrow(ConversationService::kycRequired);
+        if (asker.getKycStatus() != KycStatus.VERIFIED) {
+            throw kycRequired();
+        }
+        if (asker.isMessagingMuted(Instant.now())) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "messaging-muted", "problem.inquiry-messaging-muted");
+        }
+
+        AnnouncementEntity announcement = announcementRepository.findById(announcementId)
+            .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
+        UUID ownerId = announcement.getTravelerId();
+        if (askerId.equals(ownerId)) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "inquiry-own-announcement", "problem.inquiry-own-announcement");
+        }
+        if (AnnouncementStatus.OUT_OF_MARKET.contains(announcement.getStatus())
+                || announcement.getDepartureDate().isBefore(LocalDate.now())) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed", "problem.inquiry-announcement-closed");
+        }
+
+        blockVisibility.assertVisible(askerId, ownerId);
+
+        UserEntity owner = userRepository.findById(ownerId)
+            .orElseThrow(ConversationService::counterpartDeleted);
+
+        // Identifiant provisoire : l'UUID de la conversation n'existe qu'après l'insertion.
+        ConversationEntity saved = conversationRepository.save(ConversationEntity.forInquiry(
+            askerId, announcementId, ownerId, "conv_inq_pending_" + UUID.randomUUID()));
+        String firestoreId = "conv_inq_" + saved.getId();
+        saved.assignFirestoreConversationId(firestoreId);
+
+        auditService.log("conversation", saved.getId(), "INQUIRY_CREATED", askerId,
+            Map.of("announcementId", announcementId.toString(), "firestoreId", firestoreId));
+
+        try {
+            String now = Instant.now().toString();
+            Map<String, Object> data = new java.util.HashMap<>();
+            data.put("senderId", asker.getFirebaseUid());
+            data.put("travelerId", owner.getFirebaseUid());
+            data.put("askerId", asker.getFirebaseUid());
+            data.put("kind", "INQUIRY");
+            data.put("quotaLifted", false);
+            data.put("announcementId", announcementId.toString());
+            data.put("senderName", fullName(asker));
+            data.put("travelerName", fullName(owner));
+            data.put("createdAt", now);
+            data.put("lastMessageAt", now);
+            data.put("lastMessagePreview", INQUIRY_WELCOME);
+            firestoreService.createConversation(firestoreId, data);
+            firestoreService.addSystemMessage(firestoreId, INQUIRY_WELCOME);
+        } catch (Exception e) {
+            log.warn("Firestore inquiry init failed for announcement {}: {}", announcementId, e.getMessage());
+        }
+
+        return saved;
+    }
+
+    private static YadonyBusinessException kycRequired() {
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "kyc-required", "problem.inquiry-kyc-required");
     }
 
     @Transactional
