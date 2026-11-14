@@ -58,7 +58,7 @@ class VideoModalEveryTimeTest {
     @BeforeEach
     void setUp() {
         service = new VideoModalService(campaignRepository, responseRepository, userRepository, tx, imageUrls,
-                targeting, 1, Clock.fixed(NOW, ZoneOffset.UTC));
+                targeting, Clock.fixed(NOW, ZoneOffset.UTC));
         admin = new VideoModalAdminService(campaignRepository, responseRepository, auditService,
                 mock(VideoModalImageUrls.class), targeting, Clock.fixed(NOW, ZoneOffset.UTC));
     }
@@ -137,7 +137,6 @@ class VideoModalEveryTimeTest {
         c.setPriority(7);
         when(campaignRepository.findActiveOrderByVersionPublishedAtDesc()).thenReturn(List.of(c));
         knownUser(List.of(response(c, 1, 9, VideoModalEvent.SHOWN)));
-        when(responseRepository.countShownSince(eq(userId), any())).thenReturn(0L);
 
         VideoModalEligibleResponse legacy = service.eligible("uid", "fr", "layout,targeting,moments").get(0);
         assertThat(legacy.frequency()).isEqualTo(VideoModalFrequency.EVERY_OPEN);
@@ -150,29 +149,15 @@ class VideoModalEveryTimeTest {
     }
 
     @Test
-    @DisplayName("plafond journalier atteint : seules les campagnes EVERY_TIME restent servies")
-    void plafondJournalier() {
+    @DisplayName("aucun plafond global : EVERY_TIME et une autre campagne déjà montrée sont servies ensemble")
+    void sansPlafondGlobal() {
         var every = everyTime(VideoModalTrigger.DELIVERY_CONFIRMED);
         var other = campaign(1, VideoModalAudience.EVERYONE);
         when(campaignRepository.findActiveOrderByVersionPublishedAtDesc()).thenReturn(List.of(other, every));
         knownUser(List.of());
-        when(responseRepository.countShownSince(eq(userId), any())).thenReturn(1L);
 
         assertThat(service.eligible("uid", "fr", "layout,targeting,moments,everytime"))
-                .extracting(VideoModalEligibleResponse::id).containsExactly(every.getId());
-    }
-
-    @Test
-    @DisplayName("plafond journalier atteint sans campagne EVERY_TIME : rien n'est servi")
-    void plafondJournalierSansEveryTime() {
-        var other = campaign(1, VideoModalAudience.EVERYONE);
-        when(campaignRepository.findActiveOrderByVersionPublishedAtDesc()).thenReturn(List.of(other));
-        UserEntity u = new UserEntity();
-        ReflectionTestUtils.setField(u, "id", userId);
-        when(userRepository.findByFirebaseUid("uid")).thenReturn(Optional.of(u));
-        when(responseRepository.countShownSince(eq(userId), any())).thenReturn(1L);
-
-        assertThat(service.eligible("uid", "fr", "layout,targeting,moments,everytime")).isEmpty();
+                .extracting(VideoModalEligibleResponse::id).containsExactlyInAnyOrder(every.getId(), other.getId());
     }
 
     // ── Validation admin ───────────────────────────────────────────────────
