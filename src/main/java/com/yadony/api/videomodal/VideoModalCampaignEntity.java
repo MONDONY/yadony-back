@@ -213,7 +213,7 @@ public class VideoModalCampaignEntity extends BaseEntity {
         return switch (frequency) {
             case ONCE -> 1;
             case UP_TO_N -> maxDisplays;
-            case EVERY_OPEN, EVERY_N_DAYS -> null;
+            case EVERY_OPEN, EVERY_N_DAYS, EVERY_TIME -> null;
         };
     }
 

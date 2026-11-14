@@ -100,6 +100,9 @@ public class VideoModalService {
     /** Capacité envoyée par la nouvelle app : elle sait déclencher les moments d'action (livraison, recherche, favoris…). */
     static final String CAP_MOMENTS = "moments";
 
+    /** Capacité envoyée par la nouvelle app : elle sait rouvrir un modal à chaque occurrence du moment (EVERY_TIME). */
+    static final String CAP_EVERYTIME = "everytime";
+
     /** Équivaut à {@code eligible(firebaseUid, lang, null)} : une app sans capacité déclarée. */
     @Transactional(readOnly = true)
     public List<VideoModalEligibleResponse> eligible(String firebaseUid, String lang) {
@@ -127,6 +130,21 @@ public class VideoModalService {
         return hasCap(caps, CAP_MOMENTS);
     }
 
+    /** Vrai si la liste contient {@code everytime}. */
+    static boolean supportsEveryTime(String caps) {
+        return hasCap(caps, CAP_EVERYTIME);
+    }
+
+    /**
+     * Une app sans {@code caps=everytime} ne connaît pas EVERY_TIME : elle reçoit EVERY_OPEN (au moins
+     * une fois par lancement) plutôt qu'une valeur inconnue.
+     */
+    private static VideoModalEligibleResponse forClient(VideoModalEligibleResponse r, boolean everyTimeCapable) {
+        if (everyTimeCapable || r.frequency() != VideoModalFrequency.EVERY_TIME) return r;
+        return r.withTargeting(r.priority(), VideoModalFrequency.EVERY_OPEN, r.frequencyDays(),
+                r.stopAfterAnswer(), r.allowDontShowAgain(), r.lastShownAt());
+    }
+
     private static boolean hasCap(String caps, String wanted) {
         if (caps == null) return false;
         for (String cap : caps.split(",")) {
@@ -144,7 +162,8 @@ public class VideoModalService {
      *                    de travers. Sans {@code targeting}, celles à fréquence « à chaque ouverture »
      *                    ou « tous les N jours » ou avec la case « Ne plus afficher » ne le sont pas
      *                    non plus. Sans {@code moments}, les déclencheurs « moments d'action » sont retirés
-     *                    de {@code triggers} et une campagne qui n'en garde aucun n'est pas envoyée. Les
+     *                    de {@code triggers} et une campagne qui n'en garde aucun n'est pas envoyée. Sans
+     *                    {@code everytime}, une fréquence EVERY_TIME est servie sous la forme EVERY_OPEN. Les
      *                    campagnes ordinaires restent envoyées à tous.
      * @param appVersion  version de l'app ({@code 1.0.6}), nulle si inconnue
      * @param platform    {@code android} ou {@code ios}, nul si inconnu
@@ -155,11 +174,12 @@ public class VideoModalService {
         boolean layoutCapable = supportsLayout(caps);
         boolean targetingCapable = supportsTargeting(caps);
         boolean momentsCapable = supportsMoments(caps);
+        boolean everyTimeCapable = supportsEveryTime(caps);
         boolean english = lang != null && lang.trim().toLowerCase().startsWith("en");
         Instant now = clock.instant();
         int[] version = VideoModalAppVersions.parseLenient(appVersion).orElse(null);
         VideoModalPlatform device = VideoModalPlatform.fromParam(platform);
-        List<VideoModalCampaignEntity> live = campaignRepository.findActiveOrderByVersionPublishedAtDesc().stream()
+        List<VideoModalCampaignEntity> candidates = campaignRepository.findActiveOrderByVersionPublishedAtDesc().stream()
                 .filter(c -> c.isLiveAt(now))
                 .filter(c -> layoutCapable || !c.needsLayoutCapability())
                 .filter(c -> targetingCapable || !c.needsTargetingCapability())
@@ -167,7 +187,8 @@ public class VideoModalService {
                 .filter(c -> !c.servedTriggers(momentsCapable).isEmpty())
                 .filter(c -> VideoModalEligibility.matchesClient(c, version, device))
                 .toList();
-        if (live.isEmpty()) return List.of();
+        if (candidates.isEmpty()) return List.of();
+        List<VideoModalCampaignEntity> live = candidates;
 
         UUID userId = resolveUserId(firebaseUid);
         if (userId == null) {
@@ -175,13 +196,16 @@ public class VideoModalService {
             return live.stream()
                     .filter(c -> !c.needsAccount())
                     .sorted(BY_PRIORITY)
-                    .map(c -> VideoModalTexts.toEligible(c, english, 0, null, imageUrls, c.servedTriggers(momentsCapable)))
+                    .map(c -> forClient(VideoModalTexts.toEligible(c, english, 0, null, imageUrls,
+                            c.servedTriggers(momentsCapable)), everyTimeCapable))
                     .toList();
         }
 
         // Plafond journalier global, tous types confondus : déjà un modal aujourd'hui, plus rien.
+        // « À chaque fois » n'est pas soumis à ce plafond : il se rouvrirait au plus une fois par jour.
         if (dailyCap > 0 && responseRepository.countShownSince(userId, startOfDay(now)) >= dailyCap) {
-            return List.of();
+            live = live.stream().filter(c -> c.getFrequency() == VideoModalFrequency.EVERY_TIME).toList();
+            if (live.isEmpty()) return List.of();
         }
 
         Map<UUID, List<VideoModalResponseEntity>> byCampaign = responseRepository
@@ -198,8 +222,8 @@ public class VideoModalService {
                     if (displays == null || !targetingHolds(c, userId, situationMemo)) return null;
                     Instant lastShownAt = VideoModalEligibility.current(c, responses)
                             .map(VideoModalResponseEntity::getLastShownAt).orElse(null);
-                    return new Ranked(c, VideoModalTexts.toEligible(c, english, displays, lastShownAt, imageUrls,
-                            c.servedTriggers(momentsCapable)));
+                    return new Ranked(c, forClient(VideoModalTexts.toEligible(c, english, displays, lastShownAt,
+                            imageUrls, c.servedTriggers(momentsCapable)), everyTimeCapable));
                 })
                 .filter(java.util.Objects::nonNull)
                 .sorted(Comparator.comparingInt((Ranked r) -> r.campaign().getPriority()).reversed())

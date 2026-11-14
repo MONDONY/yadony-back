@@ -202,6 +202,19 @@ public class VideoModalAdminService {
             throw invalid("video-modal-frequency-days-required",
                     "Le nombre de jours est obligatoire pour une fréquence « tous les N jours »");
         }
+        if (frequency == VideoModalFrequency.EVERY_TIME) {
+            if (days != null) {
+                throw invalid("video-modal-every-time-days",
+                        "Le nombre de jours doit rester vide pour une fréquence « à chaque fois »");
+            }
+            // Les situations seules servent APP_OPEN : ce n'est pas un moment d'action.
+            boolean onlyMoments = c.getTriggers() != null && !c.getTriggers().isEmpty()
+                    && c.getTriggers().stream().allMatch(VideoModalTrigger::needsMomentsCapability);
+            if (!onlyMoments) {
+                throw invalid("video-modal-every-time-moments-only",
+                        "La fréquence « à chaque fois » n'est permise que si tous les déclencheurs sont des moments d'action");
+            }
+        }
         int sample = r.samplePercent() == null ? 100 : r.samplePercent();
         if (sample < 1 || sample > 100) {
             throw invalid("video-modal-invalid-sample", "Le tirage doit être compris entre 1 et 100 %");
