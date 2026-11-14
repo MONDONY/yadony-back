@@ -18,7 +18,7 @@ public enum ConversationKind {
      */
     RECIPIENT_TRAVELER,
     /**
-     * Question avant réservation (V383) : {@code sender_id} porte le DEMANDEUR, {@code traveler_id}
+     * Question avant réservation (V387) : {@code sender_id} porte le DEMANDEUR, {@code traveler_id}
      * le propriétaire de l'annonce, {@code bid_id} est nul jusqu'à la promotion en SENDER_TRAVELER.
      */
     INQUIRY

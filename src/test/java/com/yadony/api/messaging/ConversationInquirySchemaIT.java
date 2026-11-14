@@ -17,8 +17,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** V383 (conversations INQUIRY) sur un vrai PostgreSQL : unicité partielle et CHECK. */
-@DisplayName("Conversations INQUIRY - schéma V383")
+/** V387 (conversations INQUIRY) sur un vrai PostgreSQL : unicité partielle et CHECK. */
+@DisplayName("Conversations INQUIRY - schéma V387")
 class ConversationInquirySchemaIT {
 
     private static EmbeddedPostgres postgres;

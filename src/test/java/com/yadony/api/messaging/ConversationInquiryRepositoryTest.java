@@ -12,7 +12,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Modèle INQUIRY (V383) côté JPA : {@code findByAskerAndAnnouncement}, participants, promotion et
+ * Modèle INQUIRY (V387) côté JPA : {@code findByAskerAndAnnouncement}, participants, promotion et
  * re-verrouillage par UPDATE gardés. Les contraintes SQL (unicité, CHECK) sont vérifiées sur un vrai PostgreSQL
  * dans {@link ConversationInquirySchemaIT}, le profil test tournant sur H2 sans Flyway.
  */

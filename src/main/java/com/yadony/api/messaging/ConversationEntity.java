@@ -90,11 +90,11 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "traveler_last_message_at", insertable = false, updatable = false)
     private LocalDateTime travelerLastMessageAt;
 
-    /** Annonce visée par une conversation INQUIRY (V383) ; conservée après promotion. */
+    /** Annonce visée par une conversation INQUIRY (V387) ; conservée après promotion. */
     @Column(name = "announcement_id")
     private UUID announcementId;
 
-    /** Demandeur d'une conversation INQUIRY (V383) ; égal à {@code senderId} tant qu'elle l'est. */
+    /** Demandeur d'une conversation INQUIRY (V387) ; égal à {@code senderId} tant qu'elle l'est. */
     @Column(name = "asker_id")
     private UUID askerId;
 
