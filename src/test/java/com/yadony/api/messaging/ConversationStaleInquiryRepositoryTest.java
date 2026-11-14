@@ -8,6 +8,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +35,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void usesLastActivity_notCreation_andRespectsTheCutoff() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         LocalDateTime cutoff = now.minusDays(InquiryPolicy.INACTIVITY_DAYS);
         ConversationEntity old = inquiry(now.minusDays(31), now.minusDays(60));
         ConversationEntity recent = inquiry(now.minusDays(29), now.minusDays(60));
@@ -47,7 +48,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void fallsBackOnCreation_whenLastActivityIsNull() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         LocalDateTime cutoff = now.minusDays(InquiryPolicy.INACTIVITY_DAYS);
         ConversationEntity oldCreation = inquiry(null, now.minusDays(40));
         ConversationEntity recentCreation = inquiry(null, now.minusDays(5));
@@ -58,7 +59,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void neverSelectsAPromotedThread_evenWhenOld() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         ConversationEntity promoted = inquiry(now.minusDays(100), now.minusDays(100));
         jdbc.update("UPDATE conversations SET kind = 'SENDER_TRAVELER' WHERE id = ?", promoted.getId());
 
@@ -67,7 +68,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void skipsAlreadyDeletedConversations() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         ConversationEntity gone = inquiry(now.minusDays(40), now.minusDays(40));
         jdbc.update("UPDATE conversations SET deleted_at = ? WHERE id = ?", now, gone.getId());
 
@@ -76,7 +77,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void reserveStaleInquiry_softDeletesOnlyWhileStillInactiveAndInquiry_thenReleaseUndoes() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         LocalDateTime cutoff = now.minusDays(InquiryPolicy.INACTIVITY_DAYS);
         ConversationEntity stale = inquiry(now.minusDays(40), now.minusDays(40));
         ConversationEntity awakened = inquiry(now.minusDays(1), now.minusDays(40));
@@ -99,7 +100,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void guardedPromotion_neverPromotesAThreadDeletedByOneSide() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         ConversationEntity deletedByAsker = inquiry(now, now);
         ConversationEntity deletedByOwner = inquiry(now, now);
         jdbc.update("UPDATE conversations SET sender_deleted_at = ? WHERE id = ?", now, deletedByAsker.getId());
@@ -158,7 +159,7 @@ class ConversationStaleInquiryRepositoryTest {
 
     @Test
     void guardedPromotion_andRelock_neverTouchAReservedOrClosedRow() {
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
         UUID bid = UUID.randomUUID();
         ConversationEntity open = inquiry(now, now);
         ConversationEntity reserved = inquiry(now.minusDays(40), now.minusDays(40));
