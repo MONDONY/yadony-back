@@ -39,7 +39,7 @@ import static org.mockito.Mockito.when;
 
 /** Éligibilité de bout en bout du service : tous les filtres de l'étape « moment, ciblage, fréquence ». */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("Modals : ciblage, fréquence, plafond journalier et compatibilité (service)")
+@DisplayName("Modals : ciblage, fréquence et compatibilité (service)")
 class VideoModalTargetingServiceTest {
 
     private static final String LANG_FR = "{\"children\":[{\"field\":\"language\",\"operator\":\"IN\",\"value\":[\"fr\"]}],\"op\":\"AND\"}";
@@ -56,12 +56,12 @@ class VideoModalTargetingServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = serviceAt(NOW, 1);
+        service = serviceAt(NOW);
     }
 
-    private VideoModalService serviceAt(Instant now, int dailyCap) {
+    private VideoModalService serviceAt(Instant now) {
         return new VideoModalService(campaignRepository, responseRepository, userRepository, tx, imageUrls,
-                targeting, dailyCap, Clock.fixed(now, ZoneOffset.UTC));
+                targeting, Clock.fixed(now, ZoneOffset.UTC));
     }
 
     private void live(VideoModalCampaignEntity... campaigns) {
@@ -184,74 +184,23 @@ class VideoModalTargetingServiceTest {
                 .containsExactly(high.getId(), low.getId());
     }
 
-    // ── Plafond journalier ─────────────────────────────────────────────────
+    // ── Aucun plafond global ───────────────────────────────────────────────
 
     @Test
-    @DisplayName("plafond journalier : un SHOWN aujourd'hui (Europe/Paris) = liste vide pour un compte connecté")
-    void plafondJournalier() {
+    @DisplayName("aucun plafond global : un modal déjà montré aujourd'hui n'empêche pas les autres campagnes")
+    void deuxModalsLeMemeJour() {
         knownUser();
-        live(campaign(1, VideoModalAudience.EVERYONE));
-        // 10/11/2026 10:00 UTC = 11:00 à Paris : le jour commence le 9 à 23:00 UTC.
-        when(responseRepository.countShownSince(userId, Instant.parse("2026-11-09T23:00:00Z"))).thenReturn(1L);
-
-        assertThat(service.eligible("uid", "fr", "targeting")).isEmpty();
-        verify(responseRepository, never()).findByUserIdAndCampaignIdIn(any(), any());
-    }
-
-    @Test
-    @DisplayName("plafond journalier : le jour change à minuit heure de Paris, pas à minuit UTC")
-    void plafondChangementDeJour() {
-        knownUser();
-        live(campaign(1, VideoModalAudience.EVERYONE));
+        var a = campaign(1, VideoModalAudience.EVERYONE);
+        var b = campaign(1, VideoModalAudience.EVERYONE);
+        live(a, b);
         responses();
 
-        // 23:30 UTC le 10 = 00:30 le 11 à Paris : nouveau jour, départ 23:00 UTC le 10.
-        VideoModalService afterMidnightParis = serviceAt(Instant.parse("2026-11-10T23:30:00Z"), 1);
-        when(responseRepository.countShownSince(userId, Instant.parse("2026-11-10T23:00:00Z"))).thenReturn(0L);
-        assertThat(afterMidnightParis.eligible("uid", "fr", "targeting")).hasSize(1);
-
-        // 22:30 UTC le 10 = 23:30 le 10 à Paris : encore le même jour qu'à 10:00 UTC.
-        VideoModalService beforeMidnightParis = serviceAt(Instant.parse("2026-11-10T22:30:00Z"), 1);
-        when(responseRepository.countShownSince(userId, Instant.parse("2026-11-09T23:00:00Z"))).thenReturn(1L);
-        assertThat(beforeMidnightParis.eligible("uid", "fr", "targeting")).isEmpty();
+        assertThat(ids(service.eligible("uid", "fr", "targeting"))).containsExactlyInAnyOrder(a.getId(), b.getId());
     }
 
     @Test
-    @DisplayName("plafond journalier : heure d'été (UTC+2) et passage à l'heure d'hiver, jour de 25 h")
-    void plafondHeureEteEtHiver() {
-        knownUser();
-        live(campaign(1, VideoModalAudience.EVERYONE));
-        responses();
-        // 15/07 12:00 UTC = 14:00 à Paris (UTC+2) : le jour commence le 14/07 à 22:00 UTC.
-        when(responseRepository.countShownSince(userId, Instant.parse("2026-07-14T22:00:00Z"))).thenReturn(0L);
-        assertThat(serviceAt(Instant.parse("2026-07-15T12:00:00Z"), 1).eligible("uid", "fr", "targeting")).hasSize(1);
-        // 25/10/2026 (changement d'heure, 25 h) : minuit le 25 est encore en UTC+2 = 24/10 22:00 UTC.
-        when(responseRepository.countShownSince(userId, Instant.parse("2026-10-24T22:00:00Z"))).thenReturn(0L);
-        assertThat(serviceAt(Instant.parse("2026-10-25T12:00:00Z"), 1).eligible("uid", "fr", "targeting")).hasSize(1);
-        verify(responseRepository).countShownSince(userId, Instant.parse("2026-10-24T22:00:00Z"));
-    }
-
-    @Test
-    @DisplayName("plafond journalier : 0 = désactivé, N laisse passer jusqu'à N-1 ; les visiteurs ne sont pas concernés")
-    void plafondDesactiveEtN() {
-        knownUser();
-        live(campaign(1, VideoModalAudience.EVERYONE));
-        responses();
-
-        assertThat(serviceAt(NOW, 0).eligible("uid", "fr", "targeting")).hasSize(1);
-        verify(responseRepository, never()).countShownSince(any(), any());
-
-        when(responseRepository.countShownSince(eq(userId), any())).thenReturn(1L);
-        assertThat(serviceAt(NOW, 2).eligible("uid", "fr", "targeting")).hasSize(1);
-        when(responseRepository.countShownSince(eq(userId), any())).thenReturn(2L);
-        assertThat(serviceAt(NOW, 2).eligible("uid", "fr", "targeting")).isEmpty();
-        // Visiteur : aucun plafond côté serveur (l'app l'applique avec le jour local de l'appareil).
-        assertThat(serviceAt(NOW, 1).eligible(null, "fr", "targeting")).hasSize(1);
-    }
-
-    @Test
-    @DisplayName("aucune campagne active : le plafond n'est même pas consulté")
-    void aucuneCampagneAucunPlafond() {
+    @DisplayName("aucune campagne active : rien n'est consulté")
+    void aucuneCampagneRienConsulte() {
         when(campaignRepository.findActiveOrderByVersionPublishedAtDesc()).thenReturn(List.of());
         assertThat(service.eligible("uid", "fr", "targeting")).isEmpty();
         verifyNoInteractions(userRepository, responseRepository, targeting);

@@ -32,7 +32,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Situations, conditions de la Diffusion, estimation et plafond journalier sur PostgreSQL embarqué,
+ * Situations, conditions de la Diffusion, estimation sur PostgreSQL embarqué,
  * toutes migrations Flyway et {@code ddl-auto=validate} : les requêtes natives lisent les vraies tables
  * des offres, paiements, négociations, parrainage et profil.
  */
@@ -545,8 +545,8 @@ class VideoModalTargetingPostgresIT {
     }
 
     @Test
-    @DisplayName("plafond journalier sur Postgres : un modal vu aujourd'hui = liste vide ; vu avant-hier = de nouveau proposé")
-    void plafondJournalier() {
+    @DisplayName("sans plafond global sur Postgres : un modal vu aujourd'hui ne retire pas les autres campagnes")
+    void sansPlafondGlobal() {
         UUID u = user();
         VideoModalCampaignEntity shown = activeCampaign(new VideoModalSituation(VideoModalSituationKind.PROFILE_INCOMPLETE, null));
         VideoModalCampaignEntity other = activeCampaign(new VideoModalSituation(VideoModalSituationKind.PROFILE_INCOMPLETE, null));
@@ -555,11 +555,9 @@ class VideoModalTargetingPostgresIT {
         VideoModalResponseEntity row = new VideoModalResponseEntity(shown.getId(), u, 1);
         row.apply(VideoModalEvent.SHOWN, Instant.now());
         responseRepository.saveAndFlush(row);
-        assertThat(service.eligible(uidOf(u), "fr", "targeting")).isEmpty();
-
-        jdbc.update("UPDATE video_modal_responses SET last_shown_at = now() - interval '2 days' WHERE campaign_id = ?", shown.getId());
+        // Aucun plafond global : un modal vu aujourd'hui n'enlève pas les autres campagnes.
         assertThat(service.eligible(uidOf(u), "fr", "targeting")).extracting(VideoModalEligibleResponse::id)
-                .containsExactlyInAnyOrder(shown.getId(), other.getId());
+                .contains(other.getId());
     }
 
     @Test

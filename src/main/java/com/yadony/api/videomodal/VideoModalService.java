@@ -8,7 +8,6 @@ import com.yadony.api.videomodal.dto.VideoModalEventRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -18,7 +17,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -38,16 +36,12 @@ public class VideoModalService {
 
     private static final Logger log = LoggerFactory.getLogger(VideoModalService.class);
 
-    /** Jour calendaire du plafond journalier : celui de la plupart des utilisateurs (Paris). */
-    static final ZoneId DAILY_CAP_ZONE = ZoneId.of("Europe/Paris");
-
     private final VideoModalCampaignRepository campaignRepository;
     private final VideoModalResponseRepository responseRepository;
     private final UserRepository userRepository;
     private final TransactionTemplate transactionTemplate;
     private final VideoModalImageUrls imageUrls;
     private final VideoModalTargeting targeting;
-    private final int dailyCap;
     private final Clock clock;
 
     @Autowired
@@ -56,13 +50,12 @@ public class VideoModalService {
                              UserRepository userRepository,
                              PlatformTransactionManager transactionManager,
                              VideoModalImageUrls imageUrls,
-                             VideoModalTargeting targeting,
-                             @Value("${yadony.video-modal.daily-cap:1}") int dailyCap) {
+                             VideoModalTargeting targeting) {
         this(campaignRepository, responseRepository, userRepository,
-                new TransactionTemplate(transactionManager), imageUrls, targeting, dailyCap, Clock.systemUTC());
+                new TransactionTemplate(transactionManager), imageUrls, targeting, Clock.systemUTC());
     }
 
-    /** Sans ciblage ni plafond journalier : le service d'avant l'étape « moment, ciblage, fréquence ». */
+    /** Sans ciblage : le service d'avant l'étape « moment, ciblage, fréquence ». */
     VideoModalService(VideoModalCampaignRepository campaignRepository,
                       VideoModalResponseRepository responseRepository,
                       UserRepository userRepository,
@@ -70,7 +63,7 @@ public class VideoModalService {
                       VideoModalImageUrls imageUrls,
                       Clock clock) {
         this(campaignRepository, responseRepository, userRepository, transactionTemplate, imageUrls,
-                new VideoModalTargeting(null, null, clock), 0, clock);
+                new VideoModalTargeting(null, null, clock), clock);
     }
 
     VideoModalService(VideoModalCampaignRepository campaignRepository,
@@ -79,7 +72,6 @@ public class VideoModalService {
                       TransactionTemplate transactionTemplate,
                       VideoModalImageUrls imageUrls,
                       VideoModalTargeting targeting,
-                      int dailyCap,
                       Clock clock) {
         this.campaignRepository = campaignRepository;
         this.responseRepository = responseRepository;
@@ -87,7 +79,6 @@ public class VideoModalService {
         this.transactionTemplate = transactionTemplate;
         this.imageUrls = imageUrls;
         this.targeting = targeting;
-        this.dailyCap = dailyCap;
         this.clock = clock;
     }
 
@@ -201,13 +192,6 @@ public class VideoModalService {
                     .toList();
         }
 
-        // Plafond journalier global, tous types confondus : déjà un modal aujourd'hui, plus rien.
-        // « À chaque fois » n'est pas soumis à ce plafond : il se rouvrirait au plus une fois par jour.
-        if (dailyCap > 0 && responseRepository.countShownSince(userId, startOfDay(now)) >= dailyCap) {
-            live = live.stream().filter(c -> c.getFrequency() == VideoModalFrequency.EVERY_TIME).toList();
-            if (live.isEmpty()) return List.of();
-        }
-
         Map<UUID, List<VideoModalResponseEntity>> byCampaign = responseRepository
                 .findByUserIdAndCampaignIdIn(userId, live.stream().map(VideoModalCampaignEntity::getId).toList())
                 .stream()
@@ -243,11 +227,6 @@ public class VideoModalService {
             if (!memo.computeIfAbsent(situation, s -> targeting.holds(s, userId))) return false;
         }
         return true;
-    }
-
-    /** Début du jour calendaire (Europe/Paris) de {@code now}, en instant. */
-    private static Instant startOfDay(Instant now) {
-        return now.atZone(DAILY_CAP_ZONE).toLocalDate().atStartOfDay(DAILY_CAP_ZONE).toInstant();
     }
 
     /**

@@ -37,13 +37,6 @@ public interface VideoModalResponseRepository extends JpaRepository<VideoModalRe
             """)
     List<Object[]> currentVersionStats(@Param("campaignIds") Collection<UUID> campaignIds);
 
-    /**
-     * Nombre de modals (campagnes, toutes versions) montrés à la personne depuis {@code since} :
-     * le dernier affichage de chaque ligne suffit à dire « déjà un modal aujourd'hui ».
-     */
-    @Query("SELECT COUNT(r) FROM VideoModalResponseEntity r WHERE r.userId = :userId AND r.lastShownAt >= :since")
-    long countShownSince(@Param("userId") UUID userId, @Param("since") java.time.Instant since);
-
     /** Finalisation du compte : les réponses de l'utilisateur sont supprimées (douce). */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)

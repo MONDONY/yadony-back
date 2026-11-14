@@ -46,7 +46,7 @@ class VideoModalMomentsServiceTest {
     @BeforeEach
     void setUp() {
         service = new VideoModalService(campaignRepository, responseRepository, userRepository, tx, imageUrls,
-                targeting, 1, Clock.fixed(NOW, ZoneOffset.UTC));
+                targeting, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private void live(VideoModalCampaignEntity... campaigns) {
