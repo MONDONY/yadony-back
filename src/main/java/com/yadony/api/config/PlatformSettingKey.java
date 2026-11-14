@@ -118,7 +118,15 @@ public enum PlatformSettingKey {
     REMOTE_CONFIG_FETCH_MINUTES("remote_config_fetch_minutes", PlatformSettingType.INTEGER),
     INDIVIDUAL_TRIPS_ALERT_THRESHOLD("individual_trips_alert_threshold", PlatformSettingType.INTEGER),
     DAC7_ENABLED("dac7_enabled", PlatformSettingType.BOOLEAN),
-    DAC7_REMINDERS_ENABLED("dac7_reminders_enabled", PlatformSettingType.BOOLEAN);
+    DAC7_REMINDERS_ENABLED("dac7_reminders_enabled", PlatformSettingType.BOOLEAN),
+    SUPPORT_WHATSAPP_NUMBER("support_whatsapp_number", PlatformSettingType.PHONE_E164);
+
+    /**
+     * {@code SUPPORT_WHATSAPP_NUMBER} : numéro WhatsApp de l'équipe Yadony (format international, « +33… »).
+     * L'application l'affiche en tête de l'écran Support et du Centre d'aide ; sans WhatsApp sur le téléphone, elle
+     * propose d'appeler ou d'écrire par SMS à ce numéro. Aucune property : réglé depuis le panel admin, servi par
+     * {@code GET /config/support-contact}. Vide (le défaut) : la carte n'est pas affichée.
+     */
 
     /**
      * DAC7 : {@code DAC7_ENABLED} ouvre la collecte (écran « Informations fiscales » et ses endpoints, pages admin,
@@ -201,7 +209,7 @@ public enum PlatformSettingKey {
 
     /** Vrai si une valeur vide a un sens (liste d'indicatifs vide : aucun pays bloqué). */
     public boolean acceptsEmptyValue() {
-        return type == PlatformSettingType.CALLING_CODES;
+        return type == PlatformSettingType.CALLING_CODES || type == PlatformSettingType.PHONE_E164;
     }
 
     public static PlatformSettingKey fromKey(String key) {

@@ -12,4 +12,4 @@ routes:
   - path: /support
     label: Contacter le support
 ---
-Vous êtes dans FAQ & aide. Tapez votre question dans « Rechercher dans l'aide » ou ouvrez une catégorie : Compte & identité, Annonces & demandes, Paiements & remboursements, Suivi & livraison, Sécurité & données. Si vous ne trouvez pas votre réponse, la carte « Vous n'avez pas trouvé votre réponse ? » propose « Contacter le support ».
+Vous êtes dans FAQ & aide. Quand l'équipe a réglé son numéro, la carte « Écrire sur WhatsApp » est en haut de l'écran, avant les questions : elle ouvre la conversation WhatsApp avec l'équipe Yadony. Tapez votre question dans « Rechercher dans l'aide » ou ouvrez une catégorie : Compte & identité, Annonces & demandes, Paiements & remboursements, Suivi & livraison, Sécurité & données. Si vous ne trouvez pas votre réponse, la carte « Vous n'avez pas trouvé votre réponse ? » propose « Contacter le support ».

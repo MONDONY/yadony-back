@@ -242,6 +242,8 @@ public class PlatformSettingsInitializer {
         defaults.put(PlatformSettingKey.DAC7_ENABLED, String.valueOf(dac7EnabledProperty));
         defaults.put(PlatformSettingKey.DAC7_REMINDERS_ENABLED,
                 String.valueOf(dac7EnabledProperty && dac7RemindersEnabledProperty));
+        // Numéro WhatsApp du support : vide au départ (carte masquée dans l'app), réglé depuis le back-office.
+        defaults.put(PlatformSettingKey.SUPPORT_WHATSAPP_NUMBER, "");
         defaults.put(PlatformSettingKey.PAYMENTS_PAYPAL_ENABLED, String.valueOf(paypalEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_APPLE_PAY_ENABLED, String.valueOf(applePayEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED, String.valueOf(googlePayEnabledProperty));
