@@ -16,5 +16,10 @@ public enum ConversationKind {
      * Destinataire rattaché (lien CONFIRMED) ↔ voyageur, invisible pour l'expéditeur.
      * {@code sender_id} y porte le DESTINATAIRE. Fermée quand le destinataire change.
      */
-    RECIPIENT_TRAVELER
+    RECIPIENT_TRAVELER,
+    /**
+     * Question avant réservation (V387) : {@code sender_id} porte le DEMANDEUR, {@code traveler_id}
+     * le propriétaire de l'annonce, {@code bid_id} est nul jusqu'à la promotion en SENDER_TRAVELER.
+     */
+    INQUIRY
 }

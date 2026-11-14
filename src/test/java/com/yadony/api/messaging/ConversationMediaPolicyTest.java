@@ -75,6 +75,19 @@ class ConversationMediaPolicyTest {
         return c;
     }
 
+    @Test
+    @DisplayName("INQUIRY (sans bid) : texte seul, jamais de photo, sans toucher au bid")
+    void inquiry_isTextOnly() throws Exception {
+        ConversationEntity inquiry = withId(ConversationEntity.forInquiry(
+                sender, UUID.randomUUID(), traveler, "conv_inq_x"));
+
+        assertThat(policy.check(inquiry, sender, (BidEntity) null, senderUser))
+                .contains(ConversationMediaPolicy.Denial.INQUIRY_TEXT_ONLY);
+        assertThat(policy.check(inquiry, sender)).contains(ConversationMediaPolicy.Denial.INQUIRY_TEXT_ONLY);
+        assertThatThrownBy(() -> policy.assertAllowed(inquiry, senderUser))
+                .isInstanceOf(YadonyBusinessException.class);
+    }
+
     @ParameterizedTest(name = "{0} → permis")
     @EnumSource(value = BidStatus.class, names = {"ACCEPTED", "HANDED_OVER", "IN_TRANSIT", "ARRIVED"})
     void acceptedAndPaidStatuses_allowMedia(BidStatus status) {

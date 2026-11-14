@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -26,7 +27,7 @@ import java.util.UUID;
 @Table(name = "conversations")
 public class ConversationEntity extends BaseEntity {
 
-    @Column(name = "bid_id", nullable = false)
+    @Column(name = "bid_id")
     private UUID bidId;
 
     /** Participant A : expéditeur (SENDER_TRAVELER) ou destinataire (RECIPIENT_TRAVELER). */
@@ -89,6 +90,31 @@ public class ConversationEntity extends BaseEntity {
     @Column(name = "traveler_last_message_at", insertable = false, updatable = false)
     private LocalDateTime travelerLastMessageAt;
 
+    /** Annonce visée par une conversation INQUIRY (V387) ; conservée après promotion. */
+    @Column(name = "announcement_id")
+    private UUID announcementId;
+
+    /** Demandeur d'une conversation INQUIRY (V387) ; égal à {@code senderId} tant qu'elle l'est. */
+    @Column(name = "asker_id")
+    private UUID askerId;
+
+    /**
+     * Quota de messages INQUIRY levé (bid créé) ; nul tant que le quota s'applique. Posé et retiré
+     * uniquement par les UPDATE gardés de promotion et de reverrouillage.
+     */
+    @Column(name = "quota_lifted_at")
+    private LocalDateTime quotaLiftedAt;
+
+    // Écrit uniquement par ConversationRepository#markInquiryFirstMessage : jamais réécrit par le
+    // flush d'une entité lue plus tôt (comme travelerLastMessageAt).
+    @Column(name = "inquiry_first_message_at", insertable = false, updatable = false)
+    private LocalDateTime inquiryFirstMessageAt;
+
+    // Écrit uniquement par les UPDATE ciblés de ConversationRepository (promotion, reverrouillage,
+    // activité INQUIRY) et lu par la purge des INQUIRY inactives.
+    @Column(name = "last_activity_at")
+    private LocalDateTime lastActivityAt;
+
     public ConversationEntity() {}
 
     public ConversationEntity(UUID bidId, UUID senderId, UUID travelerId, String firestoreConversationId) {
@@ -104,6 +130,27 @@ public class ConversationEntity extends BaseEntity {
         ConversationEntity c = new ConversationEntity(bidId, recipientId, travelerId, firestoreConversationId);
         c.kind = ConversationKind.RECIPIENT_TRAVELER;
         return c;
+    }
+
+    /**
+     * Conversation avant réservation : {@code sender_id} porte le demandeur, {@code traveler_id}
+     * le propriétaire de l'annonce, sans bid.
+     */
+    public static ConversationEntity forInquiry(UUID askerId, UUID announcementId, UUID ownerId,
+                                                String firestoreConversationId) {
+        ConversationEntity c = new ConversationEntity(null, askerId, ownerId, firestoreConversationId);
+        c.kind = ConversationKind.INQUIRY;
+        c.askerId = askerId;
+        c.announcementId = announcementId;
+        return c;
+    }
+
+    public boolean isInquiry() {
+        return kind == ConversationKind.INQUIRY;
+    }
+
+    public boolean isQuotaLifted() {
+        return quotaLiftedAt != null;
     }
 
     public boolean isRecipientConversation() {
@@ -219,6 +266,15 @@ public class ConversationEntity extends BaseEntity {
     public UUID getSenderId() { return senderId; }
     public UUID getTravelerId() { return travelerId; }
     public String getFirestoreConversationId() { return firestoreConversationId; }
+
+    /**
+     * Un fil de questions porte l'identifiant du document Firestore {@code conv_inq_<uuid>}, or l'UUID
+     * n'existe qu'après l'insertion : le service l'enregistre sous un identifiant provisoire puis
+     * l'aligne ici, dans la même transaction.
+     */
+    void assignFirestoreConversationId(String firestoreConversationId) {
+        this.firestoreConversationId = Objects.requireNonNull(firestoreConversationId, "firestoreConversationId");
+    }
     public LocalDateTime getSenderDeletedAt() { return senderDeletedAt; }
     public LocalDateTime getTravelerDeletedAt() { return travelerDeletedAt; }
     public LocalDateTime getSenderArchivedAt() { return senderArchivedAt; }
@@ -237,6 +293,9 @@ public class ConversationEntity extends BaseEntity {
             messagesPurgedAt = at;
         }
     }
+
+    public UUID getAnnouncementId() { return announcementId; }
+    public UUID getAskerId() { return askerId; }
 
     public LocalDateTime getTravelerLastMessageAt() { return travelerLastMessageAt; }
 }

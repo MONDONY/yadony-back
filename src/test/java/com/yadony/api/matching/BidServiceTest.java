@@ -2306,6 +2306,44 @@ class BidServiceTest {
             verify(eventPublisher).publishEvent(captor.capture());
             assertThat(captor.getValue().isRematchEligible()).isFalse();
         }
+
+        @Test
+        @DisplayName("refus depuis PAYMENT_ESCROWED → l'event porte previousStatus=PAYMENT_ESCROWED (statut d'AVANT)")
+        void rejectBid_fromEscrowed_eventCarriesPreviousStatusBeforeTransition() {
+            BidEntity bid = buildBid(); // PAYMENT_ESCROWED
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("NO_CAPACITY"));
+
+            ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
+            assertThat(captor.getValue().getPreviousStatus()).isEqualTo(BidStatus.PAYMENT_ESCROWED);
+        }
+
+        @Test
+        @DisplayName("refus d'un bid PENDING hors carte → l'event porte previousStatus=PENDING")
+        void rejectBid_fromOffPlatformPending_eventCarriesPreviousStatusBeforeTransition() {
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.PENDING);
+            bid.setPaymentMethod(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(buildTraveler()));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty());
+
+            bidService.rejectBid(BID_ID, TRAVELER_UID, new BidRejectRequest("NO_CAPACITY"));
+
+            ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.REJECTED);
+            assertThat(captor.getValue().getPreviousStatus()).isEqualTo(BidStatus.PENDING);
+        }
     }
 
     // ─── rejectBidBySystem ─────────────────────────────────────────────────────
@@ -2453,6 +2491,28 @@ class BidServiceTest {
             assertThat(captor.getValue().actorId()).isEqualTo(sender.getId());
             assertThat(captor.getValue().byTraveler()).isFalse();
             assertThat(captor.getValue().previousStatus()).isEqualTo(BidStatus.ACCEPTED);
+        }
+
+        @Test
+        @DisplayName("cancelBid depuis ACCEPTED → BidRejectedEvent ET BidCancelledByParticipantEvent portent previousStatus=ACCEPTED")
+        void cancelBid_fromAccepted_bothEventsCarryPreviousStatusBeforeTransition() {
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(buildSender()));
+            when(bidRepository.save(any())).thenReturn(bid);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+
+            bidService.cancelBid(BID_ID, SENDER_UID);
+
+            ArgumentCaptor<BidRejectedEvent> rejected = ArgumentCaptor.forClass(BidRejectedEvent.class);
+            verify(eventPublisher).publishEvent(rejected.capture());
+            assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+            assertThat(rejected.getValue().getPreviousStatus()).isEqualTo(BidStatus.ACCEPTED);
+            ArgumentCaptor<com.yadony.api.matching.events.BidCancelledByParticipantEvent> participant =
+                    ArgumentCaptor.forClass(com.yadony.api.matching.events.BidCancelledByParticipantEvent.class);
+            verify(eventPublisher).publishEvent(participant.capture());
+            assertThat(participant.getValue().previousStatus()).isEqualTo(BidStatus.ACCEPTED);
         }
 
         @Test
@@ -2777,6 +2837,26 @@ class BidServiceTest {
             assertThat(captor.getValue().getBidId()).isEqualTo(BID_ID);
             assertThat(captor.getValue().getSenderId()).isEqualTo(SENDER_ID);
             assertThat(captor.getValue().isRematchEligible()).isFalse();
+        }
+
+        @Test
+        @DisplayName("l'event porte previousStatus = statut d'AVANT l'annulation (ACCEPTED, puis PENDING)")
+        void eventCarriesPreviousStatusBeforeTransition() {
+            for (BidStatus before : new BidStatus[] {BidStatus.ACCEPTED, BidStatus.PENDING}) {
+                reset(eventPublisher);
+                BidEntity bid = buildBid();
+                bid.setStatus(before);
+                when(bidRepository.findById(BID_ID)).thenReturn(Optional.of(bid));
+                when(bidRepository.save(any())).thenReturn(bid);
+                when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(buildAnnouncement()));
+
+                bidService.cancelBidForDeletedSender(BID_ID);
+
+                ArgumentCaptor<BidRejectedEvent> captor = ArgumentCaptor.forClass(BidRejectedEvent.class);
+                verify(eventPublisher).publishEvent(captor.capture());
+                assertThat(bid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+                assertThat(captor.getValue().getPreviousStatus()).as("avant " + before).isEqualTo(before);
+            }
         }
 
         @Test

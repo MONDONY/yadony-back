@@ -9,8 +9,10 @@ import java.util.List;
 import com.yadony.api.messaging.dto.BatchConversationRequest;
 import com.yadony.api.messaging.dto.BatchConversationResponse;
 import com.yadony.api.messaging.dto.ConversationResponse;
+import com.yadony.api.messaging.dto.InquiryRequest;
 import com.yadony.api.messaging.dto.LastMessageRequest;
 import jakarta.validation.Valid;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -35,17 +37,20 @@ public class ConversationController {
     private final UserRepository userRepository;
     private final BlockVisibility blockVisibility;
     private final ConversationBatchService batchService;
+    private final InquiryCapability inquiryCapability;
 
     public ConversationController(ConversationRepository conversationRepository,
                                    ConversationService conversationService,
                                    UserRepository userRepository,
                                    BlockVisibility blockVisibility,
-                                   ConversationBatchService batchService) {
+                                   ConversationBatchService batchService,
+                                   InquiryCapability inquiryCapability) {
         this.conversationRepository = conversationRepository;
         this.conversationService = conversationService;
         this.userRepository = userRepository;
         this.blockVisibility = blockVisibility;
         this.batchService = batchService;
+        this.inquiryCapability = inquiryCapability;
     }
 
     // GET /conversations — paginated list for the authenticated user
@@ -74,7 +79,10 @@ public class ConversationController {
                 ? conversationRepository.findByParticipant(currentUser.getId(), Pageable.unpaged())
                 : conversationRepository.findByParticipantExcludingHidden(
                         currentUser.getId(), hidden, Pageable.unpaged()))
-                .getContent();
+                .getContent().stream()
+                // Une app qui n'a pas annoncé `inquiry` ne sait pas lire un fil sans bid.
+                .filter(c -> !c.isInquiry() || inquiryCapability.enabled())
+                .toList();
 
         java.util.Map<String, java.util.Map<String, Object>> meta = conversationService.fetchConversationMeta(
                 all.stream().map(ConversationEntity::getFirestoreConversationId).toList());
@@ -94,6 +102,7 @@ public class ConversationController {
     public ResponseEntity<ConversationResponse> getConversation(
             @PathVariable UUID id) {
 
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         ConversationEntity conv = conversationRepository
                 .findByIdAndParticipant(id, currentUser.getId())
@@ -123,12 +132,30 @@ public class ConversationController {
         return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
     }
 
+    // POST /conversations/inquiry — conversation de questions avant réservation (get or create).
+    // Deux premiers appels simultanés du même couple (demandeur, annonce) : le second viole
+    // conversations_inquiry_active_idx. getOrCreateInquiry est transactionnelle, la violation ne
+    // s'y rattrape pas ; on la reprend ici, hors transaction, d'un seul nouvel appel qui trouve
+    // alors la conversation du gagnant.
+    @PostMapping("/inquiry")
+    public ResponseEntity<ConversationResponse> openInquiry(@Valid @RequestBody InquiryRequest body) {
+        UserEntity currentUser = resolveCurrentUser();
+        ConversationEntity conv;
+        try {
+            conv = conversationService.getOrCreateInquiry(currentUser.getId(), body.announcementId());
+        } catch (DataIntegrityViolationException race) {
+            conv = conversationService.getOrCreateInquiry(currentUser.getId(), body.announcementId());
+        }
+        return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
+    }
+
     // POST /conversations/{id}/last-message — update Firestore last message preview
     @PostMapping("/{id}/last-message")
     public ResponseEntity<Void> updateLastMessage(
             @PathVariable UUID id,
             @Valid @RequestBody LastMessageRequest body) {
 
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         ConversationEntity conv = conversationRepository
                 .findByIdAndParticipant(id, currentUser.getId())
@@ -146,6 +173,7 @@ public class ConversationController {
     // DELETE /conversations/{id} — unilateral soft-delete (other party goes read-only)
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteConversation(@PathVariable UUID id) {
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         conversationService.deleteConversation(id, currentUser.getId());
         return ResponseEntity.noContent().build();
@@ -159,14 +187,18 @@ public class ConversationController {
     @GetMapping("/archived")
     public ResponseEntity<PageResponse<ConversationResponse>> listArchivedConversations() {
         UserEntity currentUser = resolveCurrentUser();
+        boolean inquiryEnabled = inquiryCapability.enabled();
         List<ConversationResponse> archived =
-                conversationService.getArchivedConversations(currentUser.getId());
+                conversationService.getArchivedConversations(currentUser.getId()).stream()
+                        .filter(r -> inquiryEnabled || !"INQUIRY".equals(r.kind()))
+                        .toList();
         return ResponseEntity.ok(PageResponse.from(new PageImpl<>(archived)));
     }
 
     // POST /conversations/{id}/archive — archiver une conversation
     @PostMapping("/{id}/archive")
     public ResponseEntity<Void> archiveConversation(@PathVariable UUID id) {
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         conversationService.archiveConversation(id, currentUser.getId());
         return ResponseEntity.noContent().build();
@@ -175,6 +207,7 @@ public class ConversationController {
     // POST /conversations/{id}/unarchive — désarchiver une conversation
     @PostMapping("/{id}/unarchive")
     public ResponseEntity<Void> unarchiveConversation(@PathVariable UUID id) {
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         conversationService.unarchiveConversation(id, currentUser.getId());
         return ResponseEntity.noContent().build();
@@ -184,6 +217,7 @@ public class ConversationController {
     // messages de ce fil, pour l'appelant seul. Non-lus et appels inchangés. Idempotent.
     @PostMapping("/{id}/mute")
     public ResponseEntity<Void> muteConversation(@PathVariable UUID id) {
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         conversationService.muteNotifications(id, currentUser.getId());
         return ResponseEntity.noContent().build();
@@ -192,6 +226,7 @@ public class ConversationController {
     // POST /conversations/{id}/unmute — réactive les push de ce fil. Idempotent.
     @PostMapping("/{id}/unmute")
     public ResponseEntity<Void> unmuteConversation(@PathVariable UUID id) {
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         conversationService.unmuteNotifications(id, currentUser.getId());
         return ResponseEntity.noContent().build();
@@ -223,6 +258,7 @@ public class ConversationController {
     // POST /conversations/{id}/restore — restore the requesting user's deleted copy
     @PostMapping("/{id}/restore")
     public ResponseEntity<ConversationResponse> restoreConversation(@PathVariable UUID id) {
+        hideInquiryUnlessEnabled(id);
         UserEntity currentUser = resolveCurrentUser();
         ConversationEntity conv = conversationService.restoreConversation(id, currentUser.getId());
         return ResponseEntity.ok(conversationService.toResponse(conv, currentUser.getId()));
@@ -231,6 +267,19 @@ public class ConversationController {
     // L'ancien POST /conversations/{id}/upload (URL présignée 7 j que le client écrivait
     // lui-même dans Firestore) est retiré : aucun appelant, et il contournait la politique de
     // médias. Les photos passent par ConversationMediaController (FLUTTER-B4).
+
+    /**
+     * Une conversation INQUIRY n'existe, pour une app qui n'a pas annoncé la capacité `inquiry`,
+     * que comme un identifiant inconnu : même erreur que « conversation introuvable ».
+     */
+    private void hideInquiryUnlessEnabled(UUID id) {
+        if (inquiryCapability.enabled()) {
+            return;
+        }
+        conversationRepository.findById(id).filter(ConversationEntity::isInquiry).ifPresent(c -> {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Conversation not found or access denied");
+        });
+    }
 
     private UserEntity resolveCurrentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

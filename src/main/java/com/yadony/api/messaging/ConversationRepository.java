@@ -22,6 +22,13 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     //
     // Les requêtes « par bid » ne visent que SENDER_TRAVELER : la conversation
     // destinataire a ses propres méthodes (RecipientConversationService).
+    //
+    // L'entité n'a pas de @Where (l'UPDATE releaseInquiryReservation doit retrouver une ligne
+    // supprimée) : les requêtes « participant » testent donc elles-mêmes « c.deletedAt IS NULL ».
+    // Seule la purge des INQUIRY inactives pose deleted_at (InquiryInactivityScheduler) ; une
+    // ligne purgée ne doit plus apparaître nulle part pour les participants. À ne pas confondre
+    // avec sender_deleted_at / traveler_deleted_at (suppression d'un seul côté), que les variantes
+    // « IgnoreDeleted » ignorent volontairement.
 
     /** Conversation expéditeur ↔ voyageur du bid (jamais la conversation destinataire). */
     @Query("SELECT c FROM ConversationEntity c WHERE c.bidId = :bidId AND c.kind = com.yadony.api.messaging.ConversationKind.SENDER_TRAVELER")
@@ -45,6 +52,21 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "AND c.kind = com.yadony.api.messaging.ConversationKind.RECIPIENT_TRAVELER AND c.closedAt IS NOT NULL")
     boolean existsRevokedForRecipient(@Param("id") UUID id, @Param("userId") UUID userId);
 
+    /**
+     * Conversation ouverte du couple (demandeur, annonce), tous types (INQUIRY ou déjà promue en
+     * SENDER_TRAVELER) ; ni supprimée ni fermée. Sert à ne jamais en créer une seconde.
+     */
+    @Query("SELECT c FROM ConversationEntity c WHERE c.askerId = :askerId AND c.announcementId = :announcementId " +
+           "AND c.closedAt IS NULL AND c.deletedAt IS NULL")
+    Optional<ConversationEntity> findByAskerAndAnnouncement(@Param("askerId") UUID askerId,
+                                                            @Param("announcementId") UUID announcementId);
+
+    /**
+     * Ligne de l'identifiant Firestore, supprimée ({@code deleted_at}) comprise : le notify doit la
+     * voir pour répondre 200 sans rien réparer, et le choix d'un identifiant destinataire libre
+     * doit compter toutes les lignes (l'unicité en base les couvre toutes). Tout appelant qui
+     * expose la conversation teste lui-même {@code getDeletedAt()}.
+     */
     Optional<ConversationEntity> findByFirestoreConversationId(String firestoreConversationId);
 
     /** Toutes les conversations d'un bid, tous types et fermées comprises (rétention des photos). */
@@ -60,6 +82,25 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     int markTravelerMessaged(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
 
     /**
+     * Message d'une conversation INQUIRY : date la dernière activité. Écriture ciblée (comme
+     * {@link #markTravelerMessaged}) pour ne pas réécrire une entité lue plus tôt.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.lastActivityAt = :at WHERE c.id = :id")
+    int markInquiryActivity(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
+
+    /**
+     * Premier message du demandeur d'une INQUIRY : rend le fil visible du créateur. Idempotent,
+     * la date n'est posée que si elle est encore nulle.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.inquiryFirstMessageAt = :at " +
+           "WHERE c.id = :id AND c.inquiryFirstMessageAt IS NULL")
+    int markInquiryFirstMessage(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
+
+    /**
      * Le voyageur a écrit au moins une fois depuis {@code since} dans une conversation du bid
      * (expéditeur ou destinataire, ouverte ou fermée) : preuve de tentative de contact.
      */
@@ -70,9 +111,10 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
     // Active conversations: not deleted AND not archived by the requesting user. Une conversation
     // vidée 3 jours après la livraison (messagesPurgedAt) quitte toutes les listes, comme le compteur.
     @Query("SELECT c FROM ConversationEntity c WHERE " +
-           "c.messagesPurgedAt IS NULL AND (" +
+           "c.deletedAt IS NULL AND c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))")
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     Page<ConversationEntity> findByParticipant(@Param("userId") UUID userId, Pageable pageable);
 
     /**
@@ -88,22 +130,24 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
      * de sens en JPQL. Sinon, {@link #findByParticipant}.
      */
     @Query("SELECT c FROM ConversationEntity c WHERE " +
-           "c.messagesPurgedAt IS NULL AND " +
+           "c.deletedAt IS NULL AND c.messagesPurgedAt IS NULL AND " +
            "((c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL)) " +
-           "AND c.senderId NOT IN :hiddenIds AND c.travelerId NOT IN :hiddenIds")
+           "AND c.senderId NOT IN :hiddenIds AND c.travelerId NOT IN :hiddenIds" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     Page<ConversationEntity> findByParticipantExcludingHidden(@Param("userId") UUID userId,
                                                               @Param("hiddenIds") Collection<UUID> hiddenIds,
                                                               Pageable pageable);
 
     // Archived conversations: archived but not deleted
     @Query("SELECT c FROM ConversationEntity c WHERE " +
-           "c.messagesPurgedAt IS NULL AND (" +
+           "c.deletedAt IS NULL AND c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderArchivedAt IS NOT NULL AND c.senderDeletedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerArchivedAt IS NOT NULL AND c.travelerDeletedAt IS NULL))")
+           "(c.travelerId = :userId AND c.travelerArchivedAt IS NOT NULL AND c.travelerDeletedAt IS NULL))" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     Page<ConversationEntity> findArchivedByParticipant(@Param("userId") UUID userId, Pageable pageable);
 
-    @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND (" +
+    @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND c.deletedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL))")
     Optional<ConversationEntity> findByIdAndParticipant(@Param("id") UUID id, @Param("userId") UUID userId);
@@ -115,14 +159,16 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
             @Param("bidId") UUID bidId, @Param("userId") UUID userId);
 
     // For archive/unarchive ops — visible to user (not deleted), ignores archive status
-    @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND " +
+    @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND c.deletedAt IS NULL AND " +
            "((c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL) OR " +
            "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL))")
     Optional<ConversationEntity> findByIdAndParticipantIgnoreArchived(
             @Param("id") UUID id, @Param("userId") UUID userId);
 
-    // Ignore-deleted variants — used for restore flows (bypass per-user visibility filter)
-    @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND ((c.senderId = :userId AND c.closedAt IS NULL) OR c.travelerId = :userId)")
+    // Ignore-deleted variants — used for restore flows (bypass per-user visibility filter :
+    // sender/traveler_deleted_at). Une ligne purgée (deleted_at) reste exclue.
+    @Query("SELECT c FROM ConversationEntity c WHERE c.id = :id AND c.deletedAt IS NULL " +
+           "AND ((c.senderId = :userId AND c.closedAt IS NULL) OR c.travelerId = :userId)")
     Optional<ConversationEntity> findByIdAndParticipantIgnoreDeleted(
             @Param("id") UUID id, @Param("userId") UUID userId);
 
@@ -135,9 +181,10 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
      * Pendant compté de {@link #findByParticipant} — même clause, sans pagination.
      */
     @Query("SELECT COUNT(c) FROM ConversationEntity c WHERE " +
-           "c.messagesPurgedAt IS NULL AND (" +
+           "c.deletedAt IS NULL AND c.messagesPurgedAt IS NULL AND (" +
            "(c.senderId = :userId AND c.closedAt IS NULL AND c.senderDeletedAt IS NULL AND c.senderArchivedAt IS NULL) OR " +
-           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))")
+           "(c.travelerId = :userId AND c.travelerDeletedAt IS NULL AND c.travelerArchivedAt IS NULL))" +
+           " AND NOT (c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.travelerId = :userId AND c.inquiryFirstMessageAt IS NULL)")
     long countActiveByParticipant(@Param("userId") UUID userId);
 
     /**
@@ -150,6 +197,74 @@ public interface ConversationRepository extends JpaRepository<ConversationEntity
            "AND COALESCE(b.deliveredAt, b.updatedAt) <= :deliveredBefore")
     java.util.List<ConversationEntity> findMessagesToPurge(
             @Param("deliveredBefore") java.time.LocalDateTime deliveredBefore);
+
+    /**
+     * Conversations INQUIRY inactives : dernière activité (à défaut la création) antérieure à la
+     * date limite. Fermées ou non : une conversation fermée inactive est aussi à effacer. Une
+     * conversation promue (SENDER_TRAVELER) n'est jamais sélectionnée.
+     */
+    @Query("SELECT c FROM ConversationEntity c " +
+           "WHERE c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY AND c.deletedAt IS NULL " +
+           "AND COALESCE(c.lastActivityAt, c.createdAt) < :cutoff")
+    java.util.List<ConversationEntity> findStaleInquiries(@Param("cutoff") java.time.LocalDateTime cutoff);
+
+    /**
+     * Réserve une INQUIRY inactive en vue de sa purge : suppression logique GARDÉE, atomique (aucune
+     * entité périmée réécrite). Rend 0 si, entre la sélection et maintenant, la conversation a été
+     * promue (kind), supprimée ou réveillée (activité plus récente que {@code cutoff}) : à ignorer.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.deletedAt = :now " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
+           "AND c.deletedAt IS NULL AND COALESCE(c.lastActivityAt, c.createdAt) < :cutoff")
+    int reserveStaleInquiry(@Param("id") UUID id, @Param("now") java.time.LocalDateTime now,
+                            @Param("cutoff") java.time.LocalDateTime cutoff);
+
+    /**
+     * Annule {@link #reserveStaleInquiry} quand l'effacement Firestore a échoué ou que la
+     * conversation est à garder : n'annule que SA réservation ({@code deleted_at} = date posée).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.deletedAt = NULL " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
+           "AND c.deletedAt = :reservedAt")
+    int releaseInquiryReservation(@Param("id") UUID id, @Param("reservedAt") java.time.LocalDateTime reservedAt);
+
+    /**
+     * Promotion gardée d'une INQUIRY ouverte en conversation de réservation : UPDATE ciblé (jamais
+     * l'écriture complète d'une entité lue plus tôt, qui pourrait défaire une réservation de purge
+     * posée entre-temps). 0 ligne : plus INQUIRY, fermée, supprimée, ou supprimée par l'un des deux
+     * participants (un fil qu'un utilisateur a supprimé ne devient jamais la conversation de la
+     * réservation : un fil neuf s'ouvrira à l'acceptation).
+     *
+     * <p>{@code inquiry_first_message_at} est posé s'il manque (promotion avant tout message) : sans
+     * lui, un reverrouillage ultérieur ferait disparaître le fil de la liste du créateur, qui le
+     * voyait depuis la promotion.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.bidId = :bidId, " +
+           "c.kind = com.yadony.api.messaging.ConversationKind.SENDER_TRAVELER, " +
+           "c.quotaLiftedAt = :at, c.lastActivityAt = :at, " +
+           "c.inquiryFirstMessageAt = COALESCE(c.inquiryFirstMessageAt, :at) " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY " +
+           "AND c.deletedAt IS NULL AND c.closedAt IS NULL " +
+           "AND c.senderDeletedAt IS NULL AND c.travelerDeletedAt IS NULL")
+    int promoteInquiryGuarded(@Param("id") UUID id, @Param("bidId") UUID bidId,
+                              @Param("at") java.time.LocalDateTime at);
+
+    /** Re-verrouillage gardé d'une conversation promue ouverte en INQUIRY (même logique que la promotion). */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE ConversationEntity c SET c.bidId = NULL, " +
+           "c.kind = com.yadony.api.messaging.ConversationKind.INQUIRY, " +
+           "c.quotaLiftedAt = NULL, c.lastActivityAt = :at " +
+           "WHERE c.id = :id AND c.kind = com.yadony.api.messaging.ConversationKind.SENDER_TRAVELER " +
+           "AND c.deletedAt IS NULL AND c.closedAt IS NULL " +
+           "AND c.askerId IS NOT NULL AND c.announcementId IS NOT NULL")
+    int relockInquiryGuarded(@Param("id") UUID id, @Param("at") java.time.LocalDateTime at);
 
     /**
      * Conversations de la modération, filtrables : seulement celles qui ont un signalement ouvert sur

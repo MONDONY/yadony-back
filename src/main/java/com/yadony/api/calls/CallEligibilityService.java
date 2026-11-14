@@ -93,6 +93,8 @@ public class CallEligibilityService implements CallAvailability {
             return Eligibility.denied(Reason.CONVERSATION_CLOSED);
         }
 
+        // Conversation de questions avant réservation : pas de bid, donc pas d'appel.
+        if (conv.getBidId() == null) return Eligibility.denied(Reason.OUT_OF_WINDOW);
         BidEntity bid = bids.findById(conv.getBidId()).orElse(null);
         if (bid == null || !inWindow(bid, conv)) return Eligibility.denied(Reason.OUT_OF_WINDOW);
 

@@ -1,5 +1,6 @@
 package com.yadony.api.messaging;
 
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -9,9 +10,11 @@ import com.yadony.api.common.StorageService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.DepartureRules;
 import com.yadony.api.messaging.dto.ConversationResponse;
 import com.yadony.api.messaging.dto.ParticipantDTO;
 import org.slf4j.Logger;
@@ -24,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -152,6 +156,192 @@ public class ConversationService {
         return conv;
     }
 
+    /**
+     * Ouvre (ou retrouve) la conversation de questions d'un demandeur avec le propriétaire d'une
+     * annonce, avant toute réservation. Idempotent : un fil ouvert du couple (même déjà promu en
+     * conversation de réservation) est renvoyé tel quel, ce qui évite l'index unique des fils INQUIRY.
+     */
+    @Transactional
+    public ConversationEntity getOrCreateInquiry(UUID askerId, UUID announcementId) {
+        Optional<ConversationEntity> existing =
+            conversationRepository.findByAskerAndAnnouncement(askerId, announcementId);
+        if (existing.isPresent()) {
+            // Un fil dont la contrepartie est masquée n'existe plus pour l'appelant : 404 silencieux.
+            blockVisibility.assertVisible(askerId, otherUserId(existing.get(), askerId));
+            // L'app écrira son compteur d'après cette réponse (état base) : Firestore doit dire pareil.
+            reconcileInquiryFirestore(existing.get());
+            return existing.get();
+        }
+
+        UserEntity asker = userRepository.findById(askerId)
+            .orElseThrow(ConversationService::kycRequired);
+        if (asker.getKycStatus() != KycStatus.VERIFIED) {
+            throw kycRequired();
+        }
+        if (asker.isMessagingMuted(Instant.now())) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "messaging-muted", "problem.inquiry-messaging-muted");
+        }
+
+        AnnouncementEntity announcement = announcementRepository.findById(announcementId)
+            .orElseThrow(ConversationService::announcementNotFound);
+        UUID ownerId = announcement.getTravelerId();
+        // Blocage et brouillon restent silencieux : même 404 qu'une annonce inconnue.
+        if (blockVisibility.isHidden(askerId, ownerId) || announcement.getStatus() == AnnouncementStatus.DRAFT) {
+            throw announcementNotFound();
+        }
+        if (askerId.equals(ownerId)) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "inquiry-own-announcement", "problem.inquiry-own-announcement");
+        }
+        // Liste blanche : seul un trajet ACTIVE ouvre une conversation de questions.
+        if (announcement.getStatus() != AnnouncementStatus.ACTIVE
+                || DepartureRules.hasDeparted(announcement, Instant.now())) {
+            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed", "problem.inquiry-announcement-closed");
+        }
+
+        UserEntity owner = userRepository.findById(ownerId)
+            .orElseThrow(ConversationService::counterpartDeleted);
+
+        // Identifiant provisoire : l'UUID de la conversation n'existe qu'après l'insertion.
+        // Une violation de conversations_inquiry_active_idx (double premier appel concurrent)
+        // remonte telle quelle : la transaction est avortée, l'appelant la reprend hors transaction.
+        ConversationEntity saved = conversationRepository.saveAndFlush(ConversationEntity.forInquiry(
+            askerId, announcementId, ownerId, "conv_inq_pending_" + UUID.randomUUID()));
+        String firestoreId = "conv_inq_" + saved.getId();
+        saved.assignFirestoreConversationId(firestoreId);
+
+        auditService.log("conversation", saved.getId(), "INQUIRY_CREATED", askerId,
+            Map.of("announcementId", announcementId.toString(), "firestoreId", firestoreId));
+
+        try {
+            String now = Instant.now().toString();
+            Map<String, Object> data = new java.util.HashMap<>();
+            data.put("senderId", asker.getFirebaseUid());
+            data.put("travelerId", owner.getFirebaseUid());
+            data.put("askerId", asker.getFirebaseUid());
+            data.put("kind", "INQUIRY");
+            data.put("quotaLifted", false);
+            data.put("announcementId", announcementId.toString());
+            data.put("senderName", fullName(asker));
+            data.put("travelerName", fullName(owner));
+            data.put("createdAt", now);
+            data.put("lastMessageAt", now);
+            // Aucun aperçu (un texte en dur serait en français pour tous) : l'app affiche sa propre note
+            // d'introduction tant qu'aucun message n'a été échangé.
+            data.put("lastMessagePreview", null);
+            firestoreService.createConversation(firestoreId, data);
+        } catch (Exception e) {
+            log.warn("Firestore inquiry init failed for announcement {}: {}", announcementId, e.getMessage());
+        }
+
+        return saved;
+    }
+
+    /**
+     * Rattache la conversation de questions du couple (demandeur, annonce) à la demande qui vient
+     * d'être créée : elle devient la conversation de réservation du bid (même identifiant
+     * Firestore, historique conservé) et le plafond de messages est levé. Sans effet (faux) s'il
+     * n'y a pas de fil INQUIRY ouvert pour le couple, s'il est déjà promu, si l'un des deux
+     * participants l'a supprimé (un fil neuf s'ouvrira à l'acceptation), ou si le bid a déjà
+     * son propre fil. L'échec Firestore est journalisé : la base reste à jour, et le rattrapage
+     * {@link #reconcileInquiryFirestore} réaligne le parent Firestore au prochain message, au
+     * prochain appel de la route ou à l'acceptation.
+     *
+     * @return vrai si CET appel a promu le fil
+     */
+    @Transactional
+    public boolean promoteInquiryToBid(UUID askerId, UUID announcementId, UUID bidId) {
+        Optional<ConversationEntity> found =
+            conversationRepository.findByAskerAndAnnouncement(askerId, announcementId);
+        if (found.isEmpty() || !found.get().isInquiry()) {
+            return false;
+        }
+        if (conversationRepository.findByBidId(bidId).isPresent()) {
+            return false;
+        }
+        ConversationEntity conv = found.get();
+        // UPDATE gardé, pas save() d'une entité lue plus tôt : une réservation de purge posée entre la
+        // lecture et le flush ne doit pas être défaite (0 ligne : purgée, fermée ou déjà promue).
+        if (conversationRepository.promoteInquiryGuarded(conv.getId(), bidId,
+                LocalDateTime.now(ZoneOffset.UTC)) == 0) {
+            return false;
+        }
+
+        auditService.log("conversation", conv.getId(), "INQUIRY_PROMOTED", askerId,
+            Map.of("bidId", bidId.toString(), "announcementId", announcementId.toString()));
+
+        try {
+            firestoreService.updateConversation(conv.getFirestoreConversationId(), Map.of(
+                "kind", ConversationKind.SENDER_TRAVELER.name(),
+                "quotaLifted", true,
+                "bidId", bidId.toString()));
+        } catch (Exception e) {
+            log.error("Firestore promotion update failed for conversation {} (bid {}): {}",
+                conv.getFirestoreConversationId(), bidId, e.getMessage());
+        }
+        return true;
+    }
+
+    /** Statuts d'un bid qui n'engagent plus personne : seuls ceux-là n'empêchent pas le reverrouillage. */
+    private static final List<BidStatus> NEVER_BOOKED_TERMINAL_STATUSES = List.of(
+        BidStatus.REJECTED, BidStatus.CANCELLED, BidStatus.EXPIRED, BidStatus.NEGOTIATION_CLOSED);
+
+    /**
+     * La demande rattachée à la conversation s'est terminée SANS avoir jamais été acceptée :
+     * la conversation redevient une conversation de questions (plafond de messages réappliqué,
+     * plus de bid). L'APPELANT garantit « jamais acceptée » (statut d'avant porté par
+     * l'événement, ou expiration antérieure à l'acceptation par construction) : ici, seules
+     * les gardes propres à la conversation. Sans effet (faux) si la conversation n'est pas une
+     * conversation promue ouverte (une conversation née à l'acceptation n'a pas d'{@code asker_id}),
+     * ou si le même demandeur a encore une autre demande vivante sur la même annonce. Le
+     * compteur {@code inquiryQuota/{convId}} n'est JAMAIS touché : un demandeur à 10 messages
+     * reste bloqué. L'échec Firestore est journalisé, la base fait foi.
+     *
+     * @return vrai si CET appel a reverrouillé le fil
+     */
+    @Transactional
+    public boolean relockInquiry(UUID bidId) {
+        Optional<ConversationEntity> found = conversationRepository.findByBidId(bidId);
+        if (found.isEmpty()) {
+            return false;
+        }
+        ConversationEntity conv = found.get();
+        if (conv.getKind() != ConversationKind.SENDER_TRAVELER || conv.isClosed()
+                || conv.getAskerId() == null || conv.getAnnouncementId() == null) {
+            return false;
+        }
+        if (bidRepository.existsByAnnouncementIdAndSenderIdAndStatusNotIn(
+                conv.getAnnouncementId(), conv.getAskerId(), NEVER_BOOKED_TERMINAL_STATUSES)) {
+            return false;
+        }
+        if (conversationRepository.relockInquiryGuarded(conv.getId(), LocalDateTime.now(ZoneOffset.UTC)) == 0) {
+            return false;
+        }
+
+        // Acteur null : action système, comme les expirations qui la déclenchent.
+        auditService.log("conversation", conv.getId(), "INQUIRY_RELOCKED", null,
+            Map.of("bidId", bidId.toString(), "announcementId", conv.getAnnouncementId().toString()));
+
+        try {
+            Map<String, Object> fields = new java.util.HashMap<>();
+            fields.put("kind", ConversationKind.INQUIRY.name());
+            fields.put("quotaLifted", false);
+            fields.put("bidId", com.google.cloud.firestore.FieldValue.delete());
+            firestoreService.updateConversation(conv.getFirestoreConversationId(), fields);
+        } catch (Exception e) {
+            log.error("Firestore relock update failed for conversation {} (bid {}): {}",
+                conv.getFirestoreConversationId(), bidId, e.getMessage());
+        }
+        return true;
+    }
+
+    private static YadonyBusinessException announcementNotFound() {
+        return YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found");
+    }
+
+    private static YadonyBusinessException kycRequired() {
+        return YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "kyc-required", "problem.inquiry-kyc-required");
+    }
+
     @Transactional
     public ConversationEntity createConversationForBid(UUID bidId, UUID senderId, UUID travelerId) {
         // Le masquage étant symétrique, le sens de la vérification n'a pas d'importance :
@@ -160,7 +350,12 @@ public class ConversationService {
         // isHidden rend faux et la conversation se crée normalement.
         blockVisibility.assertVisible(senderId, travelerId);
 
-        return conversationRepository.findByBidId(bidId).orElseGet(() -> {
+        Optional<ConversationEntity> existing = conversationRepository.findByBidId(bidId);
+        // Fil de questions promu à la demande : si l'écriture Firestore de la promotion a échoué,
+        // l'acceptation est le moment de lever enfin le plafond côté règles.
+        existing.filter(c -> c.getAskerId() != null).ifPresent(this::reconcileInquiryFirestore);
+
+        return existing.orElseGet(() -> {
             String firestoreId = "conv_" + bidId;
 
             // Un compte supprimé est filtré par @Where : son fil ne peut plus naître.
@@ -220,49 +415,134 @@ public class ConversationService {
      *
      * <p>Ne propage aucune erreur : la réparation est un bonus, jamais une
      * condition de l'envoi d'une notification.
+     *
+     * <p>Fil de questions (demandeur renseigné) : délègue à {@link #reconcileInquiryFirestore}, qui
+     * recrée aussi le parent absent et rattrape en plus les champs du plafond.
      */
     // Pas de transaction : Firestore est interrogé à chaque message de chat, et une
     // transaction ouverte ici tenait une connexion JDBC pendant cet appel. Les deux
     // lectures d'utilisateurs ont leur propre transaction courte.
     public void ensureFirestoreDocument(ConversationEntity conv) {
+        // Ligne supprimée (purge d'une INQUIRY inactive) : rien à réparer, le document a été effacé
+        // exprès. Le recréer ferait revivre le fil dans Firestore sans plus jamais le purger.
+        if (conv.getDeletedAt() != null) {
+            return;
+        }
+        // Fil de questions (promu ou non) : une seule lecture du parent sert à la fois à le recréer
+        // s'il manque et à rattraper kind / quotaLifted / bidId s'il diverge de la base.
+        if (conv.getAskerId() != null) {
+            reconcileInquiryFirestore(conv);
+            return;
+        }
         String firestoreId = conv.getFirestoreConversationId();
         try {
             if (firestoreService.conversationExists(firestoreId)) {
                 return;
             }
-
-            UserEntity sender   = userRepository.findById(conv.participantAId()).orElse(null);
-            UserEntity traveler = userRepository.findById(conv.getTravelerId()).orElse(null);
-            if (sender == null || traveler == null) {
-                log.warn("Firestore document repair skipped for {} — participant missing", firestoreId);
-                return;
-            }
-
-            Map<String, Object> data = new java.util.HashMap<>();
-            // Conversation destinataire fermée : le destinataire révoqué ne doit pas
-            // retrouver son accès Firestore par une réparation (cf. revoke).
-            if (conv.isRecipientConversation() && conv.isClosed()) {
-                data.put("senderId", null);
-                data.put("revokedRecipientId", sender.getFirebaseUid());
-            } else {
-                data.put("senderId", sender.getFirebaseUid());
-            }
-            data.put("travelerId", traveler.getFirebaseUid());
-            if (conv.isRecipientConversation()) {
-                data.put("kind", ConversationKind.RECIPIENT_TRAVELER.name());
-            }
-            data.put("senderName",   fullName(sender));
-            data.put("travelerName", fullName(traveler));
-            data.put("createdAt", conv.getCreatedAt() != null ? conv.getCreatedAt().toString() : Instant.now().toString());
-            if (conv.getBidId() != null) {
-                data.put("bidId", conv.getBidId().toString());
-            }
-
-            firestoreService.createConversation(firestoreId, data);
-            log.info("Firestore document repaired for conversation {}", firestoreId);
+            createParentDocument(conv);
         } catch (Exception e) {
             log.warn("Firestore document repair failed for {}: {}", firestoreId, e.getMessage());
         }
+    }
+
+    /**
+     * Rattrapage idempotent du document parent d'un fil de questions sur la base, qui fait foi.
+     *
+     * <p>Création, promotion et reverrouillage n'écrivent Firestore qu'au mieux-effort : un échec y
+     * est seulement journalisé. Or l'app choisit d'écrire le compteur d'après la réponse du back
+     * (état base) et les règles Firestore décident d'après le parent : une divergence sur
+     * {@code kind}, {@code quotaLifted} ou {@code bidId} refuserait pour de bon les messages du
+     * demandeur. Le parent est donc relu ; seuls les champs qui diffèrent de la base sont réécrits
+     * (aucune écriture sans écart), et un parent absent est recréé avec les champs du fil.
+     *
+     * <p>Appelé au retour d'un fil existant ({@link #getOrCreateInquiry}), à l'acceptation d'un fil
+     * promu ({@link #createConversationForBid}) et à chaque message ({@link #ensureFirestoreDocument}).
+     * Sans effet sur un fil sans demandeur ou une ligne supprimée. Ne propage aucune erreur : un
+     * échec de lecture n'écrit rien (jamais pris pour un parent absent), le prochain appel réessaie.
+     */
+    public void reconcileInquiryFirestore(ConversationEntity conv) {
+        if (conv.getAskerId() == null || conv.getDeletedAt() != null) {
+            return;
+        }
+        String firestoreId = conv.getFirestoreConversationId();
+        try {
+            Optional<Map<String, Object>> parent = firestoreService.readConversation(firestoreId);
+            if (parent.isEmpty()) {
+                createParentDocument(conv);
+                return;
+            }
+            Map<String, Object> drift = inquiryFieldsDrift(conv, parent.get());
+            if (!drift.isEmpty()) {
+                firestoreService.updateConversation(firestoreId, drift);
+                log.info("Firestore inquiry fields realigned on the database for {}: {}", firestoreId, drift.keySet());
+            }
+        } catch (Exception e) {
+            log.warn("Firestore inquiry reconciliation failed for {}: {}", firestoreId, e.getMessage());
+        }
+    }
+
+    /** Champs du parent Firestore à réécrire pour refléter la base (vide : aucun écart). */
+    private static Map<String, Object> inquiryFieldsDrift(ConversationEntity conv, Map<String, Object> parent) {
+        Map<String, Object> drift = new java.util.HashMap<>();
+        String kind = conv.getKind().name();
+        if (!kind.equals(parent.get("kind"))) {
+            drift.put("kind", kind);
+        }
+        Boolean quotaLifted = conv.isQuotaLifted();
+        if (!quotaLifted.equals(parent.get("quotaLifted"))) {
+            drift.put("quotaLifted", quotaLifted);
+        }
+        String bidId = conv.getBidId() == null ? null : conv.getBidId().toString();
+        Object parentBidId = parent.get("bidId");
+        if (bidId == null && parentBidId != null) {
+            drift.put("bidId", com.google.cloud.firestore.FieldValue.delete());
+        } else if (bidId != null && !bidId.equals(parentBidId)) {
+            drift.put("bidId", bidId);
+        }
+        return drift;
+    }
+
+    /** Recrée le document parent d'après la base (participants, champs du fil de questions, bid). */
+    private void createParentDocument(ConversationEntity conv) {
+        String firestoreId = conv.getFirestoreConversationId();
+        UserEntity sender   = userRepository.findById(conv.participantAId()).orElse(null);
+        UserEntity traveler = userRepository.findById(conv.getTravelerId()).orElse(null);
+        if (sender == null || traveler == null) {
+            log.warn("Firestore document repair skipped for {} — participant missing", firestoreId);
+            return;
+        }
+
+        Map<String, Object> data = new java.util.HashMap<>();
+        // Conversation destinataire fermée : le destinataire révoqué ne doit pas
+        // retrouver son accès Firestore par une réparation (cf. revoke).
+        if (conv.isRecipientConversation() && conv.isClosed()) {
+            data.put("senderId", null);
+            data.put("revokedRecipientId", sender.getFirebaseUid());
+        } else {
+            data.put("senderId", sender.getFirebaseUid());
+        }
+        data.put("travelerId", traveler.getFirebaseUid());
+        if (conv.getAskerId() != null) {
+            // Fil de questions : sans ces champs, les règles Firestore le traiteraient comme
+            // une conversation ordinaire (plafond de 10 messages perdu).
+            data.put("kind", conv.getKind().name());
+            data.put("askerId", sender.getFirebaseUid());
+            data.put("quotaLifted", conv.isQuotaLifted());
+            if (conv.getAnnouncementId() != null) {
+                data.put("announcementId", conv.getAnnouncementId().toString());
+            }
+        } else if (conv.isRecipientConversation()) {
+            data.put("kind", ConversationKind.RECIPIENT_TRAVELER.name());
+        }
+        data.put("senderName",   fullName(sender));
+        data.put("travelerName", fullName(traveler));
+        data.put("createdAt", conv.getCreatedAt() != null ? conv.getCreatedAt().toString() : Instant.now().toString());
+        if (conv.getBidId() != null) {
+            data.put("bidId", conv.getBidId().toString());
+        }
+
+        firestoreService.createConversation(firestoreId, data);
+        log.info("Firestore document repaired for conversation {}", firestoreId);
     }
 
     @Transactional
@@ -465,11 +745,14 @@ public class ConversationService {
         userRepository.findAllById(userIds);
         List<UUID> bidIds = page.stream().map(ConversationEntity::getBidId)
             .filter(java.util.Objects::nonNull).distinct().toList();
-        if (bidIds.isEmpty()) {
-            return;
+        java.util.Set<UUID> announcementIds = new java.util.HashSet<>();
+        if (!bidIds.isEmpty()) {
+            bidRepository.findAllById(bidIds).stream()
+                .map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull)
+                .forEach(announcementIds::add);
         }
-        List<UUID> announcementIds = bidRepository.findAllById(bidIds).stream()
-            .map(BidEntity::getAnnouncementId).filter(java.util.Objects::nonNull).distinct().toList();
+        page.stream().map(ConversationEntity::getAnnouncementId).filter(java.util.Objects::nonNull)
+            .forEach(announcementIds::add);
         if (!announcementIds.isEmpty()) {
             announcementRepository.findAllById(announcementIds);
         }
@@ -513,7 +796,13 @@ public class ConversationService {
                             java.time.LocalDateTime.now(java.time.ZoneOffset.UTC))
                     && other != null && !other.isHidePhoneNumber();
 
-            Optional<AnnouncementEntity> annOpt = announcementRepository.findById(bid.getAnnouncementId());
+        }
+
+        // Aperçu du trajet : annonce du bid, ou annonce visée par une conversation de questions
+        // (sans bid). Une conversation promue garde les deux, le bid fait foi.
+        UUID tripAnnouncementId = bidOpt.map(BidEntity::getAnnouncementId).orElse(conv.getAnnouncementId());
+        if (tripAnnouncementId != null) {
+            Optional<AnnouncementEntity> annOpt = announcementRepository.findById(tripAnnouncementId);
             if (annOpt.isPresent()) {
                 AnnouncementEntity ann = annOpt.get();
                 tripOrigin      = ann.getDepartureCity();
@@ -561,7 +850,10 @@ public class ConversationService {
                 deliveredAt,
                 deliveredAt == null ? null : deliveredAt.plusDays(messagePurgeAfterDays),
                 conv.isMessagesPurged())
-            .withTripTransportMode(tripTransportMode);
+            .withTripTransportMode(tripTransportMode)
+            .withInquiry(conv.getAnnouncementId(),
+                conv.isInquiry() && !conv.isQuotaLifted() ? InquiryPolicy.MESSAGE_LIMIT : null,
+                conv.isQuotaLifted());
     }
 
     /**

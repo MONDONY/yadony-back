@@ -102,6 +102,94 @@ class MessagingNotifyControllerTest {
         verify(conversationService).ensureFirestoreDocument(conv);
     }
 
+    @Test
+    void notify_deletedConversation_isTreatedAsClosed_noRepairNoWriteNoPush() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        var conv = inquiry(asker, owner);
+        conv.setDeletedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+
+        var response = controller.notify("test-secret", new NotifyMessageRequest("conv_inq_1", "uid-asker", "Salut"));
+
+        org.assertj.core.api.Assertions.assertThat(response.getStatusCode().value()).isEqualTo(200);
+        org.assertj.core.api.Assertions.assertThat(response.getBody().recipientFirebaseUid()).isNull();
+        verifyNoInteractions(conversationService, notificationDispatcher, userRepository);
+        verify(conversationRepository, never()).markInquiryActivity(any(), any());
+        verify(conversationRepository, never()).markInquiryFirstMessage(any(), any());
+        verify(conversationRepository, never()).markTravelerMessaged(any(), any());
+    }
+
+    // ── Messagerie avant réservation (INQUIRY) ───────────────────────────────
+
+    private ConversationEntity inquiry(UUID askerId, UUID ownerId) {
+        var conv = ConversationEntity.forInquiry(askerId, UUID.randomUUID(), ownerId, "conv_inq_1");
+        ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
+        when(conversationRepository.findByFirestoreConversationId("conv_inq_1")).thenReturn(Optional.of(conv));
+        return conv;
+    }
+
+    private UserEntity userWithId(String uid, UUID id) {
+        var u = new UserEntity();
+        ReflectionTestUtils.setField(u, "id", id);
+        u.setFirebaseUid(uid);
+        when(userRepository.findByFirebaseUid(uid)).thenReturn(Optional.of(u));
+        return u;
+    }
+
+    @Test
+    void notify_inquiryMessageFromAsker_datesFirstMessageThenActivity() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        var conv = inquiry(asker, owner);
+        userWithId("uid-asker", asker);
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_inq_1", "uid-asker", "Salut"));
+
+        var order = inOrder(conversationRepository);
+        order.verify(conversationRepository).markInquiryFirstMessage(eq(conv.getId()), any());
+        order.verify(conversationRepository).markInquiryActivity(eq(conv.getId()), any());
+    }
+
+    @Test
+    void notify_inquiryMessageFromOwner_onlyUpdatesActivity() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        var conv = inquiry(asker, owner);
+        userWithId("uid-owner", owner);
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_inq_1", "uid-owner", "Oui"));
+
+        verify(conversationRepository).markInquiryActivity(eq(conv.getId()), any());
+        verify(conversationRepository, never()).markInquiryFirstMessage(any(), any());
+    }
+
+    @Test
+    void notify_inquiryWriteFailures_areIndependent_andNeverBlockTheNotification() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        var conv = inquiry(asker, owner);
+        userWithId("uid-asker", asker);
+        when(conversationRepository.markInquiryFirstMessage(eq(conv.getId()), any()))
+            .thenThrow(new RuntimeException("db down"));
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_inq_1", "uid-asker", "Salut"));
+
+        // La panne de la première écriture n'empêche ni la seconde ni la notification.
+        verify(conversationRepository).markInquiryActivity(eq(conv.getId()), any());
+        verify(notificationDispatcher).sendMessageNotification(any(), any(), eq("uid-asker"), eq("Salut"),
+            eq("conv_inq_1"), eq(false));
+    }
+
+    @Test
+    void notify_inquiryActivityFailure_isSwallowed() {
+        UUID asker = UUID.randomUUID(), owner = UUID.randomUUID();
+        var conv = inquiry(asker, owner);
+        userWithId("uid-owner", owner);
+        when(conversationRepository.markInquiryActivity(eq(conv.getId()), any()))
+            .thenThrow(new RuntimeException("db down"));
+
+        controller.notify("test-secret", new NotifyMessageRequest("conv_inq_1", "uid-owner", "Oui"));
+
+        verify(notificationDispatcher).sendMessageNotification(any(), any(), eq("uid-owner"), eq("Oui"),
+            eq("conv_inq_1"), eq(false));
+    }
+
     // ── Lot B : défense en profondeur — expéditeur muté ──────────────────────
 
     /**

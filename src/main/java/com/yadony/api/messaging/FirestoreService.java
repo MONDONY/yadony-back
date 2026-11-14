@@ -310,6 +310,45 @@ public class FirestoreService {
         }
     }
 
+    /**
+     * Met à jour des champs du document parent {@code conversations/{conversationId}}
+     * (promotion d'une conversation de questions en conversation de réservation). Lève en cas
+     * d'échec : l'appelant décide s'il journalise ou propage, la base restant la source de vérité.
+     */
+    public void updateConversation(String conversationId, Map<String, Object> fields) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping updateConversation");
+            return;
+        }
+        try {
+            firestore.collection("conversations").document(conversationId).update(fields).get();
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore updateConversation failed", e);
+        }
+    }
+
+    /**
+     * Champs du document parent {@code conversations/{conversationId}}, pour le rattrapage base ↔
+     * Firestore d'un fil de questions. Vide si le document n'existe pas, ou si Firestore est
+     * désactivé ({@link #createConversation} est alors lui-même sans effet). Lève sur un échec de
+     * lecture : un échec ne doit jamais passer pour un document absent (on le recréerait).
+     */
+    public java.util.Optional<Map<String, Object>> readConversation(String conversationId) {
+        if (firestore == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var snap = firestore.collection("conversations").document(conversationId).get().get();
+            if (!snap.exists()) {
+                return java.util.Optional.empty();
+            }
+            Map<String, Object> data = snap.getData();
+            return java.util.Optional.of(data == null ? Map.of() : data);
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore readConversation failed", e);
+        }
+    }
+
     public void clearConversationDeleted(String conversationId) {
         if (firestore == null) {
             log.warn("Firestore disabled — skipping clearConversationDeleted");
@@ -438,6 +477,110 @@ public class FirestoreService {
             return true;
         } catch (Exception e) {
             log.warn("Firestore purgeMessages failed for {}: {}", conversationId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Date de message présente mais illisible : l'appelant ne doit JAMAIS en conclure « inactive ». */
+    public static class UnreadableTimestampException extends RuntimeException {
+        public UnreadableTimestampException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Date du dernier message d'une conversation : la plus récente de {@code lastMessageAt} du document
+     * parent et du {@code sentAt} du message le plus récent. Les deux sont lus, car {@code lastMessageAt}
+     * est posé dès la création du fil : à lui seul, il ne prouve pas l'absence d'un message plus
+     * récent. Lecture seule.
+     *
+     * <ul>
+     *   <li>vide : Firestore désactivé, ou vraiment aucune date (champ absent ou nul ET aucun
+     *       message) ;</li>
+     *   <li>{@link UnreadableTimestampException} : une des deux valeurs est présente mais de type
+     *       inattendu ou mal formée (message sans {@code sentAt} compris) ;</li>
+     *   <li>{@link RuntimeException} : échec Firestore.</li>
+     * </ul>
+     * Dans les deux derniers cas l'appelant ne doit PAS purger.
+     */
+    public java.util.Optional<Instant> lastMessageInstant(String conversationId) {
+        if (firestore == null) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var convRef = firestore.collection("conversations").document(conversationId);
+            var snap = convRef.get().get();
+            Object parent = snap.exists() ? snap.get("lastMessageAt") : null;
+            var last = convRef.collection("messages")
+                    .orderBy("sentAt", com.google.cloud.firestore.Query.Direction.DESCENDING)
+                    .limit(1).get().get();
+            Object sentAt = null;
+            if (!last.isEmpty()) {
+                sentAt = last.getDocuments().get(0).get("sentAt");
+                if (sentAt == null) {
+                    throw new UnreadableTimestampException(
+                            "message sans sentAt dans la conversation " + conversationId);
+                }
+            }
+            Instant parentAt = parent == null ? null : toInstant(parent, conversationId, "lastMessageAt");
+            Instant messageAt = sentAt == null ? null : toInstant(sentAt, conversationId, "sentAt");
+            if (parentAt == null || messageAt == null) {
+                return java.util.Optional.ofNullable(parentAt != null ? parentAt : messageAt);
+            }
+            return java.util.Optional.of(parentAt.isAfter(messageAt) ? parentAt : messageAt);
+        } catch (UnreadableTimestampException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Firestore lastMessageInstant failed", e);
+        }
+    }
+
+    private static Instant toInstant(Object value, String conversationId, String field) {
+        try {
+            if (value instanceof String s && !s.isBlank()) {
+                return Instant.parse(s);
+            }
+            if (value instanceof com.google.cloud.Timestamp t) {
+                return t.toDate().toInstant();
+            }
+        } catch (Exception ignored) {
+            // tombe dans l'exception ci-dessous
+        }
+        throw new UnreadableTimestampException("conversation " + conversationId + " : " + field
+                + " illisible (" + value.getClass().getSimpleName() + ")");
+    }
+
+    /**
+     * Suppression complète d'une conversation INQUIRY inactive : document conversation, TOUS ses
+     * messages (avec leurs sous-collections) ET le compteur {@code inquiryQuota/{convId}}, ensemble.
+     * Le compteur n'est jamais supprimé seul : tant que des messages {@code inq<n>} existent, il
+     * doit rester pour que le plafond tienne. Idempotent (document absent : rien à faire).
+     *
+     * @return vrai si tout est effacé (ou Firestore désactivé) ; faux sur échec, la prochaine passe
+     *         réessaiera
+     */
+    public boolean purgeInquiryConversation(String conversationId) {
+        if (firestore == null) {
+            log.warn("Firestore disabled — skipping purgeInquiryConversation");
+            return true;
+        }
+        try {
+            Firestore db = firestore;
+            var convRef = db.collection("conversations").document(conversationId);
+            var snap = convRef.get().get();
+            if (snap.exists()) {
+                for (String field : new String[] {"senderId", "travelerId"}) {
+                    Object uid = snap.get(field);
+                    if (uid instanceof String s && !s.isBlank()) {
+                        clearUnread(db, s, conversationId);
+                    }
+                }
+            }
+            db.recursiveDelete(convRef).get();
+            db.collection("inquiryQuota").document(conversationId).delete().get();
+            return true;
+        } catch (Exception e) {
+            log.warn("Firestore purgeInquiryConversation failed for {}: {}", conversationId, e.getMessage());
             return false;
         }
     }

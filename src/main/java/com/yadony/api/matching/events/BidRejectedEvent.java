@@ -1,5 +1,7 @@
 package com.yadony.api.matching.events;
 
+import com.yadony.api.matching.BidStatus;
+
 import java.util.UUID;
 
 public class BidRejectedEvent {
@@ -13,6 +15,11 @@ public class BidRejectedEvent {
     private final String reason;
     private final UUID announcementId;
     private final boolean rematchEligible;
+    /**
+     * Statut du bid juste avant la transition, quand le publicateur le connaît ({@code null}
+     * sinon : jamais deviné). Sert à savoir si la demande a un jour été acceptée.
+     */
+    private final BidStatus previousStatus;
 
     public BidRejectedEvent(UUID bidId, UUID senderId, String reason) {
         this(bidId, senderId, reason, null, false);
@@ -20,12 +27,20 @@ public class BidRejectedEvent {
 
     public BidRejectedEvent(UUID bidId, UUID senderId, String reason,
                              UUID announcementId, boolean rematchEligible) {
+        this(bidId, senderId, reason, announcementId, rematchEligible, null);
+    }
+
+    public BidRejectedEvent(UUID bidId, UUID senderId, String reason,
+                             UUID announcementId, boolean rematchEligible, BidStatus previousStatus) {
         this.bidId = bidId;
         this.senderId = senderId;
         this.reason = reason;
         this.announcementId = announcementId;
         this.rematchEligible = rematchEligible;
+        this.previousStatus = previousStatus;
     }
+
+    public BidStatus getPreviousStatus() { return previousStatus; }
 
     public UUID getBidId() { return bidId; }
     public UUID getSenderId() { return senderId; }

@@ -60,8 +60,44 @@ public record ConversationResponse(
         // Mode de transport du trajet (nom de TransportMode : PLANE, CAR, BUS, BOAT…), lu sur
         // l'annonce du bid. Null sans bid ou sans annonce. Absent chez un ancien back : l'app
         // retombe sur le mode avion.
-        String tripTransportMode
+        String tripTransportMode,
+        // Annonce visée par une conversation INQUIRY (messagerie avant réservation) ; conservée
+        // après promotion en SENDER_TRAVELER. Null pour les autres conversations.
+        UUID announcementId,
+        // Nombre maximal de messages d'une INQUIRY dont le quota n'est pas levé ; null sinon.
+        Integer inquiryMessageLimit,
+        // Quota levé (un bid existe) : l'app n'affiche plus le compteur. Faux sinon.
+        boolean inquiryQuotaLifted
 ) {
+    /** Forme d'avant la messagerie avant réservation : pas d'annonce, pas de quota. */
+    public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
+                                ParticipantDTO otherParticipant, String lastMessagePreview,
+                                LocalDateTime lastMessageAt, boolean hasUnread, String tripOrigin,
+                                String tripDestination, String tripDate, Double tripWeightKg,
+                                String bidStatus, boolean readOnly, boolean deletedBySelf,
+                                String kind, String viewerRole, boolean callAvailable,
+                                boolean notificationsMuted, boolean mediaAllowed,
+                                String parcelStatus, boolean returnPending, LocalDateTime deliveredAt,
+                                LocalDateTime messagesPurgeAt, boolean messagesPurged,
+                                String tripTransportMode) {
+        this(id, bidId, firestoreConversationId, otherParticipant, lastMessagePreview, lastMessageAt,
+                hasUnread, tripOrigin, tripDestination, tripDate, tripWeightKg, bidStatus, readOnly,
+                deletedBySelf, kind, viewerRole, callAvailable, notificationsMuted, mediaAllowed,
+                parcelStatus, returnPending, deliveredAt, messagesPurgeAt, messagesPurged,
+                tripTransportMode, null, null, false);
+    }
+
+    /** Copie portant l'état de la conversation de questions (annonce, plafond, quota levé). */
+    public ConversationResponse withInquiry(UUID announcementId, Integer inquiryMessageLimit,
+                                            boolean inquiryQuotaLifted) {
+        return new ConversationResponse(id, bidId, firestoreConversationId, otherParticipant,
+                lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
+                tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
+                notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
+                messagesPurgeAt, messagesPurged, tripTransportMode, announcementId,
+                inquiryMessageLimit, inquiryQuotaLifted);
+    }
+
     /** Forme d'avant le mode du trajet : pas de mode. */
     public ConversationResponse(UUID id, UUID bidId, String firestoreConversationId,
                                 ParticipantDTO otherParticipant, String lastMessagePreview,
@@ -84,7 +120,8 @@ public record ConversationResponse(
                 lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
                 tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
                 notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
-                messagesPurgeAt, messagesPurged, tripTransportMode);
+                messagesPurgeAt, messagesPurged, tripTransportMode, announcementId,
+                inquiryMessageLimit, inquiryQuotaLifted);
     }
 
     /** Forme d'avant la purge des messages après livraison. */
@@ -109,7 +146,8 @@ public record ConversationResponse(
                 lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
                 tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
                 notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
-                messagesPurgeAt, messagesPurged, tripTransportMode);
+                messagesPurgeAt, messagesPurged, tripTransportMode, announcementId,
+                inquiryMessageLimit, inquiryQuotaLifted);
     }
 
     /** Forme d'avant le statut du colis (FLUTTER-EZ) : pas de statut, pas de retour. */
@@ -132,7 +170,8 @@ public record ConversationResponse(
                 lastMessagePreview, lastMessageAt, hasUnread, tripOrigin, tripDestination, tripDate,
                 tripWeightKg, bidStatus, readOnly, deletedBySelf, kind, viewerRole, callAvailable,
                 notificationsMuted, mediaAllowed, parcelStatus, returnPending, deliveredAt,
-                messagesPurgeAt, messagesPurged, tripTransportMode);
+                messagesPurgeAt, messagesPurged, tripTransportMode, announcementId,
+                inquiryMessageLimit, inquiryQuotaLifted);
     }
 
     /** Forme d'avant les photos (FLUTTER-B4) : photos non permises. */
