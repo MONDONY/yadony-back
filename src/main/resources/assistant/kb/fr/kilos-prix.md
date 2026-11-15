@@ -7,7 +7,7 @@ routes:
     label: Mes prix par article
 ---
 Pour la capacité, choisissez une valise de 23 ou 32 kg, un nombre de kilos personnalisé ou la capacité illimitée vendue au kilo. Par la route, pas de valise : « Kg libre » ou « Personnalisé », jusqu'à plusieurs tonnes (999 kg au plus en avion).
-Pour un trajet bateau, quand il est proposé, la capacité se donne en volume (m³) avec un prix au m³, ou en kilos avec un prix au kilo, jamais les deux ; « Kg libre » n'existe pas pour un trajet au m³.
+Pour un trajet bateau, quand il est proposé, la capacité se donne en volume (m³) avec un prix au m³, ou en kilos avec un prix au kilo, jamais les deux ; « Kg libre » n'existe pas pour un trajet au m³. Le prix au m³ doit rester dans une fourchette fixée par Yadony, convertie dans la devise du trajet : le formulaire l'affiche avec une zone conseillée et un prix indicatif, et un prix en dehors est refusé (un trajet déjà publié garde son prix et reste modifiable sur ses autres champs).
 « Taille max d'un colis » (S, M, L, XL, indicative) et « Poids max par colis » sont facultatifs : une demande plus grande ou plus lourde est refusée.
 Pour le prix, choisissez « Au kilo » ou mixte (« Articles + kilo ») : les prix par article se règlent dans Activités › Mes prix par article, pour tous vos trajets.
 Yadony ajoute ses frais de service au prix que vous saisissez : vous encaissez exactement votre montant, et l'écran affiche ce que vous touchez et ce que l'expéditeur paie, frais de service compris.

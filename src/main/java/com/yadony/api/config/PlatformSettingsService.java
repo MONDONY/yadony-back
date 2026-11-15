@@ -319,6 +319,45 @@ public class PlatformSettingsService {
                 PlatformSettingKey.DEFAULT_ASSISTANT_FORM_DRAFT_DAILY_QUOTA);
     }
 
+    /**
+     * Bornes du prix au m³ d'un trajet bateau, en euros. Chaque valeur absente, illisible ou hors des bornes de
+     * saisie (1 à 100 000) prend son défaut ; un ensemble qui ne respecte plus l'ordre
+     * {@code hard_min ≤ advised_min ≤ reference ≤ advised_max ≤ hard_max} est remplacé en entier par les défauts.
+     * Lu à chaque appel : une modification dans le back-office s'applique sans redémarrage. Voir
+     * {@link PlatformSettingKey#BOAT_PRICE_PER_M3_HARD_MIN_EUR}.
+     */
+    public BoatPricePerM3Bounds boatPricePerM3Bounds() {
+        BoatPricePerM3Bounds bounds = new BoatPricePerM3Bounds(
+                boatPriceOr(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MIN_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_HARD_MIN_EUR),
+                boatPriceOr(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_HARD_MAX_EUR),
+                boatPriceOr(PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MIN_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_ADVISED_MIN_EUR),
+                boatPriceOr(PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MAX_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_ADVISED_MAX_EUR),
+                boatPriceOr(PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_REFERENCE_EUR));
+        return bounds.isOrdered() ? bounds : BoatPricePerM3Bounds.DEFAULTS;
+    }
+
+    /** Valeur d'une borne de prix au m³ dans [1, 100 000], sinon {@code fallback}. */
+    private BigDecimal boatPriceOr(PlatformSettingKey key, BigDecimal fallback) {
+        String raw = cache.all().get(key.key());
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            BigDecimal value = new BigDecimal(raw.trim());
+            return isBoatPriceInRange(value) ? value : fallback;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static boolean isBoatPriceInRange(BigDecimal value) {
+        return value.compareTo(PlatformSettingKey.MIN_BOAT_PRICE_PER_M3_EUR) >= 0
+                && value.compareTo(PlatformSettingKey.MAX_BOAT_PRICE_PER_M3_EUR) <= 0;
+    }
+
     private int intOr(PlatformSettingKey key, int fallback) {
         String raw = cache.all().get(key.key());
         if (raw == null) return fallback;
@@ -399,6 +438,47 @@ public class PlatformSettingsService {
         }
     }
 
+    private static final List<PlatformSettingKey> BOAT_PRICE_PER_M3_KEYS = List.of(
+            PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MIN_EUR,
+            PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR,
+            PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MIN_EUR,
+            PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MAX_EUR,
+            PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR);
+
+    /**
+     * Les bornes du prix au m³ restent ordonnées après la demande :
+     * {@code hard_min ≤ advised_min ≤ reference ≤ advised_max ≤ hard_max}. Les valeurs non modifiées sont les
+     * valeurs effectives. Pour élargir ou resserrer, l'administrateur change les bornes dans l'ordre qui garde
+     * l'ensemble cohérent à chaque étape.
+     */
+    private void requireOrderedBoatPriceBounds(Map<PlatformSettingKey, String> changes) {
+        if (BOAT_PRICE_PER_M3_KEYS.stream().noneMatch(changes::containsKey)) {
+            return;
+        }
+        // Valeurs ligne par ligne (et non l'ensemble effectif) : c'est ce que la table contiendra après l'écriture.
+        BoatPricePerM3Bounds after = new BoatPricePerM3Bounds(
+                boatPriceAfter(changes, PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MIN_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_HARD_MIN_EUR),
+                boatPriceAfter(changes, PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_HARD_MAX_EUR),
+                boatPriceAfter(changes, PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MIN_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_ADVISED_MIN_EUR),
+                boatPriceAfter(changes, PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MAX_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_ADVISED_MAX_EUR),
+                boatPriceAfter(changes, PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR,
+                        PlatformSettingKey.DEFAULT_BOAT_PRICE_PER_M3_REFERENCE_EUR));
+        if (!after.isOrdered()) {
+            throw invalid("Les prix au m³ du bateau doivent rester dans l'ordre : borne minimale ≤ début de la zone "
+                    + "conseillée ≤ prix indicatif ≤ fin de la zone conseillée ≤ borne maximale");
+        }
+    }
+
+    private BigDecimal boatPriceAfter(Map<PlatformSettingKey, String> changes, PlatformSettingKey key,
+                                      BigDecimal fallback) {
+        String raw = changes.get(key);
+        return raw == null ? boatPriceOr(key, fallback) : new BigDecimal(normalize(key, raw));
+    }
+
     /** Valeur servie quand la ligne manque : la meme que celle lue par le contrat public. */
     private String effectiveValue(PlatformSettingKey key) {
         return switch (key) {
@@ -431,6 +511,11 @@ public class PlatformSettingsService {
             case DAC7_ENABLED -> String.valueOf(dac7Enabled());
             case DAC7_REMINDERS_ENABLED -> String.valueOf(dac7RemindersEnabled());
             case SUPPORT_WHATSAPP_NUMBER -> supportWhatsappNumber().orElse("");
+            case BOAT_PRICE_PER_M3_HARD_MIN_EUR -> boatPricePerM3Bounds().hardMinEur().toPlainString();
+            case BOAT_PRICE_PER_M3_HARD_MAX_EUR -> boatPricePerM3Bounds().hardMaxEur().toPlainString();
+            case BOAT_PRICE_PER_M3_ADVISED_MIN_EUR -> boatPricePerM3Bounds().advisedMinEur().toPlainString();
+            case BOAT_PRICE_PER_M3_ADVISED_MAX_EUR -> boatPricePerM3Bounds().advisedMaxEur().toPlainString();
+            case BOAT_PRICE_PER_M3_REFERENCE_EUR -> boatPricePerM3Bounds().referenceEur().toPlainString();
         };
     }
 
@@ -444,6 +529,7 @@ public class PlatformSettingsService {
     @Transactional
     public PlatformSettingsSnapshot update(Map<PlatformSettingKey, String> changes, UUID adminId) {
         requireCollectionForReminders(changes);
+        requireOrderedBoatPriceBounds(changes);
         boolean touched = false;
         for (Map.Entry<PlatformSettingKey, String> entry : changes.entrySet()) {
             PlatformSettingKey key = entry.getKey();
@@ -618,6 +704,9 @@ public class PlatformSettingsService {
                     PlatformSettingKey.MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
                     "Le seuil d'alerte des particuliers doit être un nombre entier de trajets entre 1 et 100");
             case SUPPORT_WHATSAPP_NUMBER -> internationalPhone(value);
+            case BOAT_PRICE_PER_M3_HARD_MIN_EUR, BOAT_PRICE_PER_M3_HARD_MAX_EUR,
+                 BOAT_PRICE_PER_M3_ADVISED_MIN_EUR, BOAT_PRICE_PER_M3_ADVISED_MAX_EUR,
+                 BOAT_PRICE_PER_M3_REFERENCE_EUR -> boatPricePerM3(key, value);
         };
     }
 
@@ -634,6 +723,16 @@ public class PlatformSettingsService {
             throw invalid("Le numéro du support doit être au format international, par exemple +33612345678");
         }
         return compact;
+    }
+
+    /** Prix au m³ en euros, de 1 à 100 000, au centime : « 240.00 » et « 240 » s'écrivent tous deux « 240 ». */
+    private String boatPricePerM3(PlatformSettingKey key, String value) {
+        BigDecimal price = parseDecimal(key, value);
+        if (!isBoatPriceInRange(price) || price.stripTrailingZeros().scale() > 2) {
+            throw invalid("Le prix au m³ du bateau doit être un montant en euros entre 1 et 100 000, au centime près");
+        }
+        BigDecimal normalized = price.stripTrailingZeros();
+        return (normalized.scale() < 0 ? normalized.setScale(0) : normalized).toPlainString();
     }
 
     private String callingCodes(String value) {

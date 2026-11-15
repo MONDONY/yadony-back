@@ -124,6 +124,25 @@ public class AnnouncementService {
     }
 
     /**
+     * Bornes dures du prix au m³ d'un trajet bateau (lot 4), réglées dans le back-office en euros et mises à
+     * l'échelle de la devise du trajet (422 {@code price-per-m3-out-of-bounds}). Appelé une fois la devise résolue,
+     * à la création et à la modification ; à la modification, seulement si le prix ou la devise change, pour qu'un
+     * trajet publié avant un resserrement des bornes reste modifiable sur ses autres champs.
+     */
+    private void assertPricePerM3WithinBounds(java.math.BigDecimal pricePerM3, String currency) {
+        com.yadony.api.config.BoatPricePerM3Bounds bounds = settings.boatPricePerM3Bounds();
+        com.yadony.api.payments.currency.PricePerM3Bounds.assertWithinBounds(pricePerM3,
+                SupportedCurrency.fromCodeOrDefault(currency), bounds.hardMinEur(), bounds.hardMaxEur());
+    }
+
+    /** Le prix au m³ demandé diffère de celui enregistré (comparé au centime, comme sa colonne). */
+    private static boolean pricePerM3Changes(AnnouncementEntity announcement, AnnouncementRequest request) {
+        return announcement.getPricePerM3() == null
+                || request.pricePerM3().setScale(2, java.math.RoundingMode.HALF_UP)
+                        .compareTo(announcement.getPricePerM3()) != 0;
+    }
+
+    /**
      * Règles d'un trajet bateau (lot 3), appelées à la création et à la modification, avant toute
      * écriture. Hors bateau : rien (les champs bateau sont ignorés et stockés nuls).
      * <ul>
@@ -134,8 +153,9 @@ public class AnnouncementService {
      *       positif), jamais les deux, jamais aucun, et pas de grille d'articles (422
      *       {@code boat-price-required}) ;</li>
      *   <li>au m³, le volume proposé est obligatoire (422 {@code boat-volume-required}) ; ses bornes
-     *       (0,1 à 9 999 m³) et celles du prix au m³ (strictement positif, sans borne haute métier)
-     *       sont portées par {@link AnnouncementRequest}.</li>
+     *       (0,1 à 9 999 m³) et le garde-fou technique du prix au m³ sont portés par
+     *       {@link AnnouncementRequest} ; ses bornes métier, réglables et dépendantes de la devise, sont
+     *       contrôlées une fois la devise résolue ({@link #assertPricePerM3WithinBounds}).</li>
      * </ul>
      */
     static void validateBoatFields(AnnouncementRequest request, TransportMode mode) {
@@ -1253,6 +1273,7 @@ public class AnnouncementService {
             // Trajet bateau au m³ : aucun kilo (ni capacité, ni prix au kilo, ni pivot), jamais de
             // valeur factice (V382, chk_announcements_kg_or_m3).
             clearKgCapacityAndPrice(announcement);
+            assertPricePerM3WithinBounds(request.pricePerM3(), announcement.getCurrency());
         } else {
             // Plafond par mode (V380) : 999,99 kg en avion, train, autre ; tonnes en route et bateau.
             // En kilo libre, availableKg est une valeur technique basse : elle passe toujours.
@@ -1882,6 +1903,11 @@ public class AnnouncementService {
         announcement.setDeliveryLng(java.math.BigDecimal.valueOf(request.deliveryAddress().lng()));
         announcement.setCurrency(newCurrency);
         if (pricedPerM3) {
+            // Bornes dans la devise FINALE, seulement si le prix ou la devise change : un trajet publié avant un
+            // resserrement des bornes garde son prix et reste modifiable sur ses autres champs.
+            if (currencyChanged || pricePerM3Changes(announcement, request)) {
+                assertPricePerM3WithinBounds(request.pricePerM3(), newCurrency);
+            }
             clearKgCapacityAndPrice(announcement);
         } else {
             announcement.setAvailableKg(request.availableKg());

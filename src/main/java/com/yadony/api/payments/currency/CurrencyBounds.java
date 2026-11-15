@@ -84,6 +84,19 @@ public final class CurrencyBounds {
     }
 
     /**
+     * Plancher réglable (défini en euros par la plateforme) mis à l'échelle de la devise, arrondi vers le haut
+     * comme {@link #minPricePerKg} : 100 € valent 65 595,7 XOF, donc 65 596.
+     */
+    public static BigDecimal floorFromEur(BigDecimal amountInEur, SupportedCurrency currency) {
+        return scale(amountInEur, currency, RoundingMode.UP);
+    }
+
+    /** Plafond réglable mis à l'échelle de la devise, arrondi vers le bas comme {@link #maxPricePerKg}. */
+    public static BigDecimal ceilingFromEur(BigDecimal amountInEur, SupportedCurrency currency) {
+        return scale(amountInEur, currency, RoundingMode.DOWN);
+    }
+
+    /**
      * Exprime dans {@code currency} un barème défini en euros : récompense de
      * parrainage, seuil promotionnel. Le résultat garde la valeur du barème
      * (5 € valent environ 3 280 F CFA) et respecte la précision de la devise.
