@@ -121,9 +121,9 @@ class BoatTripPostgresIT {
         UUID kg = announcementService.createAnnouncement(uid,
                 request(TransportMode.PLANE, "10", "8", DEP.plusDays(1), null, null, null)).id();
         UUID cheap = announcementService.createAnnouncement(uid,
-                request(TransportMode.BOAT, null, null, DEP.plusDays(20), DEP.plusDays(30), "2.5", "600")).id();
+                request(TransportMode.BOAT, null, null, DEP.plusDays(20), DEP.plusDays(30), "2.5", "300")).id();
         UUID dear = announcementService.createAnnouncement(uid,
-                request(TransportMode.BOAT, null, null, DEP.plusDays(35), DEP.plusDays(45), "0.5", "900")).id();
+                request(TransportMode.BOAT, null, null, DEP.plusDays(35), DEP.plusDays(45), "0.5", "550")).id();
         Set<UUID> mine = Set.of(kg, cheap, dear);
 
         java.util.function.BiFunction<String, AnnouncementSearchExtras, java.util.List<UUID>> search =
@@ -141,7 +141,7 @@ class BoatTripPostgresIT {
         AnnouncementSearchExtras volume = new AnnouncementSearchExtras(null, Set.of(), false, false, null, null,
                 new BigDecimal("1"), null, null);
         AnnouncementSearchExtras price = new AnnouncementSearchExtras(null, Set.of(), false, false, null, null,
-                null, new BigDecimal("700"), null);
+                null, new BigDecimal("400"), null);
         AnnouncementSearchExtras arrival = new AnnouncementSearchExtras(null, Set.of(), false, false, null, null,
                 null, null, DEP.plusDays(30));
         assertThat(search.apply("desc", volume)).containsExactly(cheap);
