@@ -251,4 +251,33 @@ class ConfigControllerPlatformSettingsIT {
         mockMvc.perform(get("/config/support-contact"))
                 .andExpect(jsonPath("$.whatsappNumber").doesNotExist());
     }
+
+    /** Bornes du prix au m³ du bateau : publiques, en euros, forme exacte verrouillée (l'app les convertit). */
+    @Test
+    void boatPriceBounds_isPublicWithDefaultsAndExactShape() throws Exception {
+        mockMvc.perform(get("/config/boat-price-bounds"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(5))
+                .andExpect(jsonPath("$.hardMinEur").value(100))
+                .andExpect(jsonPath("$.hardMaxEur").value(600))
+                .andExpect(jsonPath("$.advisedMinEur").value(150))
+                .andExpect(jsonPath("$.advisedMaxEur").value(400))
+                .andExpect(jsonPath("$.referenceEur").value(240));
+    }
+
+    @Test
+    void boatPriceBounds_followsTheBackOffice() throws Exception {
+        settings.update(Map.of(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR, "750",
+                PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR, "260.5"), UUID.randomUUID());
+        try {
+            mockMvc.perform(get("/config/boat-price-bounds"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.hardMaxEur").value(750))
+                    .andExpect(jsonPath("$.referenceEur").value(260.5));
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR, "600",
+                    PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR, "240"), UUID.randomUUID());
+        }
+        assertThat(settings.boatPricePerM3Bounds().hardMaxEur()).isEqualByComparingTo(new BigDecimal("600"));
+    }
 }

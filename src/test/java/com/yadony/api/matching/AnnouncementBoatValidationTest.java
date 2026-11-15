@@ -98,7 +98,7 @@ class AnnouncementBoatValidationTest {
     // ─── validateBoatFields ──────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("bateau au m³ complet : accepté, prix au m³ sans borne haute")
+    @DisplayName("bateau au m³ complet : accepté (les bornes du prix au m³ se jugent après la devise)")
     void boatPerM3_valid() {
         assertValid(boat());
         assertValid(boat().pricePerM3("25000"));

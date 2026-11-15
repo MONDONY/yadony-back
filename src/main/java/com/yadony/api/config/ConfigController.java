@@ -3,6 +3,7 @@ package com.yadony.api.config;
 import com.yadony.api.common.commission.CommissionGrid;
 import com.yadony.api.common.commission.CommissionGridService;
 import com.yadony.api.common.commission.CommissionTier;
+import com.yadony.api.config.dto.BoatPriceBoundsResponse;
 import com.yadony.api.config.dto.CommissionGridResponse;
 import com.yadony.api.config.dto.CommissionRateResponse;
 import com.yadony.api.config.dto.ContentCategoryResponse;
@@ -139,6 +140,16 @@ public class ConfigController {
     public ResponseEntity<TransportModesResponse> getTransportModes() {
         return ResponseEntity.ok(new TransportModesResponse(
                 settings.transportRoadEnabled(), settings.transportBoatEnabled()));
+    }
+
+    /**
+     * Bornes du prix au m³ d'un trajet bateau, en euros, réglées dans le back-office : bornes dures (refus 422
+     * {@code price-per-m3-out-of-bounds} hors de cet intervalle), zone conseillée et prix indicatif. L'application
+     * les convertit dans la devise du trajet pour guider la saisie. Public comme ses voisins : rien de sensible.
+     */
+    @GetMapping("/boat-price-bounds")
+    public ResponseEntity<BoatPriceBoundsResponse> getBoatPriceBounds() {
+        return ResponseEntity.ok(BoatPriceBoundsResponse.from(settings.boatPricePerM3Bounds()));
     }
 
     /**

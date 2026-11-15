@@ -463,16 +463,142 @@ class AnnouncementBoatPublishIT {
         assertProblem(postTrip(body), "boat-price-required");
     }
 
+    // ─── Lot 4 bateau : bornes du prix au m³ réglables par l'admin ───────────────
+
+    private void assertPriceOutOfBounds(org.springframework.test.web.servlet.ResultActions actions, String reason,
+                                        double min, double max, String currency) throws Exception {
+        assertProblem(actions, "price-per-m3-out-of-bounds");
+        actions.andExpect(jsonPath("$.reason").value(reason))
+                .andExpect(jsonPath("$.min").value(min))
+                .andExpect(jsonPath("$.max").value(max))
+                .andExpect(jsonPath("$.currency").value(currency));
+    }
+
+    private void restoreBoatPriceBounds() {
+        platformSettings.update(Map.of(
+                PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MIN_EUR, "100",
+                PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR, "600",
+                PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MIN_EUR, "150",
+                PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MAX_EUR, "400",
+                PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR, "240"), UUID.randomUUID());
+    }
+
     @Test
-    void boatPricePerM3_noUpperBound_201() throws Exception {
+    void boatPricePerM3_aboveHardMax_422TooHigh() throws Exception {
         seed(true, false);
         Map<String, Object> body = boatM3Body();
         body.put("pricePerM3", 25000);
 
-        String id = createdId(body);
+        assertPriceOutOfBounds(postTrip(body), "too-high", 100, 600, "EUR");
+        assertThat(announcementRepository.count()).isZero();
+    }
 
+    @Test
+    void boatPricePerM3_belowHardMin_422TooLow_draftToo() throws Exception {
+        seed(true, false);
+        Map<String, Object> body = boatM3Body();
+        body.put("pricePerM3", 99.99);
+
+        assertPriceOutOfBounds(postTrip(body), "too-low", 100, 600, "EUR");
+        body.put("saveAsDraft", true);
+        assertPriceOutOfBounds(postTrip(body), "too-low", 100, 600, "EUR");
+        assertThat(announcementRepository.count()).isZero();
+    }
+
+    @Test
+    void boatPricePerM3_hardBoundsIncluded_201() throws Exception {
+        seed(true, false);
+        Map<String, Object> atMin = boatM3Body();
+        atMin.put("pricePerM3", 100);
+
+        assertThat(announcementRepository.findById(UUID.fromString(createdId(atMin))).orElseThrow().getPricePerM3())
+                .isEqualByComparingTo("100");
+        assertThat(announcementRepository.findById(UUID.fromString(createdId(boatM3Body()))).orElseThrow()
+                .getPricePerM3()).isEqualByComparingTo("600");
+    }
+
+    @Test
+    void boatPricePerM3_inXof_boundsScaledToTheTripCurrency() throws Exception {
+        seed(true, false);
+        Map<String, Object> body = boatM3Body();
+        body.put("currency", "XOF");
+        body.put("acceptedPaymentMethods", List.of("CASH"));
+        body.put("pricePerM3", 600);
+
+        // 600 tapés en croyant saisir des euros : sous le plancher de 65 596 F CFA.
+        assertPriceOutOfBounds(postTrip(body), "too-low", 65596, 393574, "XOF");
+
+        body.put("pricePerM3", 157430);
+        AnnouncementEntity saved = announcementRepository.findById(UUID.fromString(createdId(body))).orElseThrow();
+        assertThat(saved.getCurrency()).isEqualTo("XOF");
+        assertThat(saved.getPricePerM3()).isEqualByComparingTo("157430");
+    }
+
+    @Test
+    void boatPricePerM3_followsTheBackOfficeBounds() throws Exception {
+        seed(true, false);
+        Map<String, Object> body = boatM3Body();
+        body.put("pricePerM3", 700);
+        assertPriceOutOfBounds(postTrip(body), "too-high", 100, 600, "EUR");
+
+        platformSettings.update(Map.of(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR, "800"), UUID.randomUUID());
+        try {
+            createdId(body);
+        } finally {
+            restoreBoatPriceBounds();
+        }
+    }
+
+    @Test
+    void editBoatPricePerM3_outOfBounds_422() throws Exception {
+        seed(true, false);
+        String id = createdId(boatM3Body());
+        Map<String, Object> body = boatM3Body();
+        body.put("pricePerM3", 601);
+
+        assertPriceOutOfBounds(putTrip(id, body), "too-high", 100, 600, "EUR");
         assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().getPricePerM3())
-                .isEqualByComparingTo("25000");
+                .isEqualByComparingTo("600");
+    }
+
+    /**
+     * Trajet publié à 600 €/m³ avant un resserrement du plafond à 500 € : il reste modifiable sur ses autres
+     * champs tant que son prix ne change pas ; un nouveau prix, lui, doit respecter les bornes en vigueur.
+     */
+    @Test
+    void editBoatPricePerM3_publishedBeforeTighterBounds_otherFieldsStillEditable() throws Exception {
+        seed(true, false);
+        String id = createdId(boatM3Body());
+        platformSettings.update(Map.of(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR, "500"), UUID.randomUUID());
+        try {
+            Map<String, Object> body = boatM3Body();
+            body.put("description", "Conteneur partagé, dépôt au port");
+            body.put("volumeCapacityM3", 3);
+            putTrip(id, body).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.pricePerM3").value(600.0));
+            AnnouncementEntity saved = announcementRepository.findById(UUID.fromString(id)).orElseThrow();
+            assertThat(saved.getDescription()).isEqualTo("Conteneur partagé, dépôt au port");
+            assertThat(saved.getVolumeCapacityM3()).isEqualByComparingTo("3");
+
+            body.put("pricePerM3", 590);
+            assertPriceOutOfBounds(putTrip(id, body), "too-high", 100, 500, "EUR");
+
+            body.put("pricePerM3", 450);
+            putTrip(id, body).andExpect(status().isOk()).andExpect(jsonPath("$.pricePerM3").value(450.0));
+        } finally {
+            restoreBoatPriceBounds();
+        }
+    }
+
+    @Test
+    void editBoatPerKgToPerM3_outOfBounds_422() throws Exception {
+        seed(true, false);
+        String id = createTrip("BOAT", false);
+        Map<String, Object> body = boatM3Body();
+        body.put("pricePerM3", 50);
+
+        assertPriceOutOfBounds(putTrip(id, body), "too-low", 100, 600, "EUR");
+        assertThat(announcementRepository.findById(UUID.fromString(id)).orElseThrow().isPricedPerM3()).isFalse();
     }
 
     @Test

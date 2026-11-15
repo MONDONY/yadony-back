@@ -244,6 +244,13 @@ public class PlatformSettingsInitializer {
                 String.valueOf(dac7EnabledProperty && dac7RemindersEnabledProperty));
         // Numéro WhatsApp du support : vide au départ (carte masquée dans l'app), réglé depuis le back-office.
         defaults.put(PlatformSettingKey.SUPPORT_WHATSAPP_NUMBER, "");
+        // Prix au m³ du bateau (lot 4) : aucune property, réglés depuis le back-office.
+        BoatPricePerM3Bounds boatPrices = BoatPricePerM3Bounds.DEFAULTS;
+        defaults.put(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MIN_EUR, boatPrices.hardMinEur().toPlainString());
+        defaults.put(PlatformSettingKey.BOAT_PRICE_PER_M3_HARD_MAX_EUR, boatPrices.hardMaxEur().toPlainString());
+        defaults.put(PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MIN_EUR, boatPrices.advisedMinEur().toPlainString());
+        defaults.put(PlatformSettingKey.BOAT_PRICE_PER_M3_ADVISED_MAX_EUR, boatPrices.advisedMaxEur().toPlainString());
+        defaults.put(PlatformSettingKey.BOAT_PRICE_PER_M3_REFERENCE_EUR, boatPrices.referenceEur().toPlainString());
         defaults.put(PlatformSettingKey.PAYMENTS_PAYPAL_ENABLED, String.valueOf(paypalEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_APPLE_PAY_ENABLED, String.valueOf(applePayEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED, String.valueOf(googlePayEnabledProperty));

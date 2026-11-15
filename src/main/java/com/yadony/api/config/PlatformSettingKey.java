@@ -3,6 +3,7 @@ package com.yadony.api.config;
 import com.yadony.api.common.YadonyBusinessException;
 import org.springframework.http.HttpStatus;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 
 /**
@@ -119,7 +120,29 @@ public enum PlatformSettingKey {
     INDIVIDUAL_TRIPS_ALERT_THRESHOLD("individual_trips_alert_threshold", PlatformSettingType.INTEGER),
     DAC7_ENABLED("dac7_enabled", PlatformSettingType.BOOLEAN),
     DAC7_REMINDERS_ENABLED("dac7_reminders_enabled", PlatformSettingType.BOOLEAN),
-    SUPPORT_WHATSAPP_NUMBER("support_whatsapp_number", PlatformSettingType.PHONE_E164);
+    SUPPORT_WHATSAPP_NUMBER("support_whatsapp_number", PlatformSettingType.PHONE_E164),
+    BOAT_PRICE_PER_M3_HARD_MIN_EUR("boat_price_per_m3_hard_min_eur", PlatformSettingType.DECIMAL),
+    BOAT_PRICE_PER_M3_HARD_MAX_EUR("boat_price_per_m3_hard_max_eur", PlatformSettingType.DECIMAL),
+    BOAT_PRICE_PER_M3_ADVISED_MIN_EUR("boat_price_per_m3_advised_min_eur", PlatformSettingType.DECIMAL),
+    BOAT_PRICE_PER_M3_ADVISED_MAX_EUR("boat_price_per_m3_advised_max_eur", PlatformSettingType.DECIMAL),
+    BOAT_PRICE_PER_M3_REFERENCE_EUR("boat_price_per_m3_reference_eur", PlatformSettingType.DECIMAL);
+
+    /**
+     * Prix au m³ d'un trajet bateau, en euros (lot 4 bateau). Les bornes dures refusent la création ou la
+     * modification du prix hors {@code [hard_min, hard_max]} (422 {@code price-per-m3-out-of-bounds}), mises à
+     * l'échelle de la devise du trajet comme le prix au kilo ; la zone conseillée et le prix indicatif ne servent
+     * qu'à l'application (aide à la saisie), lue par {@code GET /config/boat-price-bounds}. Aucune property : défauts
+     * 100, 600, 150, 400 et 240, saisie admin de 1 à 100 000, et toujours
+     * {@code hard_min ≤ advised_min ≤ reference ≤ advised_max ≤ hard_max} (422 {@code platform-setting-invalid}).
+     * Ligne absente, illisible, hors bornes ou ensemble incohérent : les défauts.
+     */
+    public static final BigDecimal DEFAULT_BOAT_PRICE_PER_M3_HARD_MIN_EUR = new BigDecimal("100");
+    public static final BigDecimal DEFAULT_BOAT_PRICE_PER_M3_HARD_MAX_EUR = new BigDecimal("600");
+    public static final BigDecimal DEFAULT_BOAT_PRICE_PER_M3_ADVISED_MIN_EUR = new BigDecimal("150");
+    public static final BigDecimal DEFAULT_BOAT_PRICE_PER_M3_ADVISED_MAX_EUR = new BigDecimal("400");
+    public static final BigDecimal DEFAULT_BOAT_PRICE_PER_M3_REFERENCE_EUR = new BigDecimal("240");
+    public static final BigDecimal MIN_BOAT_PRICE_PER_M3_EUR = BigDecimal.ONE;
+    public static final BigDecimal MAX_BOAT_PRICE_PER_M3_EUR = new BigDecimal("100000");
 
     /**
      * {@code SUPPORT_WHATSAPP_NUMBER} : numéro WhatsApp de l'équipe Yadony (format international, « +33… »).
