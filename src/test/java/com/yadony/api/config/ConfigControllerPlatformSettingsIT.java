@@ -229,4 +229,26 @@ class ConfigControllerPlatformSettingsIT {
         }
         assertThat(settings.transportRoadEnabled()).isFalse();
     }
+    /** Contact du support : sans numéro réglé, la clé est absente (Jackson omet les null) : l'app masque la carte. */
+    @Test
+    void supportContact_defaultsToNoNumber() throws Exception {
+        mockMvc.perform(get("/config/support-contact"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.whatsappNumber").doesNotExist())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void supportContact_reflectsPlatformSettings() throws Exception {
+        settings.update(Map.of(PlatformSettingKey.SUPPORT_WHATSAPP_NUMBER, "+33 6 12 34 56 78"), UUID.randomUUID());
+        try {
+            mockMvc.perform(get("/config/support-contact"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.whatsappNumber").value("+33612345678"));
+        } finally {
+            settings.update(Map.of(PlatformSettingKey.SUPPORT_WHATSAPP_NUMBER, ""), UUID.randomUUID());
+        }
+        mockMvc.perform(get("/config/support-contact"))
+                .andExpect(jsonPath("$.whatsappNumber").doesNotExist());
+    }
 }

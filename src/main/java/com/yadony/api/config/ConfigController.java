@@ -13,6 +13,7 @@ import com.yadony.api.config.dto.TransportModesResponse;
 import com.yadony.api.config.dto.ReimbursementCapResponse;
 import com.yadony.api.config.dto.RemoteConfigRefreshResponse;
 import com.yadony.api.config.dto.SmsEnabledResponse;
+import com.yadony.api.config.dto.SupportContactResponse;
 import com.yadony.api.config.dto.UrgencyThresholdResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -138,6 +139,16 @@ public class ConfigController {
     public ResponseEntity<TransportModesResponse> getTransportModes() {
         return ResponseEntity.ok(new TransportModesResponse(
                 settings.transportRoadEnabled(), settings.transportBoatEnabled()));
+    }
+
+    /**
+     * Contact du support : numéro WhatsApp de l'équipe, réglé dans le back-office
+     * ({@code support_whatsapp_number}), {@code null} s'il est vide. Public comme ses voisins : le numéro est
+     * destiné à être affiché à tous, y compris avant la connexion.
+     */
+    @GetMapping("/support-contact")
+    public ResponseEntity<SupportContactResponse> getSupportContact() {
+        return ResponseEntity.ok(new SupportContactResponse(settings.supportWhatsappNumber().orElse(null)));
     }
 
     /**

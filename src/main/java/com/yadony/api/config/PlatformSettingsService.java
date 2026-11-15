@@ -151,6 +151,16 @@ public class PlatformSettingsService {
     }
 
     /**
+     * Numéro WhatsApp de l'équipe, vide si aucun n'est réglé (l'application masque alors la carte). Lu à chaque
+     * appel : une modification dans le back-office s'applique sans redémarrage. Voir
+     * {@link PlatformSettingKey#SUPPORT_WHATSAPP_NUMBER}.
+     */
+    public Optional<String> supportWhatsappNumber() {
+        String raw = cache.all().get(PlatformSettingKey.SUPPORT_WHATSAPP_NUMBER.key());
+        return raw == null || raw.isBlank() ? Optional.empty() : Optional.of(raw.trim());
+    }
+
+    /**
      * Indicatifs vers lesquels aucun SMS ne part (codes de connexion comme notifications). Lu à
      * chaque envoi : une modification dans le back-office s'applique sans redémarrage. Ligne
      * absente : la liste par défaut (les indicatifs africains), la position sûre ; ligne vide :
@@ -420,6 +430,7 @@ public class PlatformSettingsService {
             case INDIVIDUAL_TRIPS_ALERT_THRESHOLD -> String.valueOf(individualTripsAlertThreshold());
             case DAC7_ENABLED -> String.valueOf(dac7Enabled());
             case DAC7_REMINDERS_ENABLED -> String.valueOf(dac7RemindersEnabled());
+            case SUPPORT_WHATSAPP_NUMBER -> supportWhatsappNumber().orElse("");
         };
     }
 
@@ -606,7 +617,23 @@ public class PlatformSettingsService {
                     PlatformSettingKey.MIN_INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
                     PlatformSettingKey.MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
                     "Le seuil d'alerte des particuliers doit être un nombre entier de trajets entre 1 et 100");
+            case SUPPORT_WHATSAPP_NUMBER -> internationalPhone(value);
         };
+    }
+
+    /** Numéro international sans séparateurs (« +33612345678 ») ; vide permis, il masque la carte de l'app. */
+    private String internationalPhone(String value) {
+        if (value.isEmpty()) {
+            return "";
+        }
+        String compact = value.replaceAll("[\\s.\\-()]", "");
+        if (compact.startsWith("00")) {
+            compact = "+" + compact.substring(2);
+        }
+        if (!compact.matches("\\+[1-9]\\d{7,14}")) {
+            throw invalid("Le numéro du support doit être au format international, par exemple +33612345678");
+        }
+        return compact;
     }
 
     private String callingCodes(String value) {

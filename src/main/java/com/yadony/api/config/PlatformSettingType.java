@@ -9,5 +9,10 @@ public enum PlatformSettingType {
      * Liste d'indicatifs téléphoniques séparés par des virgules (« 221,225 »), vide permise :
      * voir {@link CallingCodeList}.
      */
-    CALLING_CODES
+    CALLING_CODES,
+    /**
+     * Numéro de téléphone international (« +33612345678 »), vide permis : voir
+     * {@link PlatformSettingKey#SUPPORT_WHATSAPP_NUMBER}.
+     */
+    PHONE_E164
 }

@@ -12,4 +12,4 @@ routes:
   - path: /support
     label: Contact support
 ---
-You are in FAQ & help. Type your question in "Search help" or open a category: Account & identity, Listings & requests, Payments & refunds, Tracking & delivery, Security & data. If you can't find your answer, the "Didn't find your answer?" card offers "Contact support".
+You are in FAQ & help. When the team has set its number, the "Write on WhatsApp" card is at the top of the screen, before the questions: it opens the WhatsApp conversation with the Yadony team. Type your question in "Search help" or open a category: Account & identity, Listings & requests, Payments & refunds, Tracking & delivery, Security & data. If you can't find your answer, the "Didn't find your answer?" card offers "Contact support".
