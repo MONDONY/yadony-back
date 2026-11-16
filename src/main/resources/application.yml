@@ -553,6 +553,12 @@ yadony:
       enabled: ${ASSISTANT_FORM_DRAFT_ENABLED:false}
       daily-quota: ${ASSISTANT_FORM_DRAFT_DAILY_QUOTA:30}
       max-turns: 8
+    # Centre d'aide de la console admin : doc et recherche toujours ouvertes. L'assistant (allumé ou non) et son quota
+    # se règlent dans Paramètres (admin_help_assistant_enabled, admin_help_daily_quota).
+    admin-help:
+      # Score BM25 brut, calibré sur les fiches admin par AdminHelpFichesTest : questions réelles 8 à 40,
+      # hors-sujet 0 à 5,6.
+      min-score: 6.0
   didit:
     base-url: ${DIDIT_BASE_URL:https://verification.didit.me}
     api-key: ${DIDIT_API_KEY:}

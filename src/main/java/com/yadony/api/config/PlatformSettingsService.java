@@ -319,6 +319,17 @@ public class PlatformSettingsService {
                 PlatformSettingKey.DEFAULT_ASSISTANT_FORM_DRAFT_DAILY_QUOTA);
     }
 
+    /** Assistant du centre d'aide de la console. Ligne absente : allumé. */
+    public boolean adminHelpAssistantEnabled() {
+        String raw = cache.all().get(PlatformSettingKey.ADMIN_HELP_ASSISTANT_ENABLED.key());
+        return raw == null || Boolean.parseBoolean(raw);
+    }
+
+    /** Questions à l'assistant de la console par administrateur et par jour UTC. */
+    public int adminHelpDailyQuota() {
+        return intOr(PlatformSettingKey.ADMIN_HELP_DAILY_QUOTA, PlatformSettingKey.DEFAULT_ADMIN_HELP_DAILY_QUOTA);
+    }
+
     private int intOr(PlatformSettingKey key, int fallback) {
         String raw = cache.all().get(key.key());
         if (raw == null) return fallback;
@@ -431,6 +442,8 @@ public class PlatformSettingsService {
             case DAC7_ENABLED -> String.valueOf(dac7Enabled());
             case DAC7_REMINDERS_ENABLED -> String.valueOf(dac7RemindersEnabled());
             case SUPPORT_WHATSAPP_NUMBER -> supportWhatsappNumber().orElse("");
+            case ADMIN_HELP_ASSISTANT_ENABLED -> String.valueOf(adminHelpAssistantEnabled());
+            case ADMIN_HELP_DAILY_QUOTA -> String.valueOf(adminHelpDailyQuota());
         };
     }
 
@@ -618,6 +631,10 @@ public class PlatformSettingsService {
                     PlatformSettingKey.MAX_INDIVIDUAL_TRIPS_ALERT_THRESHOLD,
                     "Le seuil d'alerte des particuliers doit être un nombre entier de trajets entre 1 et 100");
             case SUPPORT_WHATSAPP_NUMBER -> internationalPhone(value);
+            case ADMIN_HELP_ASSISTANT_ENABLED -> strictBoolean(value,
+                    "L'activation de l'assistant de la console attend true ou false");
+            case ADMIN_HELP_DAILY_QUOTA -> boundedInt(value, MIN_ASSISTANT_QUOTA, MAX_ASSISTANT_QUOTA,
+                    "Le quota de questions à l'assistant de la console doit être un entier entre 1 et 1000");
         };
     }
 
