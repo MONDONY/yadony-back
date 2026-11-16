@@ -15,12 +15,12 @@ import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.lucene.analysis.util.ElisionFilter;
 
 /** Analyseurs de l'assistant : français et anglais retirent aussi les accents (« numero » = « numéro », « cafe » = « café »). */
-final class AssistantAnalyzers {
+public final class AssistantAnalyzers {
 
     private AssistantAnalyzers() {
     }
 
-    static Analyzer forLocale(String locale) {
+    public static Analyzer forLocale(String locale) {
         return "en".equals(locale) ? english() : french();
     }
 
