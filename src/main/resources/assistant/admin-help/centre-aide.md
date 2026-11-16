@@ -52,4 +52,5 @@ Pas besoin du mot exact : écrivez comme vous parlez, avec des mots simples.
 - L'assistant peut se tromper. Vérifiez toujours dans la fiche citée avant une action importante.
 - Si aucun fournisseur d'IA ne répond, l'assistant vous propose directement les fiches les plus proches de votre question.
 - Le nombre de questions par jour est limité. Si la limite est atteinte, utilisez la recherche du centre d'aide.
+- Un Super admin ou un Admin peut couper l'assistant ou changer cette limite dans les [Paramètres](/aide/parametres) : réglages **Assistant de la console** et **Questions à l'assistant de la console par administrateur et par jour**.
 - Les fournisseurs d'IA utilisés sont les mêmes que ceux de l'assistant de l'app mobile. Voir [Gérer les fournisseurs de l'assistant IA](/aide/assistant-ia).

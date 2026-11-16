@@ -2,6 +2,7 @@ package com.yadony.api.assistant.adminhelp;
 
 import com.yadony.api.assistant.quota.AssistantUserDailyUsageStore;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.PlatformSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,24 +29,24 @@ public class AdminHelpQuota {
     static final String KEY_PREFIX = "admin:";
 
     private final AssistantUserDailyUsageStore store;
-    private final AdminHelpProperties properties;
+    private final PlatformSettingsService settings;
     private final Clock clock;
 
     @Autowired
-    public AdminHelpQuota(AssistantUserDailyUsageStore store, AdminHelpProperties properties) {
-        this(store, properties, Clock.systemUTC());
+    public AdminHelpQuota(AssistantUserDailyUsageStore store, PlatformSettingsService settings) {
+        this(store, settings, Clock.systemUTC());
     }
 
-    AdminHelpQuota(AssistantUserDailyUsageStore store, AdminHelpProperties properties, Clock clock) {
+    AdminHelpQuota(AssistantUserDailyUsageStore store, PlatformSettingsService settings, Clock clock) {
         this.store = store;
-        this.properties = properties;
+        this.settings = settings;
         this.clock = clock;
     }
 
     /** @return les questions restantes aujourd'hui, celle-ci déduite ; 429 si le quota est atteint */
     public int consume(UUID adminId) {
         LocalDate today = LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC);
-        int quota = properties.dailyQuota();
+        int quota = settings.adminHelpDailyQuota();
         int used;
         try {
             used = store.tryConsume(KEY_PREFIX + adminId, today, quota);

@@ -19,7 +19,8 @@ Ressources : `src/main/resources/assistant/admin-help/*.md` (89 fiches, 6 rubriq
 
 ## Fichiers modifiés
 - `assistant/kb/AssistantAnalyzers` : rendu public pour réutiliser l'analyseur français.
-- `application.yml` : bloc `yadony.assistant.admin-help`.
+- `application.yml` : bloc `yadony.assistant.admin-help` (seuil de pertinence seulement).
+- `config/PlatformSettingKey`, `PlatformSettingsService`, `PlatformSettingsInitializer` : réglages `admin_help_assistant_enabled` (allumé par défaut) et `admin_help_daily_quota` (60, bornes 1 à 1000), modifiables dans Paramètres et audités.
 - `i18n/messages_{fr,en}.properties` : `problem.admin-help.*`.
 
 ## Points d'entrée API
@@ -39,7 +40,7 @@ Ressources : `src/main/resources/assistant/admin-help/*.md` (89 fiches, 6 rubriq
 - Emails, numéros (6 chiffres et plus) et identifiants sont masqués dans la question et l'historique avant l'envoi au fournisseur. La doc ne contient aucune donnée.
 - Le texte de l'admin est neutralisé (`<` `>` retirés) : il ne peut pas se faire passer pour une consigne.
 - Une fiche reste lisible par tout admin ; seuls ses boutons vers une page interdite au rôle sont retirés (`AdminHelpPages`).
-- Quota par admin et par jour UTC dans `assistant_user_daily_usage`, clé `admin:<id>` (ne croise pas un uid Firebase). Base injoignable : la question passe.
+- Quota par admin et par jour UTC (réglage `admin_help_daily_quota`) dans `assistant_user_daily_usage`, clé `admin:<id>` (ne croise pas un uid Firebase). Base injoignable : la question passe.
 
 ## Ajouter ou corriger une fiche
 1. Écrire `src/main/resources/assistant/admin-help/<id>.md` (en-tête : `id`, `title`, `category`, `order`, `summary`, `permission` facultatif, `keywords`, `routes`).
@@ -51,7 +52,7 @@ Ressources : `src/main/resources/assistant/admin-help/*.md` (89 fiches, 6 rubriq
 ## Pièges
 - Le seuil `min-score` dépend de la taille du corpus (score BM25 brut) : recalibrer `AdminHelpFichesTest` si beaucoup de fiches sont ajoutées.
 - Aucun chiffre réglable dans l'admin (commission, plafonds, quotas) ne doit être écrit dans une fiche : renvoyer vers la page qui le règle.
-- `ADMIN_HELP_ASSISTANT_ENABLED=false` coupe seulement l'assistant ; la doc et la recherche restent ouvertes.
+- Le réglage « Assistant de la console » (Paramètres) coupe seulement l'assistant ; la doc et la recherche restent ouvertes.
 
 ## Tests
 - `AdminHelpLoaderTest`, `AdminHelpFichesTest` (vraies fiches, questions réelles et hors-sujet), `AdminHelpServiceTest`, `AdminHelpQuotaTest`, `AdminHelpRedactorTest`, `AdminHelpControllerIT`.

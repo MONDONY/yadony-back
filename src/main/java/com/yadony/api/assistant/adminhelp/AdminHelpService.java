@@ -17,6 +17,7 @@ import com.yadony.api.assistant.kb.KbRoute;
 import com.yadony.api.assistant.llm.LlmResult;
 import com.yadony.api.assistant.llm.LlmRouter;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.PlatformSettingsService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -60,15 +61,18 @@ public class AdminHelpService {
 
     private final AdminHelpIndex index;
     private final AdminHelpProperties properties;
+    private final PlatformSettingsService settings;
     private final AdminHelpQuota quota;
     private final AdminHelpPromptBuilder prompts;
     private final AssistantAnswerParser parser;
     private final LlmRouter router;
 
-    public AdminHelpService(AdminHelpIndex index, AdminHelpProperties properties, AdminHelpQuota quota,
+    public AdminHelpService(AdminHelpIndex index, AdminHelpProperties properties, PlatformSettingsService settings,
+                            AdminHelpQuota quota,
                             AdminHelpPromptBuilder prompts, AssistantAnswerParser parser, LlmRouter router) {
         this.index = index;
         this.properties = properties;
+        this.settings = settings;
         this.quota = quota;
         this.prompts = prompts;
         this.parser = parser;
@@ -79,7 +83,7 @@ public class AdminHelpService {
         List<AdminHelpCategoryResponse> categories = AdminHelpLoader.CATEGORIES.entrySet().stream()
                 .map(e -> new AdminHelpCategoryResponse(e.getKey(), e.getValue())).toList();
         List<AdminHelpArticleSummary> articles = index.all().stream().map(a -> summary(a, permissions)).toList();
-        return new AdminHelpIndexResponse(categories, articles, properties.assistantEnabled());
+        return new AdminHelpIndexResponse(categories, articles, settings.adminHelpAssistantEnabled());
     }
 
     public AdminHelpArticleResponse article(String id, Set<String> permissions) {
@@ -110,7 +114,7 @@ public class AdminHelpService {
     }
 
     public AdminHelpAskResponse ask(UUID adminId, Set<String> permissions, AdminHelpAskRequest request) {
-        if (!properties.assistantEnabled()) {
+        if (!settings.adminHelpAssistantEnabled()) {
             throw YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "admin-help-assistant-disabled",
                     "problem.admin-help.admin-help-assistant-disabled");
         }

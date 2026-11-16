@@ -244,6 +244,10 @@ public class PlatformSettingsInitializer {
                 String.valueOf(dac7EnabledProperty && dac7RemindersEnabledProperty));
         // Numéro WhatsApp du support : vide au départ (carte masquée dans l'app), réglé depuis le back-office.
         defaults.put(PlatformSettingKey.SUPPORT_WHATSAPP_NUMBER, "");
+        // Centre d'aide de la console : assistant allumé, 60 questions par admin et par jour ; réglés depuis le back-office.
+        defaults.put(PlatformSettingKey.ADMIN_HELP_ASSISTANT_ENABLED, "true");
+        defaults.put(PlatformSettingKey.ADMIN_HELP_DAILY_QUOTA,
+                String.valueOf(PlatformSettingKey.DEFAULT_ADMIN_HELP_DAILY_QUOTA));
         defaults.put(PlatformSettingKey.PAYMENTS_PAYPAL_ENABLED, String.valueOf(paypalEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_APPLE_PAY_ENABLED, String.valueOf(applePayEnabledProperty));
         defaults.put(PlatformSettingKey.PAYMENTS_GOOGLE_PAY_ENABLED, String.valueOf(googlePayEnabledProperty));

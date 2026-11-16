@@ -14,6 +14,7 @@ import com.yadony.api.assistant.kb.KbRoute;
 import com.yadony.api.assistant.llm.LlmResult;
 import com.yadony.api.assistant.llm.LlmRouter;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -56,7 +57,9 @@ class AdminHelpServiceTest {
     final Set<String> support = Set.of("ROLE_ADMIN", "BID_VIEW");
 
     AdminHelpService service(boolean enabled) {
-        return new AdminHelpService(index, new AdminHelpProperties(enabled, 60, 1.0), quota, prompts,
+        PlatformSettingsService settings = mock(PlatformSettingsService.class);
+        when(settings.adminHelpAssistantEnabled()).thenReturn(enabled);
+        return new AdminHelpService(index, new AdminHelpProperties(1.0), settings, quota, prompts,
                 new AssistantAnswerParser(new ObjectMapper()), router);
     }
 

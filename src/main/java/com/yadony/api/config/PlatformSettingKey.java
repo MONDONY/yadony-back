@@ -119,7 +119,17 @@ public enum PlatformSettingKey {
     INDIVIDUAL_TRIPS_ALERT_THRESHOLD("individual_trips_alert_threshold", PlatformSettingType.INTEGER),
     DAC7_ENABLED("dac7_enabled", PlatformSettingType.BOOLEAN),
     DAC7_REMINDERS_ENABLED("dac7_reminders_enabled", PlatformSettingType.BOOLEAN),
-    SUPPORT_WHATSAPP_NUMBER("support_whatsapp_number", PlatformSettingType.PHONE_E164);
+    SUPPORT_WHATSAPP_NUMBER("support_whatsapp_number", PlatformSettingType.PHONE_E164),
+    ADMIN_HELP_ASSISTANT_ENABLED("admin_help_assistant_enabled", PlatformSettingType.BOOLEAN),
+    ADMIN_HELP_DAILY_QUOTA("admin_help_daily_quota", PlatformSettingType.INTEGER);
+
+    /**
+     * Centre d'aide de la console admin : {@code ADMIN_HELP_ASSISTANT_ENABLED} allume l'assistant de la console
+     * (la documentation et sa recherche restent toujours ouvertes) ; {@code ADMIN_HELP_DAILY_QUOTA} borne ses
+     * questions par administrateur et par jour UTC (bornes 1 à 1000). Aucune property : allumé et 60 par défaut,
+     * réglés depuis le panel admin ; ligne absente : ces défauts.
+     */
+    public static final int DEFAULT_ADMIN_HELP_DAILY_QUOTA = 60;
 
     /**
      * {@code SUPPORT_WHATSAPP_NUMBER} : numéro WhatsApp de l'équipe Yadony (format international, « +33… »).

@@ -2,6 +2,7 @@ package com.yadony.api.assistant.adminhelp;
 
 import com.yadony.api.assistant.quota.AssistantUserDailyUsageStore;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.config.PlatformSettingsService;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
@@ -23,9 +24,13 @@ import static org.mockito.Mockito.when;
 class AdminHelpQuotaTest {
 
     final AssistantUserDailyUsageStore store = mock(AssistantUserDailyUsageStore.class);
-    final AdminHelpProperties properties = new AdminHelpProperties(true, 10, 6.0);
+    final PlatformSettingsService settings = mock(PlatformSettingsService.class);
     final Clock clock = Clock.fixed(Instant.parse("2026-11-16T10:00:00Z"), ZoneOffset.UTC);
-    final AdminHelpQuota quota = new AdminHelpQuota(store, properties, clock);
+    final AdminHelpQuota quota = new AdminHelpQuota(store, settings, clock);
+
+    {
+        when(settings.adminHelpDailyQuota()).thenReturn(10);
+    }
     final UUID admin = UUID.randomUUID();
 
     @Test
@@ -48,6 +53,6 @@ class AdminHelpQuotaTest {
 
     @Test
     void constructeurSpring() {
-        assertThat(new AdminHelpQuota(store, properties)).isNotNull();
+        assertThat(new AdminHelpQuota(store, settings)).isNotNull();
     }
 }

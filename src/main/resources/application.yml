@@ -553,11 +553,9 @@ yadony:
       enabled: ${ASSISTANT_FORM_DRAFT_ENABLED:false}
       daily-quota: ${ASSISTANT_FORM_DRAFT_DAILY_QUOTA:30}
       max-turns: 8
-    # Centre d'aide de la console admin : doc et recherche toujours ouvertes ; l'assistant utilise les fournisseurs
-    # de la page « Assistant IA », indépendamment de ASSISTANT_ENABLED (assistant de l'app).
+    # Centre d'aide de la console admin : doc et recherche toujours ouvertes. L'assistant (allumé ou non) et son quota
+    # se règlent dans Paramètres (admin_help_assistant_enabled, admin_help_daily_quota).
     admin-help:
-      assistant-enabled: ${ADMIN_HELP_ASSISTANT_ENABLED:true}
-      daily-quota: ${ADMIN_HELP_DAILY_QUOTA:60}
       # Score BM25 brut, calibré sur les fiches admin par AdminHelpFichesTest : questions réelles 8 à 40,
       # hors-sujet 0 à 5,6.
       min-score: 6.0

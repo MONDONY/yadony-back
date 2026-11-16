@@ -5,7 +5,7 @@ category: systeme
 order: 30
 summary: "La page Paramètres règle la marketplace : maintenance, mise à jour de l'app, SMS, commission, seuils, offre PRO, DAC7, photos, WhatsApp du support, taux de change."
 permission: CONFIG_MANAGE
-keywords: paramètres, réglages, configuration, paramètres plateforme, SMS, activer les SMS, pays sans SMS, plafond de SMS, taux de commission, seuil d'urgence, plafond de remboursement, offre PRO, collecte DAC7, messages DAC7, billets d'avion, suppression des photos, purge des photos, numéro WhatsApp du support, questions à l'assistant, quota assistant, trajets par mois avant alerte, taux de change, BCE, build recommandé, mise à jour de l'app
+keywords: paramètres, assistant de la console, couper l'assistant, quota de l'assistant de la console, réglages, configuration, paramètres plateforme, SMS, activer les SMS, pays sans SMS, plafond de SMS, taux de commission, seuil d'urgence, plafond de remboursement, offre PRO, collecte DAC7, messages DAC7, billets d'avion, suppression des photos, purge des photos, numéro WhatsApp du support, questions à l'assistant, quota assistant, trajets par mois avant alerte, taux de change, BCE, build recommandé, mise à jour de l'app
 routes:
   - path: /parametres
     label: Ouvrir les paramètres
@@ -31,7 +31,8 @@ La page **Paramètres plateforme** (menu **Système**) regroupe les réglages gl
 - **Offre PRO ouverte**, **Billets d'avion** (onglet Billets dans l'application).
 - **Collecte DAC7 ouverte** et **Messages DAC7**. Voir [Déclaration DAC7](/aide/declaration-dac7).
 - **Trajets publiés par mois avant alerte (voyageur Particulier)**. Voir [Particuliers à confirmer](/aide/particuliers-a-confirmer).
-- **Questions à l'assistant d'aide par utilisateur et par jour** et **Tours de remplissage par l'IA**.
+- **Questions à l'assistant d'aide par utilisateur et par jour** et **Tours de remplissage par l'IA** (assistant de l'application mobile).
+- **Assistant de la console** (allume ou coupe la bulle « Assistant » de cette console) et **Questions à l'assistant de la console par administrateur et par jour**. Voir [Utiliser le centre d'aide](/aide/centre-aide).
 - **Numéro WhatsApp de l'équipe** (écran Support de l'application).
 - Photos : **Photos de suivi par colis**, **Photos envoyées par utilisateur et par jour**, **Suppression des photos activée** et **Délai de suppression des photos après livraison**.
 
