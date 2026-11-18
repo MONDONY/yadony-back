@@ -117,22 +117,27 @@ class DepositPaidGuardsIT {
     }
 
     @Test
-    @DisplayName("annulation du trajet avec un colis payé au dépôt → 409, trajet intact, une seule alerte admin")
-    void cancelTrip_withDepositedParcel_409AndAlert() {
+    @DisplayName("annulation du trajet avec un colis payé au dépôt → 409 trip-has-parcels, trajet intact, aucune alerte")
+    void cancelTrip_withDepositedParcel_409TripHasParcels() {
         UserEntity traveler = persistUser(Role.TRAVELER);
         AnnouncementEntity trip = persistBoatTrip(traveler);
         BidEntity bid = persistDepositedBid(trip, persistUser(Role.SENDER), PaymentMethod.MOBILE_MONEY);
         persistPayment(bid, PaymentStatus.RELEASED);
         CancellationRequest request = new CancellationRequest(trip.getId(), "Bateau annulé");
 
-        assertDepositPaid(() -> cancellationService.cancelTrip(traveler.getFirebaseUid(), request));
-        assertDepositPaid(() -> cancellationService.cancelTrip(traveler.getFirebaseUid(), request));
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> cancellationService.cancelTrip(traveler.getFirebaseUid(), request))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("trip-has-parcels");
+                    });
+        }
 
         assertThat(announcementRepository.findById(trip.getId()).orElseThrow().getStatus())
                 .isEqualTo(AnnouncementStatus.ACTIVE);
         assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.HANDED_OVER);
         assertThat(count("SELECT COUNT(*) FROM admin_alerts WHERE type = ? AND resolved = false",
-                DepositPaidTripCancelAlertListener.ALERT_PREFIX + trip.getId())).isEqualTo(1);
+                DepositPaidTripCancelAlertListener.ALERT_PREFIX + trip.getId())).isZero();
     }
 
     @Test

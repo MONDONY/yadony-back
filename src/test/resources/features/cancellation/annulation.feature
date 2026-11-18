@@ -14,7 +14,7 @@ Fonctionnalité: Annulation d'un voyage
     Et la réponse indique que 0 offres ont été annulées
 
   @happy-path @critical
-  Scénario: Annulation avec offres acceptées — cascade vers les offres
+  Scénario: Annulation refusée tant que le trajet porte une offre acceptée
     Etant donné un utilisateur VOYAGEUR enregistré avec l'uid "traveler-cancel-002" et le téléphone "+33700000002"
     Et il existe une annonce de "Lyon" à "Abidjan" avec 20 kg disponibles à 6.0 €/kg sauvegardée sous "annonce-cancel-2"
     Etant donné un utilisateur EXPÉDITEUR enregistré avec l'uid "sender-cancel-002" et le téléphone "+33700000003"
@@ -24,8 +24,8 @@ Fonctionnalité: Annulation d'un voyage
     Et le paiement de l'offre "offre-cancel-2" est validé
     Et j'accepte l'offre "offre-cancel-2"
     Quand j'annule l'annonce "annonce-cancel-2" avec la raison "Problème médical urgent"
-    Alors la réponse HTTP est 201
-    Et la réponse indique que 1 offres ont été annulées
+    Alors la réponse HTTP est 409
+    Et le code d'erreur de la réponse est "trip-has-parcels"
 
   @error-case
   Scénario: Annulation d'une annonce déjà annulée

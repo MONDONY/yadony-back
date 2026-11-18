@@ -3359,7 +3359,7 @@ class AnnouncementServiceTest {
         }
 
         @Test
-        @DisplayName("brouillon → soft-delete direct + audit (pas de bids possibles sur un DRAFT)")
+        @DisplayName("brouillon sans colis vivant → soft-delete direct + audit, aucun bid touché")
         void delete_draftAnnouncement_softDeletesWithoutBidHandling() {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity a = draftEntityOwnedBy(traveler);
@@ -3371,7 +3371,43 @@ class AnnouncementServiceTest {
             assertThat(a.getDeletedAt()).isNotNull();
             verify(announcementRepository).save(a);
             verify(auditService).log(eq("ANNOUNCEMENT"), any(), eq("DRAFT_ANNOUNCEMENT_DELETED"), any(), any());
-            verifyNoInteractions(bidRepository);
+            verify(bidRepository).existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
+                    AnnouncementService.DRAFT_BLOCKING_BID_STATUSES);
+            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).findByAnnouncementIdAndStatusIn(any(), any());
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"PENDING", "PAYMENT_ESCROWED", "AWAITING_PAYMENT", "ACCEPTED", "HANDED_OVER",
+                        "IN_TRANSIT", "ARRIVED"})
+        @DisplayName("brouillon avec un colis vivant (engagé ou demande en cours) → 409 deletion-impossible, rien n'est écrit")
+        void delete_draftWithLiveParcel_conflictWithoutSideEffects(BidStatus status) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity a = draftEntityOwnedBy(traveler);
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(a));
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat((List<BidStatus> l) -> l.contains(status)))).thenReturn(true);
+
+            assertThatThrownBy(() -> announcementService.deleteAnnouncement(ANNOUNCEMENT_ID, FIREBASE_UID))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("deletion-impossible");
+                    });
+
+            assertThat(a.getDeletedAt()).isNull();
+            verify(announcementRepository, never()).save(any());
+            verifyNoInteractions(auditService, eventPublisher);
+        }
+
+        @Test
+        @DisplayName("la liste des colis qui bloquent un brouillon couvre tous les statuts engagés")
+        void draftBlockingStatuses_coverInFlight() {
+            assertThat(AnnouncementService.DRAFT_BLOCKING_BID_STATUSES)
+                    .containsAll(BidStatus.IN_FLIGHT)
+                    .contains(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.AWAITING_PAYMENT)
+                    .doesNotContain(BidStatus.CANCELLED, BidStatus.REJECTED, BidStatus.COMPLETED);
         }
     }
 
