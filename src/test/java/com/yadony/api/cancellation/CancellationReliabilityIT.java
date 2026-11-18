@@ -159,24 +159,35 @@ class CancellationReliabilityIT {
     }
 
     @Test
-    void travelerCancelsWholeTripWithTwoParcels_countsOnce_andRefundsBothCommissions() throws Exception {
+    void travelerCancelsWholeTripWithTwoParcels_refusedUntilParcelsAreCancelled() throws Exception {
         UserEntity traveler = persistUser();
         openWallet(traveler.getId());
         UUID announcementId = persistAnnouncement(traveler.getId());
         UUID first = acceptedCashBid(announcementId, persistUser().getId(), traveler.getId());
         UUID second = acceptedCashBid(announcementId, persistUser().getId(), traveler.getId());
+        String body = "{\"announcementId\":\"" + announcementId + "\",\"reason\":\"Imprévu\"}";
 
+        // Colis engagés : le trajet ne s'annule pas, rien ne change.
         mockMvc.perform(post("/cancellations").with(authentication(as(traveler)))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"announcementId\":\"" + announcementId + "\",\"reason\":\"Imprévu\"}"))
-                .andExpect(status().isCreated());
-
-        assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isEqualTo(1);
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("trip-has-parcels"));
+        assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isZero();
         for (UUID bidId : List.of(first, second)) {
+            assertThat(bidRepository.findById(bidId).orElseThrow().getStatus()).isEqualTo(BidStatus.ACCEPTED);
+        }
+
+        // Colis annulés un à un (commission rendue), puis le trajet s'annule.
+        for (UUID bidId : List.of(first, second)) {
+            mockMvc.perform(put("/bids/{id}/cancel", bidId).with(authentication(as(traveler))))
+                    .andExpect(status().isOk());
             assertThat(bidRepository.findById(bidId).orElseThrow().getCommissionStatus())
                     .isEqualTo(CommissionStatus.REFUNDED);
-            assertThat(auditCount(bidId, "COMMISSION_RETAINED_TRAVELER_CANCEL")).isZero();
         }
+        mockMvc.perform(post("/cancellations").with(authentication(as(traveler)))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.affectedBidsCount").value(0));
         assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
     }
 
@@ -207,7 +218,7 @@ class CancellationReliabilityIT {
      * restitution, et plus au-delà, ni après l'échéance.
      */
     @Test
-    void travelerCancelsTripWithHandedOverParcel_opensReturn_andContactStaysOpenUntilReturned() throws Exception {
+    void travelerCancelsHandedOverParcel_opensReturn_andContactStaysOpenUntilReturned() throws Exception {
         UserEntity traveler = persistUser();
         UserEntity sender = persistUser();
         openWallet(traveler.getId());
@@ -216,12 +227,19 @@ class CancellationReliabilityIT {
         UUID accepted = acceptedCashBid(announcementId, persistUser().getId(), traveler.getId());
         jdbc.update("UPDATE bids SET status = 'HANDED_OVER' WHERE id = ?", handedOver);
 
+        // Le trajet ne s'annule pas tant que des colis engagés (dont un colis remis) y sont attachés.
         mockMvc.perform(post("/cancellations").with(authentication(as(traveler)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"announcementId\":\"" + announcementId + "\",\"reason\":\"Imprévu\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.affectedBidsCount").value(2))
-                .andExpect(jsonPath("$.parcelsToReturnCount").value(1));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("trip-has-parcels"));
+        assertThat(bidRepository.findById(handedOver).orElseThrow().getStatus()).isEqualTo(BidStatus.HANDED_OVER);
+
+        // Les colis s'annulent un à un : le colis remis ouvre sa procédure de retour (code, délai, commission rendue).
+        mockMvc.perform(post("/bids/{id}/cancel-after-handover", handedOver).with(authentication(as(traveler))))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/bids/{id}/cancel", accepted).with(authentication(as(traveler))))
+                .andExpect(status().isOk());
 
         BidEntity returned = bidRepository.findById(handedOver).orElseThrow();
         assertThat(returned.getStatus()).isEqualTo(BidStatus.CANCELLED);
@@ -231,8 +249,6 @@ class CancellationReliabilityIT {
         assertThat(returned.getCommissionStatus()).isEqualTo(CommissionStatus.REFUNDED);
         assertThat(bidRepository.findById(accepted).orElseThrow().getReturnCode()).isNull();
         assertThat(walletBalance(traveler.getId())).isEqualByComparingTo("100");
-        // Une annulation pour le trajet, une pour le colis remis.
-        assertThat(userRepository.findById(traveler.getId()).orElseThrow().getCancellationCount()).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT reason FROM cancellations WHERE bid_id = ?", String.class, handedOver))
                 .isEqualTo("TRAVELER_CANCEL_AFTER_HANDOVER");
         assertThat(auditCount(handedOver, "BID_CANCELLED_AFTER_HANDOVER")).isEqualTo(1);
