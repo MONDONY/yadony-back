@@ -74,6 +74,9 @@ public class CancellationService {
     /** Même code que le retrait d'offre et la suppression du trajet (FLUTTER-F9, PR #445). */
     static final String OFFER_ACCEPTED_AWAITING_PAYMENT = "offer-accepted-awaiting-payment";
 
+    /** Annulation du trajet refusée tant qu'il porte des colis engagés ({@link BidStatus#IN_FLIGHT}). */
+    static final String TRIP_HAS_PARCELS = "trip-has-parcels";
+
     static final int MAX_RETURN_CODE_ATTEMPTS = 3;
 
     /**
@@ -153,6 +156,16 @@ public class CancellationService {
         // par l'annulation d'un colis lu ACCEPTED : colis annulé sans procédure de retour, transporteur payé. Le scan
         // verrouille le même colis : l'un attend l'autre et voit son état commité.
         bidRepository.lockByAnnouncementIdAndStatusIn(announcement.getId(), TRIP_LIVE_STATUSES);
+
+        // Règle propriétaire : un trajet qui porte des colis ENGAGÉS (acceptés, remis, en transit, arrivés) ne
+        // s'annule pas. Le voyageur annule d'abord les colis (quand c'est possible), puis le trajet. Lu sous le verrou
+        // ci-dessus, avant toute écriture : ni statut modifié, ni événement, ni audit. Les simples demandes (PENDING,
+        // PAYMENT_ESCROWED, NEGOTIATING, AWAITING_PAYMENT) ne bloquent pas : elles sont fermées plus bas, avec
+        // remboursement. Seul cancelTrip est concerné (suppression de compte et admin gardent leur comportement).
+        if (bidRepository.existsByAnnouncementIdAndStatusIn(announcement.getId(), List.copyOf(BidStatus.IN_FLIGHT))) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, TRIP_HAS_PARCELS,
+                    "problem.trip-has-parcels");
+        }
 
         // Colis déjà remis, relus sous ce verrou, avant toute écriture. Un colis payé au dépôt dont le transporteur a
         // déjà reçu l'argent ne peut pas être remboursé automatiquement : l'annulation du trajet est refusée (409

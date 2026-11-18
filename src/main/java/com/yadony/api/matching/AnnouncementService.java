@@ -2568,6 +2568,11 @@ public class AnnouncementService {
         return saved;
     }
 
+    /** Colis vivants qui interdisent la suppression d'un brouillon : engagés + demandes en cours. */
+    static final List<BidStatus> DRAFT_BLOCKING_BID_STATUSES = List.of(
+            BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.AWAITING_PAYMENT,
+            BidStatus.ACCEPTED, BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public void deleteAnnouncement(UUID id, String firebaseUid) {
@@ -2607,6 +2612,13 @@ public class AnnouncementService {
             // donc pas de remboursement ni de rejet de bids à gérer — soft-delete direct.
             // Sans cette branche, le slot de brouillon (quota 1 pour un compte standard)
             // resterait verrouillé à vie si l'utilisateur ne publie/supprime jamais.
+            // Garde : un brouillon peut porter un colis vivant (trajet dépublié avec des colis, ou colis
+            // posé avant la dépublication). Le supprimer le laisserait orphelin : refusé tant qu'un colis
+            // engagé (IN_FLIGHT) ou une demande en cours (PENDING, PAYMENT_ESCROWED, AWAITING_PAYMENT) existe.
+            if (bidRepository.existsByAnnouncementIdAndStatusIn(id, DRAFT_BLOCKING_BID_STATUSES)) {
+                throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "deletion-impossible",
+                        "problem.deletion-impossible.brouillon-avec-colis");
+            }
             announcement.softDelete();
             announcementRepository.save(announcement);
 

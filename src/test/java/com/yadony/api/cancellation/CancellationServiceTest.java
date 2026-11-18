@@ -145,21 +145,97 @@ class CancellationServiceTest {
             assertThat(hasTripCancelledEvent).isTrue();
         }
 
-        @Test
-        @DisplayName("annonce avec bid ACCEPTED → bid annulé + CancellationEntity créée")
-        void cancelTrip_withAcceptedBid_cancelsBidAndCreatesCancellation() {
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"ACCEPTED", "HANDED_OVER", "IN_TRANSIT", "ARRIVED"})
+        @DisplayName("colis engagé (ACCEPTED, HANDED_OVER, IN_TRANSIT, ARRIVED) → 409 trip-has-parcels, rien n'est écrit")
+        void cancelTrip_withCommittedParcel_conflictWithoutSideEffects(BidStatus status) {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
-            UUID senderId = UUID.randomUUID();
-            BidEntity acceptedBid = buildAcceptedBid(senderId);
             CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Vol annulé");
 
             when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
             when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
-            when(bidRepository.findByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
-                    List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,
-                            BidStatus.NEGOTIATING)))
-                    .thenReturn(List.of(acceptedBid));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID),
+                    argThat((List<BidStatus> l) -> l.contains(status)))).thenReturn(true);
+
+            assertThatThrownBy(() -> cancellationService.cancelTrip(TRAVELER_UID, req))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("trip-has-parcels");
+                    });
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            assertThat(traveler.getCancellationCount()).isZero();
+            verify(announcementRepository, never()).save(any());
+            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).findHandedOverByAnnouncementIdForUpdate(any());
+            verify(bidRepository, never()).findByAnnouncementIdAndStatusIn(any(), any());
+            verify(userRepository, never()).save(any());
+            verifyNoInteractions(cancellationRepository, auditService, eventPublisher, rematchService);
+        }
+
+        @Test
+        @DisplayName("la garde trip-has-parcels interroge exactement IN_FLIGHT, après le verrou des colis vivants")
+        void cancelTrip_guardChecksInFlightStatusesAfterLock() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
+            CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Vol annulé");
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(any(), any())).thenReturn(true);
+
+            assertThatThrownBy(() -> cancellationService.cancelTrip(TRAVELER_UID, req))
+                    .isInstanceOf(YadonyBusinessException.class);
+
+            org.mockito.InOrder order = inOrder(bidRepository);
+            order.verify(bidRepository).lockByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
+                    CancellationService.TRIP_LIVE_STATUSES);
+            order.verify(bidRepository).existsByAnnouncementIdAndStatusIn(ANNOUNCEMENT_ID,
+                    List.copyOf(BidStatus.IN_FLIGHT));
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.EnumSource(value = BidStatus.class,
+                names = {"PENDING", "PAYMENT_ESCROWED", "NEGOTIATING", "AWAITING_PAYMENT", "CANCELLED", "REJECTED",
+                        "COMPLETED"})
+        @DisplayName("demandes seules ou colis terminés → l'annulation passe (la garde ne les compte pas)")
+        void cancelTrip_withoutCommittedParcel_cancels(BidStatus status) {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
+            CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Vol annulé");
+
+            assertThat(BidStatus.IN_FLIGHT).doesNotContain(status);
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(any(), any())).thenAnswer(inv -> {
+                List<BidStatus> asked = inv.getArgument(1);
+                return asked.contains(status);
+            });
+            when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID), anyList()))
+                    .thenReturn(List.of());
+            when(userRepository.save(any())).thenReturn(traveler);
+
+            cancellationService.cancelTrip(TRAVELER_UID, req);
+
+            assertThat(announcement.getStatus()).isEqualTo(AnnouncementStatus.CANCELLED);
+            verify(eventPublisher).publishEvent(any(TripCancelledEvent.class));
+        }
+
+        @Test
+        @DisplayName("demande PENDING seule → fermée avec le trajet (annulée, CancellationEntity créée)")
+        void cancelTrip_withPendingRequest_cancelsRequestAndCreatesCancellation() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);
+            BidEntity pending = buildAcceptedBid(UUID.randomUUID());
+            pending.setStatus(BidStatus.PENDING);
+            CancellationRequest req = new CancellationRequest(ANNOUNCEMENT_ID, "Vol annulé");
+
+            when(userRepository.findByFirebaseUid(TRAVELER_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusIn(eq(ANNOUNCEMENT_ID), anyList()))
+                    .thenReturn(List.of(pending));
             when(userRepository.save(any())).thenReturn(traveler);
             when(cancellationRepository.save(any(CancellationEntity.class))).thenAnswer(inv -> {
                 CancellationEntity c = inv.getArgument(0);
@@ -169,13 +245,13 @@ class CancellationServiceTest {
 
             CancellationResponse result = cancellationService.cancelTrip(TRAVELER_UID, req);
 
-            assertThat(acceptedBid.getStatus()).isEqualTo(BidStatus.CANCELLED);
+            assertThat(pending.getStatus()).isEqualTo(BidStatus.CANCELLED);
             assertThat(result.affectedBidsCount()).isEqualTo(1);
             verify(cancellationRepository).save(any(CancellationEntity.class));
         }
 
         @Test
-        @DisplayName("FLUTTER-FH : colis déjà remis → procédure de retour pour chacun, comme l'annulation après remise")
+        @DisplayName("FLUTTER-FH (cœur commun, branche défensive : la garde trip-has-parcels la rend inatteignable via cancelTrip) : colis remis → procédure de retour")
         void cancelTrip_withHandedOverParcels_opensReturnForEach() {
             UserEntity traveler = buildTraveler();
             AnnouncementEntity announcement = buildAnnouncement(TRAVELER_ID);

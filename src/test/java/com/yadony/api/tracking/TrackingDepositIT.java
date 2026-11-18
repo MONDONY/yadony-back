@@ -217,7 +217,7 @@ class TrackingDepositIT {
     // ── Gabarits ─────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("scan DEPART et annulation du trajet en même temps : jamais un colis remis écrasé en annulé sans retour")
+    @DisplayName("scan DEPART et annulation du trajet en même temps : le trajet reste actif, le colis jamais annulé ni écrasé")
     void departScanAndTripCancellationInParallel_neverOrphanNorOverwritten() throws Exception {
         for (int round = 0; round < 5; round++) {
             UserEntity traveler = persistUser(Role.TRAVELER);
@@ -255,22 +255,11 @@ class TrackingDepositIT {
                     bid.getId());
             String tripStatus = jdbc.queryForObject("SELECT status FROM announcements WHERE id = ?", String.class,
                     bid.getAnnouncementId());
-            if (deposited) {
-                // Déposé : soit le trajet n'est pas annulé (colis remis), soit il l'est et le colis suit la procédure
-                // de retour. Jamais « annulé » sans code de retour (écrasement d'un colis lu ACCEPTED).
-                assertThat(bidStatus).as("round %d", round).isIn("HANDED_OVER", "CANCELLED");
-                if ("CANCELLED".equals(bidStatus)) {
-                    assertThat(returnCode).as("round %d", round).isNotNull();
-                    assertThat(tripStatus).as("round %d", round).isEqualTo("CANCELLED");
-                } else {
-                    assertThat(tripStatus).as("round %d", round).isNotEqualTo("CANCELLED");
-                }
-            } else {
-                // Pas de dépôt : l'annulation est passée la première, le scan d'un colis annulé est refusé.
-                assertThat(bidStatus).as("round %d", round).isEqualTo("CANCELLED");
-                assertThat(returnCode).as("round %d", round).isNull();
-                assertThat(tripStatus).as("round %d", round).isEqualTo("CANCELLED");
-            }
+            // Un trajet qui porte un colis engagé (ACCEPTED ou HANDED_OVER) ne s'annule pas : quel que soit l'ordre,
+            // le trajet reste actif, le colis n'est jamais annulé ni écrasé, et aucun code de retour n'est généré.
+            assertThat(tripStatus).as("round %d", round).isEqualTo("ACTIVE");
+            assertThat(bidStatus).as("round %d", round).isEqualTo(deposited ? "HANDED_OVER" : "ACCEPTED");
+            assertThat(returnCode).as("round %d", round).isNull();
         }
     }
 
