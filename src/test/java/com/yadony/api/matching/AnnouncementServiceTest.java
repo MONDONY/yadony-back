@@ -4562,7 +4562,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(active.getId())).thenReturn(Optional.of(active));
             when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
                     .thenReturn(0L);
-            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(bidRepository.existsUnpublishBlockingByAnnouncementId(active.getId())).thenReturn(false);
             when(bidRepository.countByAnnouncementIdAndStatusIn(eq(active.getId()), anyList())).thenReturn(0L);
             when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -4585,7 +4585,7 @@ class AnnouncementServiceTest {
             AnnouncementEntity active = buildAnnouncement(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
-            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(1L);
+            when(bidRepository.existsUnpublishBlockingByAnnouncementId(active.getId())).thenReturn(true);
 
             assertThatThrownBy(() -> announcementService.unpublishAnnouncement(active.getId(), FIREBASE_UID))
                     .isInstanceOf(YadonyBusinessException.class)
@@ -4604,7 +4604,7 @@ class AnnouncementServiceTest {
             AnnouncementEntity active = buildAnnouncement(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
-            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(bidRepository.existsUnpublishBlockingByAnnouncementId(active.getId())).thenReturn(false);
             when(negotiationThreadRepository.existsActiveByTravelerAnnouncementId(active.getId())).thenReturn(true);
 
             assertThatThrownBy(() -> announcementService.unpublishAnnouncement(active.getId(), FIREBASE_UID))
@@ -4628,7 +4628,7 @@ class AnnouncementServiceTest {
             when(announcementRepository.findById(active.getId())).thenReturn(Optional.of(active));
             when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
                     .thenReturn(0L);
-            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(bidRepository.existsUnpublishBlockingByAnnouncementId(active.getId())).thenReturn(false);
             when(bidRepository.countByAnnouncementIdAndStatusIn(eq(active.getId()), anyList())).thenReturn(0L);
             when(negotiationThreadRepository.existsActiveByTravelerAnnouncementId(active.getId())).thenReturn(false);
             when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -4680,7 +4680,7 @@ class AnnouncementServiceTest {
             AnnouncementEntity active = buildAnnouncement(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
-            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(bidRepository.existsUnpublishBlockingByAnnouncementId(active.getId())).thenReturn(false);
             when(announcementRepository.countByTravelerIdAndStatus(user.getId(), AnnouncementStatus.DRAFT))
                     .thenReturn(1L);
 

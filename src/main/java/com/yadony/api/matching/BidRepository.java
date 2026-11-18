@@ -304,6 +304,24 @@ public interface BidRepository extends JpaRepository<BidEntity, UUID> {
     long countVisibleByAnnouncementId(@Param("announcementId") UUID announcementId);
 
     /**
+     * Vrai s'il existe sur le trajet un colis qui interdit de le dépublier : une demande
+     * PENDING / PAYMENT_ESCROWED que le voyageur n'a pas masquée, ou un colis engagé
+     * (AWAITING_PAYMENT, ACCEPTED, HANDED_OVER, IN_TRANSIT, ARRIVED), qui bloque toujours,
+     * masqué ou non. Distinct de {@link #countVisibleByAnnouncementId}, qui alimente les
+     * badges et ne compte que les demandes à traiter.
+     */
+    @Query("SELECT COUNT(b) > 0 FROM BidEntity b WHERE b.announcementId = :announcementId " +
+           "AND ((b.status IN (com.yadony.api.matching.BidStatus.PENDING, " +
+           "                   com.yadony.api.matching.BidStatus.PAYMENT_ESCROWED) " +
+           "      AND b.deletedByTraveler = false) " +
+           "  OR b.status IN (com.yadony.api.matching.BidStatus.AWAITING_PAYMENT, " +
+           "                  com.yadony.api.matching.BidStatus.ACCEPTED, " +
+           "                  com.yadony.api.matching.BidStatus.HANDED_OVER, " +
+           "                  com.yadony.api.matching.BidStatus.IN_TRANSIT, " +
+           "                  com.yadony.api.matching.BidStatus.ARRIVED))")
+    boolean existsUnpublishBlockingByAnnouncementId(@Param("announcementId") UUID announcementId);
+
+    /**
      * Batch variant of {@link #countVisibleByAnnouncementId}: returns one row per
      * announcement ID in {@code ids} with its visible-bid count.
      * Uses the same visibility filter (PENDING | PAYMENT_ESCROWED, not deleted by traveler).

@@ -2134,8 +2134,11 @@ public class AnnouncementService {
     /**
      * Retire un trajet de la circulation sans l'annuler (ACTIVE → DRAFT).
      *
-     * <p>Un trajet ne peut être dépublié qu'avant sa première demande : un expéditeur
-     * ayant déjà sollicité le voyageur a agi sur la foi de sa publication.
+     * <p>Refusé (409 {@code announcement/has-bids}) dès qu'un colis vivant est sur le trajet :
+     * demande en attente non masquée (PENDING, PAYMENT_ESCROWED) ou colis engagé (AWAITING_PAYMENT,
+     * ACCEPTED, HANDED_OVER, IN_TRANSIT, ARRIVED), qui bloque même masqué. Un expéditeur a agi sur
+     * la foi de la publication : pour se retirer, le voyageur annule le trajet. Une négociation
+     * active bloque aussi ({@code announcement/has-negotiations}).
      */
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
@@ -2152,7 +2155,7 @@ public class AnnouncementService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/not-unpublishable", "problem.announcement-not-unpublishable");
         }
-        if (bidRepository.countVisibleByAnnouncementId(id) > 0) {
+        if (bidRepository.existsUnpublishBlockingByAnnouncementId(id)) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/has-bids", "problem.announcement-has-bids");
         }
         if (negotiationThreadRepository.existsActiveByTravelerAnnouncementId(id)) {
