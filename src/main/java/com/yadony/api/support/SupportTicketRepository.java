@@ -39,7 +39,10 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicketEnti
     Page<SupportTicketEntity> findByAssignedAdminIdAndStatusOrderByLastMessageAtDesc(
             UUID assignedAdminId, SupportTicketStatus status, Pageable pageable);
 
-    long countByAssignedAdminIdIsNull();
+    Page<SupportTicketEntity> findByAssignedAdminIdIsNullAndStatusNotOrderByLastMessageAtDesc(
+            SupportTicketStatus status, Pageable pageable);
+
+    long countByAssignedAdminIdIsNullAndStatusNot(SupportTicketStatus status);
 
     List<SupportTicketEntity> findByUserId(UUID userId);
 
