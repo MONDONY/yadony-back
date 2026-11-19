@@ -1,7 +1,7 @@
 ---
 id: modifier-trajet
 title: Modifier ou supprimer mon trajet
-keywords: modifier mon trajet, supprimer un trajet, dépublier, changer le prix, changer la devise, trajet publié, affiche
+keywords: modifier mon trajet, supprimer un trajet, dépublier, cacher le trajet, réafficher, changer le prix, changer la devise, trajet publié, affiche
 routes:
   - path: /announcements/trips
     label: Mes trajets
@@ -10,6 +10,7 @@ Le bouton « Modifier » du trajet (bouton fixe en bas, ou menu ⋮) n'est propo
 Dans « À traiter », l'action « Ajouter la carte à ce trajet » (ou « Activer les paiements par carte » si votre compte n'est pas prêt) ne s'affiche que pour un trajet en espèces seules que le serveur accepterait de modifier : aucun colis accepté ni en cours de route. Dès qu'un colis est accepté, elle disparaît. Elle est facultative : elle ne devient jamais le bouton fixe du bas.
 Un brouillon se met en ligne avec « Publier », l'action en tête de « À traiter » qui est aussi le bouton fixe du bas.
 Pour changer la date d'un trajet qui a déjà une demande, utilisez « Reporter » (menu ⋮), possible deux fois au plus.
-« Dépublier » (menu ⋮) remet un trajet publié dans vos brouillons, tant qu'il n'a reçu aucune demande ni négociation.
+« Dépublier » (menu ⋮) remet un trajet publié dans vos brouillons, tant qu'il n'a reçu aucune demande ni négociation ; dès qu'un colis ou une demande existe, « Dépublier » est refusé.
+« Cacher le trajet » (menu ⋮, proposé quand le trajet porte des colis) retire le trajet de la recherche et des listes publiques sans changer son statut ni toucher aux colis : les colis en cours continuent normalement, mais aucune nouvelle demande, offre ni négociation n'est possible. « Réafficher le trajet » (même menu) le remet en circulation.
 « Supprimer » (menu ⋮) est possible pour un brouillon, un trajet annulé ou un trajet publié sans demande. Un trajet complet ne peut pas être supprimé : contactez le support. Avec un colis accepté, annulez-le d'abord.
 « Partager l'affiche » (bouton du bas quand rien n'est à traiter, ou menu ⋮) propose une affiche pour trouver des expéditeurs.

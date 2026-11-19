@@ -491,6 +491,28 @@ class FavoriteServiceTest {
         verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
     }
 
+    @Test
+    void getFavoriteTrips_skipsTripsHiddenByTheirTraveler() {
+        UUID t1 = UUID.randomUUID();
+        UUID t2 = UUID.randomUUID();
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of(t1, t2));
+
+        AnnouncementEntity shown = mock(AnnouncementEntity.class);
+        when(shown.getId()).thenReturn(t1);
+        when(shown.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity hiddenTrip = mock(AnnouncementEntity.class);
+        when(hiddenTrip.getId()).thenReturn(t2);
+        when(hiddenTrip.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(hiddenTrip.isHidden()).thenReturn(true);
+
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(shown, hiddenTrip));
+        AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(announcementSearchMapper.toSearchResponseList(eq(List.of(shown)), anySet())).thenReturn(List.of(dto));
+
+        assertThat(service.getFavoriteTrips(userId)).hasSize(1);
+        verify(announcementSearchMapper).toSearchResponseList(eq(List.of(shown)), anySet());
+    }
+
     /**
      * PROD-1R : un trajet dont la date limite de dépôt (UTC) est passée n'est plus présenté
      * dans les favoris ni dans les identifiants favoris ; un trajet dont la limite est dans

@@ -94,7 +94,9 @@ public class UserListingsService {
         // Mêmes garde-fous que la recherche : un trajet déjà parti ou dont la date limite de
         // dépôt est passée n'accepte plus de colis, il ne doit pas figurer parmi les « en cours ».
         List<AnnouncementEntity> presentable = trips.stream()
-                .filter(a -> !a.getDepartureDate().isBefore(today) && !a.isHandoverDeadlinePassed(now))
+                .filter(a -> !a.getDepartureDate().isBefore(today) && !a.isHandoverDeadlinePassed(now)
+                        // Trajet caché par son voyageur : absent des annonces ouvertes du profil.
+                        && !a.isHidden())
                 .toList();
         return announcementSearchMapper.toSearchResponseList(presentable, Set.of()).stream()
                 .map(r -> new UserListingItem(UserListingItem.KIND_TRIP, r.createdAt(), r, null))

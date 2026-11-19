@@ -172,6 +172,11 @@ public class BidCheckoutService {
             );
         }
 
+        // Trajet caché : aucune NOUVELLE demande (la reprise d'un paiement en attente, plus haut, reste permise).
+        if (announcement.isHidden()) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-hidden", "problem.announcement-hidden");
+        }
+
         boolean alreadyHasBid = bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(
             sender.getId(), announcement.getId(),
             List.of(BidStatus.PENDING, BidStatus.PAYMENT_ESCROWED, BidStatus.ACCEPTED,

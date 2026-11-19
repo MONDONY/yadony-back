@@ -113,6 +113,15 @@ class MatchingServiceTest {
             assertThat(MatchingService.openForDeposit(List.of(noDeadline, inOneHour, passed)))
                     .containsExactly(noDeadline, inOneHour);
         }
+
+        @Test
+        void openForDeposit_ecarteLesTrajetsCaches() {
+            AnnouncementEntity shown = new AnnouncementEntity();
+            AnnouncementEntity hidden = new AnnouncementEntity();
+            hidden.setHidden(true);
+
+            assertThat(MatchingService.openForDeposit(List.of(shown, hidden))).containsExactly(shown);
+        }
     }
 
     @Nested

@@ -98,5 +98,39 @@ public record AnnouncementResponse(
         @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display,
         /** Dernier retard annoncé par le voyageur (nouvelle fourchette d'arrivée estimée, motif, message) ; null
          *  si le trajet n'en a jamais annoncé. Toujours sérialisé (null explicite). */
-        @JsonInclude(JsonInclude.Include.ALWAYS) TripDelayInfo latestTripDelay
-) {}
+        @JsonInclude(JsonInclude.Include.ALWAYS) TripDelayInfo latestTripDelay,
+        /** Trajet caché par le voyageur : absent de la recherche, statut inchangé. false par défaut. */
+        boolean hidden
+) {
+    /** Arité d'avant le champ {@code hidden} : trajet visible. */
+    public AnnouncementResponse(
+            UUID id, UUID travelerId, String departureCity, String arrivalCity, LocalDate departureDate,
+            LocalTime departureTime, LocalTime arrivalTime, LocalDate arrivalDate,
+            AddressDto pickupAddress, AddressDto deliveryAddress, BigDecimal availableKg, BigDecimal totalKg,
+            BigDecimal pricePerKg, BigDecimal pricePerKgDisplay,
+            com.yadony.api.matching.TransportMode transportMode, Integer stopsCount, String status,
+            long pendingBidCount, long confirmedParcelCount, String senderNote,
+            List<String> acceptedContentTypes, List<String> refusedTypes, List<String> acceptedPaymentMethods,
+            com.yadony.api.matching.CapacityUnit capacityUnit, boolean cashAccepted,
+            LocalDateTime createdAt, LocalDateTime updatedAt,
+            com.yadony.api.matching.PricingMode pricingMode,
+            List<AnnouncementPriceGridItemResponse> priceGridItems, BigDecimal reservedKg,
+            boolean surplusEligible, boolean surplusPublished,
+            String departureCountryCode, String arrivalCountryCode, String departureFlag, String arrivalFlag,
+            LocalDateTime handoverDeadline, String currency, boolean negotiable,
+            Set<PaymentMethod> availablePaymentMethods, BigDecimal reservedNetAmount,
+            UUID tripGroupId, Integer tripLegIndex, Integer tripLegCount, UUID seriesId,
+            String departureTimezone, boolean trackingActive, String maxItemSize, BigDecimal maxParcelWeightKg,
+            LocalDate arrivalDateMax, BigDecimal volumeCapacityM3, BigDecimal availableVolumeM3,
+            BigDecimal pricePerM3, BigDecimal pricePerM3Display, TripDelayInfo latestTripDelay) {
+        this(id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, pendingBidCount, confirmedParcelCount, senderNote,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible, surplusPublished,
+                departureCountryCode, arrivalCountryCode, departureFlag, arrivalFlag, handoverDeadline, currency,
+                negotiable, availablePaymentMethods, reservedNetAmount, tripGroupId, tripLegIndex, tripLegCount,
+                seriesId, departureTimezone, trackingActive, maxItemSize, maxParcelWeightKg, arrivalDateMax,
+                volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, false);
+    }
+}

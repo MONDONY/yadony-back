@@ -411,6 +411,7 @@ public class AnnouncementSpecification {
             legs.select(leg.<UUID>get("tripGroupId")).where(
                     cb.isNotNull(leg.get("tripGroupId")),
                     leg.get("status").in(AnnouncementStatus.SEARCHABLE),
+                    cb.isFalse(leg.get("hidden")),
                     cb.or(cb.equal(cb.lower(leg.get("departureCity")), wanted),
                             cb.equal(cb.lower(leg.get("arrivalCity")), wanted)));
             return cb.or(
@@ -469,17 +470,20 @@ public class AnnouncementSpecification {
      * have opened their surplus capacity to the public (surplusPublished &&
      * availableKg > 0). Dedicated trips without an open surplus stay hidden.
      *
-     * <p>Pendant SQL EXACT de {@link AnnouncementEntity#isPubliclyVisible()} (utilisé
+     * <p>Un trajet caché ({@code hidden}) n'y entre jamais. Pendant SQL EXACT de {@link AnnouncementEntity#isPubliclyVisible()} (utilisé
      * en mémoire par les alertes corridor et la page publique) : toute modification
      * de l'un doit être reportée dans l'autre ({@code AnnouncementSurplusSpecificationTest}
      * vérifie l'accord des deux).
      */
     public static Specification<AnnouncementEntity> publicOrOpenSurplus() {
-        return (root, query, cb) -> cb.or(
-            cb.isNull(root.get("linkedPackageRequestId")),
-            cb.and(
-                cb.isTrue(root.get("surplusPublished")),
-                cb.greaterThan(root.get("availableKg"), BigDecimal.ZERO)
+        return (root, query, cb) -> cb.and(
+            cb.isFalse(root.get("hidden")),
+            cb.or(
+                cb.isNull(root.get("linkedPackageRequestId")),
+                cb.and(
+                    cb.isTrue(root.get("surplusPublished")),
+                    cb.greaterThan(root.get("availableKg"), BigDecimal.ZERO)
+                )
             )
         );
     }

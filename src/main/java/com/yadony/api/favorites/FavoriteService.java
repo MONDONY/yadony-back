@@ -229,6 +229,8 @@ public class FavoriteService {
                         // rester visible dans les favoris de l'utilisateur.
                         && a.getStatus() != AnnouncementStatus.REMOVED_BY_ADMIN
                         && !callerId.equals(a.getTravelerId())
+                        // Trajet caché par son voyageur : absent des favoris.
+                        && !a.isHidden()
                         && !ownerHidden(hidden, a.getTravelerId())
                         && !a.isHandoverDeadlinePassed(now))
                 .toList();

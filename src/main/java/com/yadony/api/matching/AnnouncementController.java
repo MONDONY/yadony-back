@@ -245,6 +245,20 @@ public class AnnouncementController {
         return ResponseEntity.ok(announcementService.unpublishAnnouncement(id, firebaseUid));
     }
 
+    /** Cache le trajet (recherche et listes publiques) sans changer son statut ni toucher aux colis. */
+    @PostMapping("/{id}/hide")
+    public ResponseEntity<AnnouncementDetailResponse> hideAnnouncement(@PathVariable UUID id) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(announcementService.hideAnnouncement(id, firebaseUid));
+    }
+
+    /** Réaffiche un trajet caché. */
+    @PostMapping("/{id}/show")
+    public ResponseEntity<AnnouncementDetailResponse> showAnnouncement(@PathVariable UUID id) {
+        String firebaseUid = requireFirebaseUid();
+        return ResponseEntity.ok(announcementService.showAnnouncement(id, firebaseUid));
+    }
+
     @PostMapping("/{id}/mark-arrived")
     public ResponseEntity<AnnouncementDetailResponse> markArrived(
             @PathVariable UUID id,

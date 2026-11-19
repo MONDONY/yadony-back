@@ -134,6 +134,19 @@ class UserListingsServiceTest {
     }
 
     @Test
+    void tripsHiddenByTheirTraveler_areDropped() {
+        AnnouncementEntity hiddenTrip = trip(LocalDate.now(ZoneOffset.UTC).plusDays(3));
+        hiddenTrip.setHidden(true);
+        AnnouncementEntity shown = trip(LocalDate.now(ZoneOffset.UTC).plusDays(4));
+        when(announcementRepository.findByTravelerIdAndStatus(eq(ownerId), eq(AnnouncementStatus.ACTIVE), any()))
+                .thenReturn(new PageImpl<>(List.of(hiddenTrip, shown)));
+        AnnouncementSearchResponse dto = tripResponse(LocalDateTime.of(2026, 10, 20, 9, 0));
+        when(announcementSearchMapper.toSearchResponseList(List.of(shown), Set.of())).thenReturn(List.of(dto));
+
+        assertThat(service.openListings(ownerId, viewerId)).extracting(UserListingItem::kind).containsExactly("TRIP");
+    }
+
+    @Test
     void requestsWithPastDesiredDate_areDropped_flexibleOnesStay() {
         PackageRequestEntity expired = request(LocalDate.now(ZoneOffset.UTC).minusDays(1),
                 LocalDateTime.of(2026, 10, 1, 8, 0));

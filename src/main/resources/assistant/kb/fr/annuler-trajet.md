@@ -7,7 +7,7 @@ routes:
     label: Mes trajets
 ---
 Ouvrez le trajet puis, dans le menu ⋮ en haut, touchez « Annuler le voyage » : l'action est irréversible et vous choisissez une raison. La première suit le mode du trajet (vol annulé, panne ou contretemps, ou transport annulé), puis urgence personnelle, problème de santé, changement d'itinéraire ou autre.
-Cette entrée n'apparaît que pour un trajet publié qui a des demandes ou des colis. Sans demande, utilisez « Supprimer » ou « Dépublier » (menu ⋮).
+Cette entrée n'apparaît que pour un trajet publié qui a des demandes ou des colis. Sans demande, utilisez « Supprimer » ou « Dépublier » (menu ⋮). Avec des colis, « Dépublier » n'est plus possible : utilisez « Cacher le trajet » pour ne plus recevoir de nouvelle demande sans annuler.
 Tous les expéditeurs liés sont remboursés automatiquement.
 Si un colis vous a déjà été remis, vous devez le rendre à son expéditeur sous 3 jours, contre le code de retour qu'il vous communique.
 Si un colis déposé vous a déjà été payé au dépôt (trajet bateau), l'annulation du trajet est refusée et l'équipe est prévenue : contactez le support.

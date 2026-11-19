@@ -4731,6 +4731,191 @@ class AnnouncementServiceTest {
         }
     }
 
+    // ─── dépublier : colis engagés (trou ACCEPTED fermé) ──────────────────────
+
+    @Nested
+    @DisplayName("unpublishAnnouncement() — colis engagés")
+    class UnpublishEngagedParcelsTests {
+
+        @Test
+        @DisplayName("un colis engagé (ACCEPTED, AWAITING_PAYMENT, HANDED_OVER, IN_TRANSIT, ARRIVED) → 409 announcement/has-bids")
+        void unpublish_withEngagedParcel_throws409() {
+            UserEntity user = standardUser();
+            AnnouncementEntity active = buildAnnouncement(user);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findByIdForUpdate(active.getId())).thenReturn(Optional.of(active));
+            when(bidRepository.countVisibleByAnnouncementId(active.getId())).thenReturn(0L);
+            when(bidRepository.existsByAnnouncementIdAndStatusIn(eq(active.getId()), argThat(statuses ->
+                    statuses.containsAll(List.of(BidStatus.AWAITING_PAYMENT, BidStatus.ACCEPTED,
+                            BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED))))).thenReturn(true);
+
+            assertThatThrownBy(() -> announcementService.unpublishAnnouncement(active.getId(), FIREBASE_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> {
+                        YadonyBusinessException ex = (YadonyBusinessException) e;
+                        assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(ex.getErrorCode()).isEqualTo("announcement/has-bids");
+                    });
+            assertThat(active.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            verify(announcementRepository, never()).save(any());
+        }
+    }
+
+    // ─── hideAnnouncement / showAnnouncement ───────────────────────────────────
+
+    @Nested
+    @DisplayName("hideAnnouncement() / showAnnouncement()")
+    class HideShowAnnouncementTests {
+
+        private AnnouncementEntity stubOwned(UserEntity user, AnnouncementStatus status) {
+            AnnouncementEntity a = buildAnnouncement(user);
+            a.setStatus(status);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            when(announcementRepository.findByIdForUpdate(a.getId())).thenReturn(Optional.of(a));
+            return a;
+        }
+
+        private void stubDetail(UserEntity user, AnnouncementEntity a) {
+            lenient().when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+            lenient().when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            lenient().when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        }
+
+        @Test
+        @DisplayName("ACTIVE → caché, statut inchangé, audit ANNOUNCEMENT_HIDDEN, cache de résumé vidé, hidden=true")
+        void hide_active_keepsStatus() {
+            UserEntity user = standardUser();
+            AnnouncementEntity a = stubOwned(user, AnnouncementStatus.ACTIVE);
+            stubDetail(user, a);
+
+            AnnouncementDetailResponse result = announcementService.hideAnnouncement(a.getId(), FIREBASE_UID);
+
+            assertThat(a.isHidden()).isTrue();
+            assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.ACTIVE);
+            assertThat(result.hidden()).isTrue();
+            assertThat(result.status()).isEqualTo("ACTIVE");
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(a.getId()), eq("ANNOUNCEMENT_HIDDEN"),
+                    eq(user.getId()), anyMap());
+            verify(eventPublisher).publishEvent(new com.yadony.api.matching.events.TripActivityChangedEvent(
+                    a.getId(), a.getTravelerId()));
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("FULL → caché, reste FULL")
+        void hide_full_keepsStatus() {
+            UserEntity user = standardUser();
+            AnnouncementEntity a = stubOwned(user, AnnouncementStatus.FULL);
+            stubDetail(user, a);
+
+            AnnouncementDetailResponse result = announcementService.hideAnnouncement(a.getId(), FIREBASE_UID);
+
+            assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+            assertThat(result.hidden()).isTrue();
+        }
+
+        @Test
+        @DisplayName("déjà caché → 200 idempotent : ni sauvegarde, ni audit, ni événement")
+        void hide_alreadyHidden_isIdempotent() {
+            UserEntity user = standardUser();
+            AnnouncementEntity a = stubOwned(user, AnnouncementStatus.ACTIVE);
+            a.setHidden(true);
+            stubDetail(user, a);
+
+            AnnouncementDetailResponse result = announcementService.hideAnnouncement(a.getId(), FIREBASE_UID);
+
+            assertThat(result.hidden()).isTrue();
+            verify(announcementRepository, never()).save(any());
+            verify(auditService, never()).log(eq("ANNOUNCEMENT"), any(), eq("ANNOUNCEMENT_HIDDEN"), any(), anyMap());
+            verify(eventPublisher, never()).publishEvent(any(com.yadony.api.matching.events.TripActivityChangedEvent.class));
+        }
+
+        @Test
+        @DisplayName("statut hors ACTIVE/FULL → 409 announcement/not-hideable (hide ET show)")
+        void hideAndShow_wrongStatus_throws409() {
+            UserEntity user = standardUser();
+            AnnouncementEntity a = stubOwned(user, AnnouncementStatus.DRAFT);
+
+            for (var call : List.<java.util.function.Supplier<AnnouncementDetailResponse>>of(
+                    () -> announcementService.hideAnnouncement(a.getId(), FIREBASE_UID),
+                    () -> announcementService.showAnnouncement(a.getId(), FIREBASE_UID))) {
+                assertThatThrownBy(call::get)
+                        .isInstanceOf(YadonyBusinessException.class)
+                        .satisfies(e -> {
+                            YadonyBusinessException ex = (YadonyBusinessException) e;
+                            assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                            assertThat(ex.getErrorCode()).isEqualTo("announcement/not-hideable");
+                        });
+            }
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("non-propriétaire → 403 (hide ET show), rien n'est modifié")
+        void hideAndShow_notOwner_throws403() {
+            UserEntity other = standardUser();
+            setId(other, UUID.randomUUID());
+            AnnouncementEntity a = buildAnnouncement(standardUser());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(other));
+            when(announcementRepository.findByIdForUpdate(a.getId())).thenReturn(Optional.of(a));
+
+            assertThatThrownBy(() -> announcementService.hideAnnouncement(a.getId(), FIREBASE_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+            assertThatThrownBy(() -> announcementService.showAnnouncement(a.getId(), FIREBASE_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+            assertThat(a.isHidden()).isFalse();
+            verify(announcementRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("trajet inexistant → 404")
+        void hide_unknown_throws404() {
+            UserEntity user = standardUser();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
+            UUID unknown = UUID.randomUUID();
+            when(announcementRepository.findByIdForUpdate(unknown)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> announcementService.hideAnnouncement(unknown, FIREBASE_UID))
+                    .isInstanceOf(YadonyBusinessException.class)
+                    .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+        }
+
+        @Test
+        @DisplayName("show : caché → réaffiché, statut inchangé, audit ANNOUNCEMENT_SHOWN")
+        void show_hidden_restores() {
+            UserEntity user = standardUser();
+            AnnouncementEntity a = stubOwned(user, AnnouncementStatus.FULL);
+            a.setHidden(true);
+            stubDetail(user, a);
+
+            AnnouncementDetailResponse result = announcementService.showAnnouncement(a.getId(), FIREBASE_UID);
+
+            assertThat(a.isHidden()).isFalse();
+            assertThat(a.getStatus()).isEqualTo(AnnouncementStatus.FULL);
+            assertThat(result.hidden()).isFalse();
+            verify(auditService).log(eq("ANNOUNCEMENT"), eq(a.getId()), eq("ANNOUNCEMENT_SHOWN"),
+                    eq(user.getId()), anyMap());
+            verify(eventPublisher).publishEvent(new com.yadony.api.matching.events.TripActivityChangedEvent(
+                    a.getId(), a.getTravelerId()));
+        }
+
+        @Test
+        @DisplayName("show : pas caché → 200 idempotent, aucune écriture")
+        void show_notHidden_isIdempotent() {
+            UserEntity user = standardUser();
+            AnnouncementEntity a = stubOwned(user, AnnouncementStatus.ACTIVE);
+            stubDetail(user, a);
+
+            AnnouncementDetailResponse result = announcementService.showAnnouncement(a.getId(), FIREBASE_UID);
+
+            assertThat(result.hidden()).isFalse();
+            verify(announcementRepository, never()).save(any());
+            verify(auditService, never()).log(eq("ANNOUNCEMENT"), any(), eq("ANNOUNCEMENT_SHOWN"), any(), anyMap());
+        }
+    }
+
     // ─── Audit anti-fuite DRAFT (Task 5) ───────────────────────────────────────
 
     // ─── Feature flag PRO ferme : les quotas des comptes standard sont leves ────────
@@ -4885,6 +5070,28 @@ class AnnouncementServiceTest {
                     .thenReturn(new PageImpl<>(List.of(closed)));
             when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
                     .thenReturn(new PageImpl<>(List.of(open)));
+
+            var result = announcementService.getTravelerAnnouncements(null, travelerId);
+
+            assertThat(result).extracting(r -> r.status()).containsExactly("FULL");
+        }
+
+        @Test
+        @DisplayName("un trajet caché par son voyageur n'apparaît plus sur la fiche voyageur publique")
+        void getTravelerAnnouncements_hidesHiddenTrips() {
+            UUID travelerId = UUID.randomUUID();
+            UserEntity traveler = buildTraveler();
+            setId(traveler, travelerId);
+            AnnouncementEntity hidden = buildAnnouncement(traveler);
+            hidden.setStatus(AnnouncementStatus.ACTIVE);
+            hidden.setHidden(true);
+            AnnouncementEntity shown = buildAnnouncement(traveler);
+            shown.setStatus(AnnouncementStatus.FULL);
+
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.ACTIVE), any()))
+                    .thenReturn(new PageImpl<>(List.of(hidden)));
+            when(announcementRepository.findByTravelerIdAndStatus(eq(travelerId), eq(AnnouncementStatus.FULL), any()))
+                    .thenReturn(new PageImpl<>(List.of(shown)));
 
             var result = announcementService.getTravelerAnnouncements(null, travelerId);
 

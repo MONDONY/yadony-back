@@ -410,6 +410,38 @@ class BidCheckoutServiceTest {
         verify(bidRepository, never()).save(any());
     }
 
+    @Test
+    void hiddenAnnouncement_newCheckout_isRejected_with409_andNothingIsCreated() {
+        announcement.setHidden(true);
+
+        assertThatThrownBy(() -> service.checkout("uid-sender", req, httpRequest))
+            .isInstanceOf(YadonyBusinessException.class)
+            .satisfies(e -> {
+                YadonyBusinessException ex = (YadonyBusinessException) e;
+                assertThat(ex.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                assertThat(ex.getErrorCode()).isEqualTo("announcement-hidden");
+            });
+        verify(bidRepository, never()).save(any());
+        verify(paymentService, never()).createEscrow(any(), anyString());
+    }
+
+    @Test
+    void hiddenAnnouncement_existingAwaitingPaymentBid_isStillResumed() {
+        announcement.setHidden(true);
+        BidEntity existing = new BidEntity();
+        ReflectionTestUtils.setField(existing, "id", UUID.randomUUID());
+        existing.setStatus(BidStatus.AWAITING_PAYMENT);
+        existing.setAwaitingPaymentExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+        when(bidRepository.findBySenderIdAndAnnouncementIdAndStatus(
+                sender.getId(), announcement.getId(), BidStatus.AWAITING_PAYMENT))
+            .thenReturn(Optional.of(existing));
+        when(paymentService.createEscrow(any(), eq("uid-sender"))).thenReturn(stubPaymentResponse());
+
+        BidCheckoutResponse resp = service.checkout("uid-sender", req, httpRequest);
+
+        assertThat(resp.bidId()).isEqualTo(existing.getId());
+    }
+
     /** Ordre global colis → annonce → paiement (PROD_CHECKLIST 9.25), le même que negotiationCheckout. */
     @Test
     void checkout_resume_locksTheBidBeforeTheAnnouncement_andReloadsItUnderLock() {

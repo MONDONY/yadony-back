@@ -164,6 +164,9 @@ public class PackageRequestInsightService {
         if (trip.getStatus() != AnnouncementStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invitation/trip-not-active");
         }
+        if (trip.isHidden()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invitation/trip-not-active");
+        }
         if (!isOnCorridor(trip, request)) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invitation/off-corridor");
         }

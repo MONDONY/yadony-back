@@ -281,6 +281,14 @@ public class AnnouncementEntity extends BaseEntity {
     private boolean surplusPublished = false;
 
     /**
+     * Trajet caché par son voyageur : absent de la recherche et de toutes les surfaces publiques,
+     * sans changement de statut (ACTIVE ou FULL) et sans toucher aux colis existants. Aucune
+     * nouvelle demande, offre ni négociation n'y est acceptée tant qu'il est caché.
+     */
+    @Column(name = "hidden", nullable = false)
+    private boolean hidden = false;
+
+    /**
      * Nombre de consultations de la page publique de partage (l'affiche générée
      * dans l'app et postée par le voyageur sur ses propres canaux).
      *
@@ -344,6 +352,8 @@ public class AnnouncementEntity extends BaseEntity {
     public void setReservedKg(BigDecimal reservedKg) { this.reservedKg = reservedKg; }
     public boolean isSurplusEligible() { return surplusEligible; }
     public void setSurplusEligible(boolean surplusEligible) { this.surplusEligible = surplusEligible; }
+    public boolean isHidden() { return hidden; }
+    public void setHidden(boolean hidden) { this.hidden = hidden; }
     public boolean isSurplusPublished() { return surplusPublished; }
     public void setSurplusPublished(boolean surplusPublished) { this.surplusPublished = surplusPublished; }
 
@@ -411,6 +421,9 @@ public class AnnouncementEntity extends BaseEntity {
      * publique de partage (via {@link #isPubliclyListable()}).
      */
     public boolean isPubliclyVisible() {
+        if (hidden) {
+            return false;
+        }
         return linkedPackageRequestId == null
                 || (surplusPublished
                     && availableKg != null
