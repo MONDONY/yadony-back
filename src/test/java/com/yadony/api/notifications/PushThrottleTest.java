@@ -32,6 +32,16 @@ class PushThrottleTest {
         assertThat(throttle.hold(user, "NEW_MESSAGE", data)).isFalse();
     }
 
+    /** Deux réponses de l'équipe à quelques secondes d'écart doivent toutes deux sonner. */
+    @Test
+    void supportMessages_areNeverHeld() {
+        Map<String, String> data = Map.of("type", "SUPPORT_MESSAGE", "ticketId", UUID.randomUUID().toString());
+
+        assertThat(throttle.hold(user, "SUPPORT_MESSAGE", data)).isFalse();
+        assertThat(throttle.hold(user, "SUPPORT_MESSAGE", data)).isFalse();
+        assertThat(throttle.hold(user, "SUPPORT_MESSAGE", data)).isFalse();
+    }
+
     @Test
     void streamsAreSeparate_perConversationAndPerUser() {
         Map<String, String> a = Map.of("conversationId", conversation);

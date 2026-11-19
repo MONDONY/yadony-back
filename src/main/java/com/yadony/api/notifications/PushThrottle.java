@@ -90,7 +90,9 @@ public class PushThrottle {
 
     static Optional<Stream> streamFor(String type, Map<String, String> data) {
         return switch (type) {
-            case "NEW_MESSAGE", "SUPPORT_MESSAGE", "bid_negotiation_message", "negotiation_counter" ->
+            // SUPPORT_MESSAGE n'est volontairement pas ici : une réponse du support n'est pas du bruit,
+            // et deux réponses à quelques secondes d'écart doivent toutes deux atteindre l'utilisateur.
+            case "NEW_MESSAGE", "bid_negotiation_message", "negotiation_counter" ->
                     PushCollapseKey.of(type, data).map(key -> new Stream(Rule.CHAT, key));
             case "BID_CREATED" ->
                     NotificationGroupKey.of(type, data).map(key -> new Stream(Rule.NEW_BIDS, key));

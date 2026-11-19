@@ -35,6 +35,13 @@ public class PushQuietHours {
     static final int QUIET_END_HOUR = 8;
     static final int DAILY_CAP = 10;
 
+    /**
+     * Types qui respectent la nuit mais échappent au plafond du jour sans pour autant ignorer les
+     * réglages de l'utilisateur (à la différence d'un type toujours actif) : une réponse de
+     * l'équipe Yadony ne doit pas être étouffée par dix autres notifications.
+     */
+    static final Set<String> NOT_CAPPED = Set.of("SUPPORT_MESSAGE");
+
     /** Récapitulatif du matin : il part à l'heure où le calme s'arrête, jamais retenu. */
     public static final String NIGHT_DIGEST_TYPE = "NIGHT_DIGEST";
 
@@ -72,7 +79,7 @@ public class PushQuietHours {
         // Argent, identité, litiges, compte : jamais plafonnés et jamais comptés. Sans quoi
         // une contrepartie qui enchaîne les messages épuiserait le plafond de la journée et
         // ferait taire une alerte de compte ou de paiement qui suit.
-        if (NotificationPrefsService.isAlwaysOn(type)) {
+        if (NotificationPrefsService.isAlwaysOn(type) || NOT_CAPPED.contains(type)) {
             return false;
         }
         String day = user.getId() + "|" + local.toLocalDate();

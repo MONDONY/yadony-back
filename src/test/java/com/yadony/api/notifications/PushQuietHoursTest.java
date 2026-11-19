@@ -94,6 +94,32 @@ class PushQuietHoursTest {
         }
     }
 
+    /** Une réponse du support n'est pas étouffée par dix autres notifications de la journée. */
+    @Test
+    void daytime_supportMessagesEscapeTheCapAndDoNotCount() {
+        PushQuietHours quiet = at("2026-07-10T12:00:00Z");
+        UserEntity awa = user("SN");
+
+        for (int i = 0; i < 5; i++) {
+            assertThat(quiet.hold(awa, "SUPPORT_MESSAGE")).isFalse();
+        }
+        for (int i = 0; i < PushQuietHours.DAILY_CAP; i++) {
+            assertThat(quiet.hold(awa, "NEW_MESSAGE")).isFalse();
+        }
+        assertThat(quiet.hold(awa, "NEW_MESSAGE")).isTrue();
+        assertThat(quiet.hold(awa, "SUPPORT_MESSAGE")).isFalse();
+    }
+
+    /** La nuit reste silencieuse : le message du support attend le récapitulatif du matin. */
+    @Test
+    void night_supportMessagesWaitForTheDigest() {
+        PushQuietHours quiet = at("2026-07-10T01:00:00Z");
+        UserEntity awa = user("SN");
+
+        assertThat(quiet.hold(awa, "SUPPORT_MESSAGE")).isTrue();
+        assertThat(quiet.takeHeld(awa.getId())).isEqualTo(1);
+    }
+
     /** La nuit, un type toujours actif attend le matin comme les autres : rien n'est urgent. */
     @Test
     void night_alwaysOnTypesWaitForTheDigest() {
