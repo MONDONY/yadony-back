@@ -7,5 +7,7 @@ package com.yadony.api.support;
  */
 public enum SupportMessageAuthorType {
     USER,
-    ADMIN
+    ADMIN,
+    /** Ligne de journal posee par la plateforme (ex. fermeture par l'utilisateur) ; {@code authorId} = l'utilisateur concerne. */
+    SYSTEM
 }

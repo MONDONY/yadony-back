@@ -46,6 +46,7 @@ class SupportControllerIntegrationTest {
     @Autowired SupportTicketRepository ticketRepository;
     @Autowired SupportMessageRepository messageRepository;
     @Autowired SupportPredefinedReplyRepository replyRepository;
+    @Autowired SupportTicketService supportTicketService;
 
     private UserEntity owner;
     private UserEntity intruder;
@@ -179,6 +180,113 @@ class SupportControllerIntegrationTest {
                         .with(authentication(asUser(OWNER_UID))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("support-ticket-not-resolved"));
+    }
+
+    // ------------------------------------------------ fermer sa demande
+
+    @Test
+    void closeTicket_returns204_resolvesAndLeavesTheActiveQueue() throws Exception {
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.NEW);
+
+        mockMvc.perform(post("/support/tickets/" + ticket.getId() + "/close")
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNoContent());
+
+        SupportTicketEntity closed = ticketRepository.findById(ticket.getId()).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(closed.getStatus()).isEqualTo(SupportTicketStatus.RESOLVED);
+        org.assertj.core.api.Assertions.assertThat(closed.getResolvedAt()).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(supportTicketService.countUnassigned()).isZero();
+        org.assertj.core.api.Assertions.assertThat(supportTicketService.listAdminTickets(
+                        SupportTicketScope.UNASSIGNED, null, UUID.randomUUID(), org.springframework.data.domain.PageRequest.of(0, 20)))
+                .isEmpty();
+        // Idempotent : deuxieme appel, 204 et une seule ligne systeme.
+        mockMvc.perform(post("/support/tickets/" + ticket.getId() + "/close")
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNoContent());
+        org.assertj.core.api.Assertions.assertThat(messageRepository.findByTicketIdOrderByCreatedAtAsc(ticket.getId())).hasSize(1);
+    }
+
+    @Test
+    void closeTicket_returns404ForSomeoneElsesTicket() throws Exception {
+        SupportTicketEntity foreign = persistTicket(intruder, SupportTicketStatus.WAITING_USER);
+
+        mockMvc.perform(post("/support/tickets/" + foreign.getId() + "/close")
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNotFound());
+        org.assertj.core.api.Assertions.assertThat(ticketRepository.findById(foreign.getId()).orElseThrow().getStatus())
+                .isEqualTo(SupportTicketStatus.WAITING_USER);
+    }
+
+    @Test
+    void closeTicket_returns404ForUnknownTicket() throws Exception {
+        mockMvc.perform(post("/support/tickets/" + UUID.randomUUID() + "/close")
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void closeTicket_requiresAuthentication() throws Exception {
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.NEW);
+
+        mockMvc.perform(post("/support/tickets/" + ticket.getId() + "/close"))
+                .andExpect(status().is4xxClientError());
+        org.assertj.core.api.Assertions.assertThat(ticketRepository.findById(ticket.getId()).orElseThrow().getStatus())
+                .isEqualTo(SupportTicketStatus.NEW);
+    }
+
+    @Test
+    void closeThenDelete_removesTheTicketFromTheUserButNotFromTheBackOffice() throws Exception {
+        SupportTicketEntity ticket = persistTicket(owner, SupportTicketStatus.WAITING_SUPPORT);
+        SupportMessageEntity adminMsg = new SupportMessageEntity();
+        adminMsg.setTicketId(ticket.getId());
+        adminMsg.setAuthorType(SupportMessageAuthorType.ADMIN);
+        adminMsg.setAuthorId(UUID.randomUUID());
+        adminMsg.setContent("Pouvez-vous preciser ?");
+        messageRepository.save(adminMsg);
+
+        // Non resolu : suppression refusee.
+        mockMvc.perform(delete("/support/tickets/" + ticket.getId())
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("support-ticket-not-resolved"));
+        mockMvc.perform(get("/support/unread-count").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1));
+
+        mockMvc.perform(post("/support/tickets/" + ticket.getId() + "/close")
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNoContent());
+
+        // Ferme : plus de non-lu, plus compte comme ouvert dans le resume.
+        mockMvc.perform(get("/support/summary").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unreadCount").value(0))
+                .andExpect(jsonPath("$.openTicketCount").value(0));
+
+        mockMvc.perform(delete("/support/tickets/" + ticket.getId())
+                        .with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isNoContent());
+
+        // Supprime : absent de la liste, du resume et du compteur.
+        mockMvc.perform(get("/support/tickets").with(authentication(asUser(OWNER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+        mockMvc.perform(get("/support/summary").with(authentication(asUser(OWNER_UID))))
+                .andExpect(jsonPath("$.unreadCount").value(0))
+                .andExpect(jsonPath("$.openTicketCount").value(0))
+                .andExpect(jsonPath("$.latest").doesNotExist());
+        mockMvc.perform(get("/support/unread-count").with(authentication(asUser(OWNER_UID))))
+                .andExpect(jsonPath("$.count").value(0));
+
+        // Le back-office le voit toujours : RESOLVED + ligne systeme.
+        org.assertj.core.api.Assertions.assertThat(supportTicketService.listAdminTickets(
+                        SupportTicketScope.ALL, SupportTicketStatus.RESOLVED, UUID.randomUUID(),
+                        org.springframework.data.domain.PageRequest.of(0, 20)).getContent())
+                .extracting(SupportTicketEntity::getId).containsExactly(ticket.getId());
+        org.assertj.core.api.Assertions.assertThat(messageRepository.findByTicketIdOrderByCreatedAtAsc(ticket.getId()))
+                .extracting(SupportMessageEntity::getAuthorType, SupportMessageEntity::getContent)
+                .contains(org.assertj.core.api.Assertions.tuple(
+                        SupportMessageAuthorType.SYSTEM, "Demande fermée par l'utilisateur"));
     }
 
     @Test

@@ -192,6 +192,14 @@ public class SupportController {
         supportTicketService.hideForUser(requireUser(firebaseUid), ticketId);
     }
 
+    /** L'utilisateur ferme sa demande (RESOLVED terminal). Idempotent, 404 si ce n'est pas la sienne. */
+    @PostMapping("/tickets/{ticketId}/close")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void closeTicket(@AuthenticationPrincipal String firebaseUid,
+                            @PathVariable UUID ticketId) {
+        supportTicketService.closeByUser(requireUser(firebaseUid), ticketId);
+    }
+
     @PostMapping("/tickets/{ticketId}/read")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void markRead(@AuthenticationPrincipal String firebaseUid,

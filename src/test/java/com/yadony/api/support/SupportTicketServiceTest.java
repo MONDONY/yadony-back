@@ -560,7 +560,8 @@ class SupportTicketServiceTest {
     void listAdminTickets_mapsEachScopeToItsQuery() {
         Pageable pageable = PageRequest.of(0, 20);
         Page<SupportTicketEntity> empty = Page.empty(pageable);
-        when(ticketRepository.findByAssignedAdminIdIsNullOrderByLastMessageAtDesc(pageable)).thenReturn(empty);
+        when(ticketRepository.findByAssignedAdminIdIsNullAndStatusNotOrderByLastMessageAtDesc(
+                SupportTicketStatus.RESOLVED, pageable)).thenReturn(empty);
         when(ticketRepository.findByAssignedAdminIdAndStatusOrderByLastMessageAtDesc(
                 ADMIN_ID, SupportTicketStatus.WAITING_SUPPORT, pageable)).thenReturn(empty);
         when(ticketRepository.findAllByOrderByLastMessageAtDesc(pageable)).thenReturn(empty);
@@ -598,7 +599,7 @@ class SupportTicketServiceTest {
 
     @Test
     void countUnassigned_delegatesToRepository() {
-        when(ticketRepository.countByAssignedAdminIdIsNull()).thenReturn(7L);
+        when(ticketRepository.countByAssignedAdminIdIsNullAndStatusNot(SupportTicketStatus.RESOLVED)).thenReturn(7L);
 
         assertThat(service.countUnassigned()).isEqualTo(7L);
     }
@@ -609,6 +610,88 @@ class SupportTicketServiceTest {
         when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
 
         assertThat(service.getTicketForAdmin(TICKET_ID)).isSameAs(ticket);
+    }
+
+    // ------------------------------------------- fermeture par l'utilisateur
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = SupportTicketStatus.class, names = "RESOLVED", mode = org.junit.jupiter.params.provider.EnumSource.Mode.EXCLUDE)
+    void closeByUser_resolvesEveryNonResolvedStatus(SupportTicketStatus status) {
+        SupportTicketEntity ticket = ticket(USER_ID, status);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.closeByUser(user(USER_ID), TICKET_ID);
+
+        assertThat(ticket.getStatus()).isEqualTo(SupportTicketStatus.RESOLVED);
+        assertThat(ticket.getResolvedAt()).isNotNull();
+        assertThat(ticket.getUserLastReadAt()).isNotNull();
+        ArgumentCaptor<SupportMessageEntity> msg = ArgumentCaptor.forClass(SupportMessageEntity.class);
+        verify(messageRepository).save(msg.capture());
+        assertThat(msg.getValue().getAuthorType()).isEqualTo(SupportMessageAuthorType.SYSTEM);
+        assertThat(msg.getValue().getContent()).isEqualTo("Demande fermée par l'utilisateur");
+        verify(auditService).log(eq("support_ticket"), eq(TICKET_ID), eq("SUPPORT_TICKET_CLOSED_BY_USER"), eq(USER_ID), any());
+        ArgumentCaptor<SupportMessageCreatedEvent> ev = ArgumentCaptor.forClass(SupportMessageCreatedEvent.class);
+        verify(eventPublisher).publishEvent(ev.capture());
+        assertThat(ev.getValue().isNotifyOwner()).isFalse();
+    }
+
+    @Test
+    void closeByUser_isIdempotentOnAResolvedTicket() {
+        SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.RESOLVED);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        service.closeByUser(user(USER_ID), TICKET_ID);
+
+        verify(messageRepository, never()).save(any());
+        verify(ticketRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void closeByUser_hidesSomeoneElsesTicketWith404AndNoEffect() {
+        SupportTicketEntity ticket = ticket(OTHER_USER_ID, SupportTicketStatus.NEW);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+
+        assertThatThrownBy(() -> service.closeByUser(user(USER_ID), TICKET_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(SupportTicketServiceTest::statusOf)
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(ticket.getStatus()).isEqualTo(SupportTicketStatus.NEW);
+        verify(messageRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void closeByUser_unknownTicketIs404() {
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.closeByUser(user(USER_ID), TICKET_ID))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(SupportTicketServiceTest::statusOf)
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void userReply_isRefusedAfterTheUserClosedTheTicket() {
+        SupportTicketEntity ticket = ticket(USER_ID, SupportTicketStatus.WAITING_USER);
+        when(ticketRepository.findById(TICKET_ID)).thenReturn(Optional.of(ticket));
+        when(messageRepository.save(any(SupportMessageEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        service.closeByUser(user(USER_ID), TICKET_ID);
+
+        assertThatThrownBy(() -> service.userReply(user(USER_ID), TICKET_ID, "encore", null))
+                .isInstanceOf(YadonyBusinessException.class)
+                .extracting(SupportTicketServiceTest::statusOf)
+                .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    void listAdminTickets_unassignedScopeExcludesResolvedTickets() {
+        Pageable pageable = PageRequest.of(0, 20);
+        when(ticketRepository.findByAssignedAdminIdIsNullAndStatusNotOrderByLastMessageAtDesc(
+                SupportTicketStatus.RESOLVED, pageable)).thenReturn(Page.empty());
+
+        assertThat(service.listAdminTickets(SupportTicketScope.UNASSIGNED, null, ADMIN_ID, pageable)).isEmpty();
     }
 
     private static HttpStatus statusOf(Throwable throwable) {

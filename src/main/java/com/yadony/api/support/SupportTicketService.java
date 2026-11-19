@@ -99,7 +99,8 @@ public class SupportTicketService {
                                                       Pageable pageable) {
         return switch (scope) {
             case UNASSIGNED -> status == null
-                    ? ticketRepository.findByAssignedAdminIdIsNullOrderByLastMessageAtDesc(pageable)
+                    ? ticketRepository.findByAssignedAdminIdIsNullAndStatusNotOrderByLastMessageAtDesc(
+                            SupportTicketStatus.RESOLVED, pageable)
                     : ticketRepository.findByAssignedAdminIdIsNullAndStatusOrderByLastMessageAtDesc(status, pageable);
             case MINE -> status == null
                     ? ticketRepository.findByAssignedAdminIdOrderByLastMessageAtDesc(adminId, pageable)
@@ -147,7 +148,7 @@ public class SupportTicketService {
 
     @Transactional(readOnly = true)
     public long countUnassigned() {
-        return ticketRepository.countByAssignedAdminIdIsNull();
+        return ticketRepository.countByAssignedAdminIdIsNullAndStatusNot(SupportTicketStatus.RESOLVED);
     }
 
     // --------------------------------------------------------- compteur non-lus
@@ -202,6 +203,32 @@ public class SupportTicketService {
         ticketRepository.save(ticket);
         auditService.log(AUDIT_ENTITY, ticket.getId(), "SUPPORT_TICKET_HIDDEN_BY_USER", user.getId(),
                 payload("status", ticket.getStatus().name()));
+    }
+
+    /** Texte de la ligne systeme visible de l'equipe quand l'utilisateur ferme sa demande. */
+    static final String CLOSED_BY_USER_MESSAGE = "Demande fermée par l'utilisateur";
+
+    /**
+     * L'utilisateur ferme sa propre demande, quel que soit son statut. Meme etat
+     * final qu'une resolution admin (RESOLVED terminal, resolvedAt) ; le ticket
+     * sort donc de la file active. Compte comme lu pour son proprietaire. Une
+     * ligne systeme previent l'equipe, sans notification a l'utilisateur.
+     * Idempotent : un ticket deja resolu ne change pas.
+     */
+    public void closeByUser(UserEntity user, UUID ticketId) {
+        SupportTicketEntity ticket = requireOwnedTicket(user, ticketId);
+        if (ticket.isResolved()) {
+            return;
+        }
+        String previousStatus = ticket.getStatus().name();
+        appendMessage(ticket, SupportMessageAuthorType.SYSTEM, user.getId(), CLOSED_BY_USER_MESSAGE, false, false);
+        LocalDateTime at = now();
+        ticket.setStatus(SupportTicketStatus.RESOLVED);
+        ticket.setResolvedAt(at);
+        ticket.setUserLastReadAt(at);
+        ticketRepository.save(ticket);
+        auditService.log(AUDIT_ENTITY, ticket.getId(), "SUPPORT_TICKET_CLOSED_BY_USER", user.getId(),
+                payload("previousStatus", previousStatus, "status", ticket.getStatus().name()));
     }
 
     public SupportTicketEntity createTicket(UserEntity user, String category, String subject,
