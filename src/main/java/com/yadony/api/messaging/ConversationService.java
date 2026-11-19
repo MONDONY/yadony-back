@@ -194,6 +194,7 @@ public class ConversationService {
         }
         // Liste blanche : seul un trajet ACTIVE ouvre une conversation de questions.
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE
+                || announcement.isHidden()
                 || DepartureRules.hasDeparted(announcement, Instant.now())) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "inquiry-announcement-closed", "problem.inquiry-announcement-closed");
         }

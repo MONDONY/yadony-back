@@ -7,7 +7,7 @@ routes:
     label: My trips
 ---
 Open the trip then, in the ⋮ menu at the top, tap "Cancel the trip": the action is irreversible and you choose a reason. The first follows the trip's mode (flight canceled, breakdown or setback, or transport canceled), then personal emergency, health issue, itinerary change or other.
-This entry only appears for a published trip that has requests or parcels. With no request, use "Delete" or "Unpublish" (⋮ menu).
+This entry only appears for a published trip that has requests or parcels. With no request, use "Delete" or "Unpublish" (⋮ menu). With parcels, "Unpublish" is no longer possible: use "Hide the trip" to stop receiving new requests without canceling.
 All linked senders are refunded automatically.
 If a parcel has already been handed to you, you must return it to its sender within 3 days, against the return code they give you.
 If you were already paid for a dropped-off parcel at drop-off (boat trip), canceling the trip is refused and the team is notified: contact support.

@@ -75,32 +75,32 @@ public interface TravelerSubscriptionRepository extends JpaRepository<TravelerSu
                (SELECT COUNT(*) FROM announcements a
                   WHERE a.traveler_id = ts.traveler_id
                     AND a.deleted_at IS NULL
-                    AND a.status IN ('ACTIVE','FULL'))          AS ongoing_trips,
+                    AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE)          AS ongoing_trips,
                ts.push_enabled                                  AS push_enabled,
                ts.has_new                                       AS has_new,
                (SELECT a.id FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_ann_id,
                (SELECT a.departure_city FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_dep,
                (SELECT a.arrival_city FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_arr,
                (SELECT a.price_per_kg FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_price,
                (SELECT a.currency FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_currency,
                (SELECT a.departure_date FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_departure,
                (SELECT a.created_at FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_published,
                (SELECT a.pricing_mode FROM announcements a WHERE a.traveler_id = ts.traveler_id
-                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL')
+                  AND a.deleted_at IS NULL AND a.status IN ('ACTIVE','FULL') AND a.hidden = FALSE
                   ORDER BY a.created_at DESC LIMIT 1)            AS last_pricing_mode
         FROM traveler_subscriptions ts
         JOIN users u ON u.id = ts.traveler_id AND u.deleted_at IS NULL

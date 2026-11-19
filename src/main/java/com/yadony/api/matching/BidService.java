@@ -498,6 +498,11 @@ public class BidService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-not-active", "problem.announcement-not-active");
         }
+        // Trajet caché par son voyageur : plus aucune NOUVELLE demande, offre ni négociation (les
+        // colis et fils déjà ouverts continuent normalement).
+        if (announcement.isHidden()) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement-hidden", "problem.announcement-hidden");
+        }
 
         // Date limite de remise atteinte : le voyageur n'attend plus de colis. Sans cette
         // garde, la demande naissait déjà « fenêtre dépassée » et l'expéditeur n'avait

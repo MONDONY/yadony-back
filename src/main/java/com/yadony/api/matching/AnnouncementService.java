@@ -1655,7 +1655,8 @@ public class AnnouncementService {
                 .withBoatFields(announcement.getArrivalDateMax(), announcement.getVolumeCapacityM3(),
                         announcement.getAvailableVolumeM3(),
                         com.yadony.api.common.GuestSession.travelerNetOrNull(announcement.getPricePerM3()),
-                        pricePerM3Display(announcement));
+                        pricePerM3Display(announcement))
+                .withHidden(announcement.isHidden());
         if (viewerId != null && viewerId.equals(announcement.getTravelerId())) {
             detail = detail.withCurrencyEditable(!isCurrencyLocked(id));
             detail = detail.withParcelsSummary(parcelsSummary(announcement));
@@ -2061,7 +2062,8 @@ public class AnnouncementService {
                         saved.getMaxParcelWeightKg())
                 .withBoatFields(saved.getArrivalDateMax(), saved.getVolumeCapacityM3(),
                         saved.getAvailableVolumeM3(), saved.getPricePerM3(),
-                        pricePerM3Display(saved));
+                        pricePerM3Display(saved))
+                .withHidden(saved.isHidden());
     }
 
     /**
@@ -2134,8 +2136,12 @@ public class AnnouncementService {
     /**
      * Retire un trajet de la circulation sans l'annuler (ACTIVE → DRAFT).
      *
-     * <p>Un trajet ne peut être dépublié qu'avant sa première demande : un expéditeur
-     * ayant déjà sollicité le voyageur a agi sur la foi de sa publication.
+     * <p>Un trajet ne peut être dépublié que s'il ne porte AUCUN colis vivant : un expéditeur
+     * ayant déjà sollicité le voyageur a agi sur la foi de sa publication, et un brouillon peut être
+     * supprimé. Refus (409 {@code announcement/has-bids}) dès qu'il existe un colis PENDING ou
+     * PAYMENT_ESCROWED (hors ceux que le voyageur a masqués, {@code deletedByTraveler}), ou un colis
+     * engagé : AWAITING_PAYMENT, ACCEPTED, HANDED_OVER, IN_TRANSIT, ARRIVED, sans exception. Le
+     * voyageur qui porte des colis peut à la place {@linkplain #hideAnnouncement cacher} le trajet.
      */
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
@@ -2152,7 +2158,8 @@ public class AnnouncementService {
         if (announcement.getStatus() != AnnouncementStatus.ACTIVE) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/not-unpublishable", "problem.announcement-not-unpublishable");
         }
-        if (bidRepository.countVisibleByAnnouncementId(id) > 0) {
+        if (bidRepository.countVisibleByAnnouncementId(id) > 0
+                || bidRepository.existsByAnnouncementIdAndStatusIn(id, ENGAGED_BID_STATUSES)) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/has-bids", "problem.announcement-has-bids");
         }
         if (negotiationThreadRepository.existsActiveByTravelerAnnouncementId(id)) {
@@ -2180,6 +2187,54 @@ public class AnnouncementService {
                         "arrivalCity", saved.getArrivalCity()));
 
         return getAnnouncementDetail(saved.getId(), firebaseUid);
+    }
+
+    /** Colis engagés au-delà de l'attente du voyageur : leur présence interdit de dépublier le trajet. */
+    private static final List<BidStatus> ENGAGED_BID_STATUSES = List.of(
+            BidStatus.AWAITING_PAYMENT, BidStatus.ACCEPTED, BidStatus.HANDED_OVER,
+            BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+
+    /**
+     * Cache un trajet ACTIVE ou FULL : il disparaît de la recherche et de toutes les surfaces
+     * publiques, mais son statut ne change pas et les colis ne sont pas touchés. Aucune nouvelle
+     * demande, offre ni négociation n'y est acceptée tant qu'il est caché. Idempotent.
+     * Propriétaire seulement (403), statut ACTIVE/FULL seulement (409 {@code announcement/not-hideable}).
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementDetailResponse hideAnnouncement(UUID id, String firebaseUid) {
+        return setHidden(id, firebaseUid, true);
+    }
+
+    /** Réaffiche un trajet caché. Idempotent ; refusé (409) si le trajet n'est plus ACTIVE/FULL. */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementDetailResponse showAnnouncement(UUID id, String firebaseUid) {
+        return setHidden(id, firebaseUid, false);
+    }
+
+    private AnnouncementDetailResponse setHidden(UUID id, String firebaseUid, boolean hide) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
+        AnnouncementEntity announcement = announcementRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "announcement-not-found", "problem.announcement-not-found"));
+        if (!announcement.getTravelerId().equals(user.getId())) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "forbidden", "problem.forbidden.depublier-cette-annonce");
+        }
+        if (announcement.getStatus() != AnnouncementStatus.ACTIVE
+                && announcement.getStatus() != AnnouncementStatus.FULL) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "announcement/not-hideable", "problem.announcement-not-hideable");
+        }
+        if (announcement.isHidden() != hide) {
+            announcement.setHidden(hide);
+            announcementRepository.save(announcement);
+            eventPublisher.publishEvent(new TripActivityChangedEvent(announcement.getId(), announcement.getTravelerId()));
+            auditService.log("ANNOUNCEMENT", announcement.getId(), hide ? "ANNOUNCEMENT_HIDDEN" : "ANNOUNCEMENT_SHOWN",
+                    user.getId(),
+                    Map.of("departureCity", announcement.getDepartureCity(),
+                            "arrivalCity", announcement.getArrivalCity()));
+        }
+        return getAnnouncementDetail(announcement.getId(), firebaseUid);
     }
 
     /**
@@ -2880,7 +2935,8 @@ public class AnnouncementService {
                 pricePerM3Display(entity),
                 counts != null
                         ? counts.latestDelays().get(entity.getId())
-                        : TripDelays.latest(tripDelayRepository, entity.getId())
+                        : TripDelays.latest(tripDelayRepository, entity.getId()),
+                entity.isHidden()
         );
     }
 
@@ -2902,6 +2958,8 @@ public class AnnouncementService {
         Instant now = Instant.now();
         return java.util.stream.Stream.concat(active.stream(), full.stream())
             .filter(a -> !a.isHandoverDeadlinePassed(now))
+            // Trajet caché par son voyageur : absent de la fiche voyageur publique.
+            .filter(a -> !a.isHidden())
             .map(a -> new com.yadony.api.matching.dto.TravelerAnnouncementResponse(
                 a.getId(), a.getDepartureCity(), a.getArrivalCity(),
                 a.getDepartureDate(), a.getPricePerKg(), a.getAvailableKg(), a.getStatus().name(),

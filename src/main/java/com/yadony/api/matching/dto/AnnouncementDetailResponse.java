@@ -136,10 +136,74 @@ public record AnnouncementDetailResponse(
         /** Dernier retard annoncé par le voyageur (ses dates, son motif, son message libre). Servi au seul
          *  voyageur propriétaire ; null pour tout autre lecteur et pour un invité (le message libre ne
          *  sort pas du fil du colis). Toujours sérialisé (null explicite), champ ajouté. */
-        @JsonInclude(JsonInclude.Include.ALWAYS) TripDelayInfo latestTripDelay
+        @JsonInclude(JsonInclude.Include.ALWAYS) TripDelayInfo latestTripDelay,
+        /** Trajet caché par le voyageur : absent de la recherche, statut inchangé. false par défaut. */
+        boolean hidden
 ) {
     public AnnouncementDetailResponse {
         acceptedMobileMoneyNetworks = acceptedMobileMoneyNetworks == null ? List.of() : acceptedMobileMoneyNetworks;
+    }
+
+    /** Arité d'avant le champ {@code hidden} : trajet visible. */
+    public AnnouncementDetailResponse(
+            UUID id,
+            UUID travelerId,
+            String departureCity,
+            String arrivalCity,
+            LocalDate departureDate,
+            LocalTime departureTime,
+            LocalTime arrivalTime,
+            LocalDate arrivalDate,
+            AddressDto pickupAddress,
+            AddressDto deliveryAddress,
+            BigDecimal availableKg,
+            BigDecimal totalKg,
+            BigDecimal pricePerKg,
+            BigDecimal pricePerKgDisplay,
+            com.yadony.api.matching.TransportMode transportMode,
+            Integer stopsCount,
+            String status,
+            long bidsCount,
+            long confirmedParcelCount,
+            TravelerProfileDto traveler,
+            String description,
+            List<String> acceptedContentTypes,
+            List<String> refusedTypes,
+            List<String> acceptedPaymentMethods,
+            com.yadony.api.matching.CapacityUnit capacityUnit,
+            boolean cashAccepted,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt,
+            com.yadony.api.matching.PricingMode pricingMode,
+            List<AnnouncementPriceGridItemResponse> priceGridItems,
+            BigDecimal reservedKg,
+            boolean surplusEligible,
+            boolean surplusPublished,
+            LocalDateTime handoverDeadline,
+            String currency,
+            String arrivalInstructions,
+            boolean negotiable,
+            Set<PaymentMethod> availablePaymentMethods,
+            BigDecimal convertedPricePerKg,
+            BigDecimal pricePerKgDisplayConverted,
+            String convertedCurrency,
+            Integer remainingReschedules,
+            String departureCountryCode,
+            String arrivalCountryCode,
+            Boolean currencyEditable,
+            List<PayoutNetwork> acceptedMobileMoneyNetworks,
+            String departureTimezone,
+            ParcelsSummary parcelsSummary,
+            Boolean trackingActive,
+            String maxItemSize,
+            BigDecimal maxParcelWeightKg,
+            LocalDate arrivalDateMax,
+            BigDecimal volumeCapacityM3,
+            BigDecimal availableVolumeM3,
+            BigDecimal pricePerM3,
+            BigDecimal pricePerM3Display,
+            TripDelayInfo latestTripDelay) {
+        this(id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate, pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay, transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description, acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted, createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible, surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable, availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency, remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable, acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg, arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, false);
     }
 
     /** Arité d'avant le bateau : champs bateau nuls (appelants qui ne les calculent pas). */
@@ -268,7 +332,7 @@ public record AnnouncementDetailResponse(
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie enrichie des équivalents convertis — même pattern que le fil de recherche. */
@@ -286,7 +350,7 @@ public record AnnouncementDetailResponse(
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant les réseaux mobile money acceptés ; {@code null} devient la liste vide. */
@@ -301,7 +365,7 @@ public record AnnouncementDetailResponse(
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 networks == null ? List.of() : networks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant le fuseau IANA de la ville de départ (YADONY-FLUTTER-PROD-1R). */
@@ -316,7 +380,7 @@ public record AnnouncementDetailResponse(
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant le résumé des colis en possession, posé pour le seul voyageur propriétaire. */
@@ -331,7 +395,7 @@ public record AnnouncementDetailResponse(
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant {@code trackingActive}, posé pour le seul voyageur propriétaire. */
@@ -346,7 +410,7 @@ public record AnnouncementDetailResponse(
                 availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant la taille et le poids maximaux par colis du trajet (route, bateau). */
@@ -362,7 +426,7 @@ public record AnnouncementDetailResponse(
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive,
                 maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant les champs bateau du trajet (fourchette, volume, prix au m³ net et brut). */
@@ -380,7 +444,7 @@ public record AnnouncementDetailResponse(
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive,
                 maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
     }
 
     /** Copie portant le dernier retard annoncé, posé pour le seul voyageur propriétaire. */
@@ -396,6 +460,23 @@ public record AnnouncementDetailResponse(
                 remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
                 acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive,
                 maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display, latestTripDelay, hidden);
+    }
+
+    /** Copie portant l'état « caché » du trajet. */
+    public AnnouncementDetailResponse withHidden(boolean hidden) {
+        return new AnnouncementDetailResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, confirmedParcelCount, traveler, description,
+                acceptedContentTypes, refusedTypes, acceptedPaymentMethods, capacityUnit, cashAccepted,
+                createdAt, updatedAt, pricingMode, priceGridItems, reservedKg, surplusEligible,
+                surplusPublished, handoverDeadline, currency, arrivalInstructions, negotiable,
+                availablePaymentMethods, convertedPricePerKg, pricePerKgDisplayConverted, convertedCurrency,
+                remainingReschedules, departureCountryCode, arrivalCountryCode, currencyEditable,
+                acceptedMobileMoneyNetworks, departureTimezone, parcelsSummary, trackingActive,
+                maxItemSize, maxParcelWeightKg,
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display,
+                latestTripDelay, hidden);
     }
 }

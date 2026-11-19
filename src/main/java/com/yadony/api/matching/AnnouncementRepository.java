@@ -100,6 +100,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
         SELECT CAST(id AS VARCHAR) FROM announcements
         WHERE deleted_at IS NULL
           AND status = 'ACTIVE'
+          AND hidden = FALSE
           AND pickup_lat IS NOT NULL
           AND pickup_lng IS NOT NULL
           AND (
@@ -379,6 +380,7 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
           AND LOWER(a.departure_city) = LOWER(:departureCity)
           AND LOWER(a.arrival_city)   = LOWER(:arrivalCity)
           AND a.status IN ('ACTIVE', 'FULL')
+          AND a.hidden = FALSE
           AND a.pickup_lat IS NOT NULL
           AND a.pickup_lng IS NOT NULL
           AND (

@@ -141,6 +141,21 @@ class BidCreateGuardTest {
     }
 
     @Test
+    @DisplayName("trajet caché → 409 announcement-hidden, aucune nouvelle demande ni négociation")
+    void assertCanBidOn_refuseUnTrajetCache() {
+        AnnouncementEntity announcement = buildAnnouncement();
+        announcement.setHidden(true);
+
+        assertThatThrownBy(() -> bidService.assertCanBidOn(buildSender(), announcement, "CLOTHING"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getStatus().value()).isEqualTo(409);
+                    assertThat(ex.getErrorCode()).isEqualTo("announcement-hidden");
+                });
+    }
+
+    @Test
     @DisplayName("cible contactKycOnly + sender non vérifié → 403 FORBIDDEN")
     void createBid_refuseSiCibleKycOnlyEtSenderNonVerifie() {
         UserEntity sender = buildSender();

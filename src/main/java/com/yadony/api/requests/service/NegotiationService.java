@@ -892,6 +892,10 @@ public class NegotiationService {
         if (ann.getStatus() != com.yadony.api.matching.AnnouncementStatus.ACTIVE) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "announcement/not-active");
         }
+        if (ann.isHidden()) {
+            // Nouveau fil de négociation sur un trajet caché : refusé (les fils existants continuent).
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "announcement/hidden");
+        }
         if (ann.isPricedPerM3()) {
             // Trajet bateau vendu au m³ (aucun kilo) : la demande doit connaître son volume (422
             // boat-dimensions-required, même règle que l'offre ferme) et il doit tenir dans le volume restant

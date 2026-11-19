@@ -88,6 +88,8 @@ public class MatchingService {
         java.time.Instant now = java.time.Instant.now();
         return announcements.stream()
                 .filter(a -> !a.isHandoverDeadlinePassed(now))
+                // Trajet caché : il n'accepte plus de nouvelle demande, il ne propose plus de colis à prendre.
+                .filter(a -> !a.isHidden())
                 .toList();
     }
 
@@ -206,6 +208,7 @@ public class MatchingService {
         return announcementRepository
                 .findActiveByCorridor(request.getDepartureCity(), request.getArrivalCity())
                 .stream()
+                .filter(a -> !a.isHidden())
                 .filter(a -> matches(request, a))
                 .map(AnnouncementEntity::getTravelerId)
                 .distinct()
