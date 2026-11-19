@@ -237,6 +237,10 @@ class GuestDataExposureIT {
             // (vérifié par unInviteNeRecoitJamaisLeRetardAnnonce). Les clés internes du retard (reason,
             // announcedAt, message) ne sortent donc jamais vers un invité et ne sont pas listées ici.
             "latestTripDelay",
+            // Trajet caché par son voyageur : simple booléen d'état du trajet (jamais de donnée
+            // personnelle) ; un trajet caché reste lisible par identifiant, l'app s'en sert pour
+            // proposer « Réafficher » au seul propriétaire.
+            "hidden",
             "description", "acceptedContentTypes", "refusedTypes", "acceptedPaymentMethods",
             "capacityUnit", "cashAccepted", "createdAt", "updatedAt", "pricingMode",
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
