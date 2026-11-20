@@ -805,13 +805,17 @@ public class AnnouncementService {
     private Map<UUID, Double> rankingScores(List<RankingRow> rows, Map<UUID, UserEntity> travelers,
                                             LocalDate today) {
         Map<UUID, Double> scores = new HashMap<>();
+        // Un seul comptage des j'aime pour tous les candidats (au plus maxCandidates).
+        Map<UUID, Long> likeCounts = rows.isEmpty() ? Map.of()
+                : tripLikeService.countsFor(rows.stream().map(RankingRow::id).toList());
         for (RankingRow a : rows) {
-            scores.put(a.id(), rankingScore(a, travelers.get(a.travelerId()), today));
+            scores.put(a.id(), rankingScore(a, travelers.get(a.travelerId()), today,
+                    likeCounts.getOrDefault(a.id(), 0L)));
         }
         return scores;
     }
 
-    private double rankingScore(RankingRow a, UserEntity traveler, LocalDate today) {
+    private double rankingScore(RankingRow a, UserEntity traveler, LocalDate today, long likeCount) {
         TripScoreCalculator.TravelerQuality quality = traveler == null
                 ? new TripScoreCalculator.TravelerQuality(0, 0, 0, null, 0)
                 : new TripScoreCalculator.TravelerQuality(traveler.getCancellationCount(), traveler.getNoShowCount(),
@@ -823,7 +827,7 @@ public class AnnouncementService {
                 : java.time.temporal.ChronoUnit.DAYS.between(today, a.departureDate());
         long ageDays = a.createdAt() == null ? 0
                 : java.time.temporal.ChronoUnit.DAYS.between(a.createdAt().toLocalDate(), today);
-        return tripScoreCalculator.score(quality, online, daysToDeparture, ageDays);
+        return tripScoreCalculator.score(quality, online, daysToDeparture, ageDays, likeCount);
     }
 
     /** Score décroissant, id en départage : ordre total stable sous pagination. */

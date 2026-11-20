@@ -198,7 +198,7 @@ class AnnouncementRankingProjectionIT {
         boolean online = m.contains(PaymentMethod.STRIPE) || m.contains(PaymentMethod.MOBILE_MONEY);
         long days = java.time.temporal.ChronoUnit.DAYS.between(TODAY, a.getDepartureDate());
         long age = java.time.temporal.ChronoUnit.DAYS.between(a.getCreatedAt().toLocalDate(), TODAY);
-        return scoreCalculator.score(quality, online, days, age);
+        return scoreCalculator.score(quality, online, days, age, 0L);
     }
 
     private Comparator<AnnouncementEntity> refByScore(Map<UUID, UserEntity> users) {
