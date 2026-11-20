@@ -103,8 +103,40 @@ public record AnnouncementSearchResponse(
         /** Bateau au m³ : prix NET voyageur au m³, masqué (null) pour un invité comme {@code pricePerKg}. */
         @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3,
         /** Prix au m³ payé par l'expéditeur (brut, servi à tous, même règle que {@code pricePerKgDisplay}). */
-        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display
+        @JsonInclude(JsonInclude.Include.ALWAYS) BigDecimal pricePerM3Display,
+        /** Nombre de personnes qui aiment ce trajet ; 0 sans j'aime. Servi à tout lecteur. */
+        long likeCount,
+        /** Le lecteur connecté aime ce trajet ; toujours faux pour un lecteur anonyme. */
+        boolean likedByMe
 ) {
+    /** Arité d'avant les j'aime : {@code likeCount} 0 et {@code likedByMe} faux. */
+    public AnnouncementSearchResponse(
+            UUID id, UUID travelerId, String departureCity, String arrivalCity, LocalDate departureDate,
+            LocalTime departureTime, LocalTime arrivalTime, LocalDate arrivalDate,
+            AddressDto pickupAddress, AddressDto deliveryAddress, BigDecimal availableKg, BigDecimal totalKg,
+            BigDecimal pricePerKg, BigDecimal pricePerKgDisplay,
+            com.yadony.api.matching.TransportMode transportMode, Integer stopsCount, String status,
+            long bidsCount, TravelerProfileDto traveler, String description,
+            List<String> acceptedContentTypes, List<String> refusedTypes, List<String> acceptedPaymentMethods,
+            com.yadony.api.matching.CapacityUnit capacityUnit, LocalDateTime createdAt, LocalDateTime updatedAt,
+            com.yadony.api.matching.PricingMode pricingMode, List<AnnouncementPriceGridItemResponse> priceGridItems,
+            LocalDateTime handoverDeadline, boolean isFavorite, boolean urgent, String currency, boolean negotiable,
+            Set<PaymentMethod> availablePaymentMethods, BigDecimal convertedPricePerKg, String convertedCurrency,
+            BigDecimal pricePerKgDisplayConverted, Long uniqueViewerCount, String departureTimezone,
+            String maxItemSize, BigDecimal maxParcelWeightKg, LocalDate arrivalDateMax,
+            BigDecimal volumeCapacityM3, BigDecimal availableVolumeM3, BigDecimal pricePerM3,
+            BigDecimal pricePerM3Display) {
+        this(id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes,
+                refusedTypes, acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode,
+                priceGridItems, handoverDeadline, isFavorite, urgent, currency, negotiable,
+                availablePaymentMethods, convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted,
+                uniqueViewerCount, departureTimezone, maxItemSize, maxParcelWeightKg,
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display,
+                0L, false);
+    }
+
     /** Arité d'avant le bateau : champs bateau nuls (appelants qui ne les lisent pas). */
     public AnnouncementSearchResponse(
             UUID id, UUID travelerId, String departureCity, String arrivalCity, LocalDate departureDate,
@@ -146,7 +178,8 @@ public record AnnouncementSearchResponse(
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
                 departureTimezone, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display,
+                likeCount, likedByMe);
     }
 
     /**
@@ -162,6 +195,21 @@ public record AnnouncementSearchResponse(
                 handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
                 convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
                 departureTimezone, maxItemSize, maxParcelWeightKg,
-                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display);
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display,
+                likeCount, likedByMe);
+    }
+
+    /** Copie portant le nombre de j'aime du trajet et l'état « j'aime » du lecteur. */
+    public AnnouncementSearchResponse withLikes(long likeCount, boolean likedByMe) {
+        return new AnnouncementSearchResponse(
+                id, travelerId, departureCity, arrivalCity, departureDate, departureTime, arrivalTime, arrivalDate,
+                pickupAddress, deliveryAddress, availableKg, totalKg, pricePerKg, pricePerKgDisplay,
+                transportMode, stopsCount, status, bidsCount, traveler, description, acceptedContentTypes, refusedTypes,
+                acceptedPaymentMethods, capacityUnit, createdAt, updatedAt, pricingMode, priceGridItems,
+                handoverDeadline, isFavorite, urgent, currency, negotiable, availablePaymentMethods,
+                convertedPricePerKg, convertedCurrency, pricePerKgDisplayConverted, uniqueViewerCount,
+                departureTimezone, maxItemSize, maxParcelWeightKg,
+                arrivalDateMax, volumeCapacityM3, availableVolumeM3, pricePerM3, pricePerM3Display,
+                likeCount, likedByMe);
     }
 }

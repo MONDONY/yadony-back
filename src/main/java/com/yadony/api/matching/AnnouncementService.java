@@ -329,6 +329,7 @@ public class AnnouncementService {
 
     /** Interrupteurs des modes de transport (bateau fermé tant qu'il n'est pas ouvert depuis l'admin). */
     private final TransportModeGuard transportModeGuard;
+    private final com.yadony.api.likes.TripLikeService tripLikeService;
 
     /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
     private TripDelayRepository tripDelayRepository;
@@ -368,7 +369,8 @@ public class AnnouncementService {
             TripRankingProperties rankingProperties,
             TripScoreCalculator tripScoreCalculator,
             TravelerParcelsNetPort travelerParcelsNet,
-            TransportModeGuard transportModeGuard
+            TransportModeGuard transportModeGuard,
+            com.yadony.api.likes.TripLikeService tripLikeService
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -394,6 +396,7 @@ public class AnnouncementService {
         this.tripScoreCalculator = tripScoreCalculator;
         this.travelerParcelsNet = travelerParcelsNet;
         this.transportModeGuard = transportModeGuard;
+        this.tripLikeService = tripLikeService;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -890,6 +893,10 @@ public class AnnouncementService {
         // Audience : seulement les trajets du lecteur, les autres restent à null.
         Map<UUID, Long> ownViewCounts = announcementViewService.ownerViewCounts(viewerId, entities);
 
+        // J'aime : un seul appel groupé par page. Lecteur anonyme : jamais « aimé par moi ».
+        Map<UUID, Long> likeCounts = tripLikeService.countsFor(announcementIds);
+        Set<UUID> likedByViewer = viewerId == null ? Set.of() : tripLikeService.likedBy(viewerId, announcementIds);
+
         List<AnnouncementSearchResponse> result = new java.util.ArrayList<>(entities.size());
         for (AnnouncementEntity a : entities) {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
@@ -900,7 +907,8 @@ public class AnnouncementService {
                             convertedPricePerKgForResponse(a, viewerCurrency),
                             viewerCurrency,
                             pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency));
-            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId())));
+            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId()))
+                    .withLikes(likeCounts.getOrDefault(a.getId(), 0L), likedByViewer.contains(a.getId())));
         }
         return result;
     }

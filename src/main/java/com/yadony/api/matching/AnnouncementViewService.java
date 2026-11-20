@@ -22,11 +22,14 @@ public class AnnouncementViewService {
 
     private final AnnouncementRepository announcementRepository;
     private final AnnouncementViewRepository viewRepository;
+    private final com.yadony.api.likes.TripLikeService tripLikeService;
 
     public AnnouncementViewService(AnnouncementRepository announcementRepository,
-                                   AnnouncementViewRepository viewRepository) {
+                                   AnnouncementViewRepository viewRepository,
+                                   com.yadony.api.likes.TripLikeService tripLikeService) {
         this.announcementRepository = announcementRepository;
         this.viewRepository = viewRepository;
+        this.tripLikeService = tripLikeService;
     }
 
     /**
@@ -62,7 +65,8 @@ public class AnnouncementViewService {
         }
         return new AnnouncementInsightsResponse(
                 viewRepository.countByAnnouncementId(announcementId),
-                announcement.getShareViewCount());
+                announcement.getShareViewCount(),
+                tripLikeService.countsFor(List.of(announcementId)).getOrDefault(announcementId, 0L));
     }
 
     /**

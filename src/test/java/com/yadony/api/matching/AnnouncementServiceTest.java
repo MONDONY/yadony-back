@@ -127,7 +127,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
                 org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
-                transportModeGuard);
+                transportModeGuard,
+                org.mockito.Mockito.mock(com.yadony.api.likes.TripLikeService.class));
     }
 
     private static final String FIREBASE_UID = "uid-traveler-001";
@@ -4109,7 +4110,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
                 org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
-                transportModeGuard);
+                transportModeGuard,
+                org.mockito.Mockito.mock(com.yadony.api.likes.TripLikeService.class));
 
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
             // le nouveau count (hors DRAFT) renvoie 1 => sous la limite (2) => création OK
@@ -4542,7 +4544,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
                 org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
-                transportModeGuard);
+                transportModeGuard,
+                org.mockito.Mockito.mock(com.yadony.api.likes.TripLikeService.class));
 
             AnnouncementEntity draft = draftEntityOwnedBy(user);
             when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(user));
@@ -4948,7 +4951,8 @@ class AnnouncementServiceTest {
                 new com.yadony.api.matching.ranking.TripScoreCalculator(
                         new com.yadony.api.matching.ranking.TripRankingProperties(null, 0, 0, 0, 0)),
                 org.mockito.Mockito.mock(TravelerParcelsNetPort.class),
-                transportModeGuard);
+                transportModeGuard,
+                org.mockito.Mockito.mock(com.yadony.api.likes.TripLikeService.class));
         }
 
         @Test
