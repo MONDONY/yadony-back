@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class NoShowSchedulerTest {
 
     @Mock private BidRepository bidRepository;
+    @Mock private AnnouncementRepository announcementRepository;
     @Mock private NoShowService noShowService;
 
     @InjectMocks private NoShowScheduler scheduler;
@@ -102,6 +103,79 @@ class NoShowSchedulerTest {
 
             verify(noShowService).recordTravelerNoShow(BID_ID, "scheduler");
             verify(noShowService, never()).recordTravelerNoShow(notYetId, "scheduler");
+        }
+    }
+
+    /**
+     * Le colis n'est déclaré absent / annulé que si la date limite (+ 1 h) ET l'heure de départ
+     * du trajet sont toutes deux dépassées : avant le départ, le voyageur peut encore scanner.
+     */
+    @Nested
+    @DisplayName("heure de départ du trajet")
+    class DepartureGateTests {
+
+        private AnnouncementEntity trip(String date, String time, String zone) {
+            AnnouncementEntity a = new AnnouncementEntity();
+            a.setDepartureDate(java.time.LocalDate.parse(date));
+            a.setDepartureTime(java.time.LocalTime.parse(time));
+            a.setTimezone(zone);
+            return a;
+        }
+
+        @Test
+        @DisplayName("date limite + grâce dépassées mais trajet pas parti → rien")
+        void deadlinePassedButNotDeparted_doesNothing() {
+            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 8, 0));
+            // Départ 20:00 Paris = 18:00Z ; now 12:00Z
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(java.util.Optional.of(trip("2026-07-15", "20:00", "Europe/Paris")));
+
+            scheduler.detectNoShowsAt(Instant.parse("2026-07-15T12:00:00Z"));
+
+            verifyNoInteractions(noShowService);
+        }
+
+        @Test
+        @DisplayName("date limite + grâce dépassées ET trajet parti → no-show comme avant")
+        void deadlinePassedAndDeparted_recordsNoShow() {
+            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 8, 0));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(java.util.Optional.of(trip("2026-07-15", "20:00", "Europe/Paris")));
+
+            scheduler.detectNoShowsAt(Instant.parse("2026-07-15T18:00:01Z"));
+
+            verify(noShowService).recordTravelerNoShow(BID_ID, "scheduler");
+        }
+
+        @Test
+        @DisplayName("espèces : trajet pas parti → pas d'annulation, parti → annulé sans fautif")
+        void cashFollowsSameGate() {
+            bid.setPaymentMethod(PaymentMethod.CASH);
+            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 8, 0));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid));
+            when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(java.util.Optional.of(trip("2026-07-15", "20:00", "Europe/Paris")));
+
+            scheduler.detectNoShowsAt(Instant.parse("2026-07-15T17:59:00Z"));
+            verifyNoInteractions(noShowService);
+
+            scheduler.detectNoShowsAt(Instant.parse("2026-07-15T18:00:01Z"));
+            verify(noShowService).expireUnconfirmedCashHandover(BID_ID);
+        }
+
+        @Test
+        @DisplayName("départ passé mais date limite + grâce pas encore passée → rien")
+        void departedButDeadlineGraceNotPassed_doesNothing() {
+            bid.setHandoverDeadline(LocalDateTime.of(2026, 7, 15, 11, 30));
+            when(bidRepository.findNoShowBids(any(), any())).thenReturn(List.of(bid));
+            lenient().when(announcementRepository.findById(ANNOUNCEMENT_ID))
+                    .thenReturn(java.util.Optional.of(trip("2026-07-15", "09:00", "Europe/Paris")));
+
+            scheduler.detectNoShowsAt(Instant.parse("2026-07-15T12:00:00Z"));
+
+            verifyNoInteractions(noShowService);
         }
     }
 

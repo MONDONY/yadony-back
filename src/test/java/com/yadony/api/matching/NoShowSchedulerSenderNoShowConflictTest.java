@@ -93,6 +93,23 @@ class NoShowSchedulerSenderNoShowConflictTest {
     }
 
     @Test
+    void dateLimitePasseeMaisTrajetPasParti_leColisResteAccepte() {
+        Fixture f = acceptedBidPastDeadline();
+        AnnouncementEntity trip = em.find(AnnouncementEntity.class, f.bid.getAnnouncementId());
+        trip.setDepartureDate(LocalDate.now().plusDays(2));
+        em.flush();
+        em.clear();
+
+        scheduler.detectNoShows();
+        em.flush();
+        em.clear();
+
+        assertThat(bidRepository.findById(f.bid.getId()).orElseThrow().getStatus())
+                .isEqualTo(BidStatus.ACCEPTED);
+        assertTravelerNotPenalized(f);
+    }
+
+    @Test
     void sansDeclaration_leCronDeclareLeVoyageurAbsent() {
         Fixture f = acceptedBidPastDeadline();
 
@@ -291,7 +308,7 @@ class NoShowSchedulerSenderNoShowConflictTest {
         a.setTravelerId(traveler.getId());
         a.setDepartureCity("Paris");
         a.setArrivalCity("Bamako");
-        a.setDepartureDate(LocalDate.now().plusDays(2));
+        a.setDepartureDate(LocalDate.now().minusDays(1));
         a.setTransportMode(TransportMode.PLANE);
         a.setPickupAddressLabel("Gare du Nord, Paris");
         a.setPickupLat(new BigDecimal("48.880756"));
