@@ -22,6 +22,7 @@ public record UserDataExportDto(
         List<PickupAddressDto> pickupAddresses,
         List<DeliveryAddressDto> deliveryAddresses,
         List<FavoriteExport> favorites,
+        List<TripLikeExport> tripLikes,
         List<SearchInterestExport> searchInterests,
         LocalDateTime generatedAt
 ) {
@@ -70,6 +71,12 @@ public record UserDataExportDto(
     public record FavoriteExport(
             String targetType,
             UUID targetId,
+            LocalDateTime createdAt
+    ) {}
+
+    /** Trajets que l'utilisateur a aimés. Jamais les j'aime reçus : ce sont les données d'autres personnes. */
+    public record TripLikeExport(
+            UUID tripId,
             LocalDateTime createdAt
     ) {}
 }

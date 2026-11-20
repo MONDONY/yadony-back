@@ -369,9 +369,9 @@ class AnnouncementSearchRankingTest {
     }
 
     @Test
-    @DisplayName("j'aime : un seul countsFor sur les candidats, y compris dans le bloc 2")
+    @DisplayName("j'aime : le premier countsFor reçoit les identifiants des candidats")
     @SuppressWarnings("unchecked")
-    void likes_oneCountsForCallOverCandidates() {
+    void likes_countsForCalledOverCandidatesIds() {
         UserEntity t = traveler();
         AnnouncementEntity a = trip(t, 11);
         AnnouncementEntity b = trip(t, 12);

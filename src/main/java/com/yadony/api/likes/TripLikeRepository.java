@@ -14,6 +14,9 @@ public interface TripLikeRepository extends JpaRepository<TripLikeEntity, UUID> 
 
     boolean existsByUserIdAndTripId(UUID userId, UUID tripId);
 
+    /** Les j'aime d'un utilisateur, du plus récent au plus ancien (export RGPD). */
+    List<TripLikeEntity> findByUserIdOrderByCreatedAtDesc(UUID userId);
+
     /**
      * Ajoute le j'aime s'il n'existe pas, de façon atomique ({@code ON CONFLICT DO NOTHING}
      * couvre l'index unique partiel {@code ux_trip_likes_active}) : deux touchers simultanés
@@ -40,21 +43,24 @@ public interface TripLikeRepository extends JpaRepository<TripLikeEntity, UUID> 
     @Query(value = "DELETE FROM trip_likes WHERE user_id = :userId AND trip_id = :tripId", nativeQuery = true)
     int deleteActive(@Param("userId") UUID userId, @Param("tripId") UUID tripId);
 
-    /** Nombre de j'aime d'un trajet, hors comptes supprimés. */
+    /** Nombre de j'aime d'un trajet, hors comptes supprimés, bannis ou suspendus. */
     @Query(value = """
             SELECT COUNT(*) FROM trip_likes l
             JOIN users u ON u.id = l.user_id AND u.deleted_at IS NULL
+              AND u.status NOT IN ('BANNED', 'SUSPENDED')
             WHERE l.trip_id = :tripId AND l.deleted_at IS NULL
             """, nativeQuery = true)
     long countActive(@Param("tripId") UUID tripId);
 
     /**
-     * Lignes {@code [tripId, count]}, sans les trajets à zéro ni les comptes supprimés.
+     * Lignes {@code [tripId, count]}, sans les trajets à zéro ni les comptes supprimés, bannis ou suspendus.
      * JPQL et non natif : l'identifiant revient typé {@link UUID} sur tous les moteurs.
      */
     @Query("""
             SELECT l.tripId, COUNT(l) FROM TripLikeEntity l, UserEntity u
-            WHERE u.id = l.userId AND u.deletedAt IS NULL AND l.tripId IN :ids
+            WHERE u.id = l.userId AND u.deletedAt IS NULL
+              AND u.status NOT IN (com.yadony.api.auth.UserStatus.BANNED, com.yadony.api.auth.UserStatus.SUSPENDED)
+              AND l.tripId IN :ids
             GROUP BY l.tripId
             """)
     List<Object[]> countByTripIds(@Param("ids") Collection<UUID> ids);

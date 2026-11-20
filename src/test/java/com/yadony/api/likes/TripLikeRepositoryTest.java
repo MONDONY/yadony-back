@@ -91,6 +91,57 @@ class TripLikeRepositoryTest {
         assertThat(repository.countActive(trip)).isEqualTo(1);
     }
 
+    private void setStatus(UUID id, String status) {
+        entityManager.createNativeQuery("UPDATE users SET status = :s WHERE id = :id")
+                .setParameter("s", status).setParameter("id", id).executeUpdate();
+        entityManager.clear();
+    }
+
+    @Test
+    @DisplayName("les comptes bannis ou suspendus ne comptent pas, les comptes actifs oui")
+    void counts_ignorent_les_comptes_bannis_ou_suspendus() {
+        UUID active = newUser();
+        UUID banned = newUser();
+        UUID suspended = newUser();
+        UUID trip = UUID.randomUUID();
+        for (UUID u : List.of(active, banned, suspended)) {
+            repository.insertIfAbsent(UUID.randomUUID(), u, trip);
+        }
+        setStatus(banned, "BANNED");
+        setStatus(suspended, "SUSPENDED");
+
+        assertThat(repository.countActive(trip)).isEqualTo(1);
+        List<Object[]> counts = repository.countByTripIds(List.of(trip));
+        assertThat(counts).hasSize(1);
+        assertThat(((Number) counts.get(0)[1]).longValue()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("un trajet dont tous les j'aime viennent de comptes bannis n'apparait pas")
+    void countByTripIds_omet_le_trajet_si_seuls_des_bannis_ont_aime() {
+        UUID banned = newUser();
+        UUID trip = UUID.randomUUID();
+        repository.insertIfAbsent(UUID.randomUUID(), banned, trip);
+        setStatus(banned, "BANNED");
+
+        assertThat(repository.countByTripIds(List.of(trip))).isEmpty();
+        assertThat(repository.countActive(trip)).isZero();
+    }
+
+    @Test
+    @DisplayName("findByUserIdOrderByCreatedAtDesc ne rend que les j'aime de l'utilisateur")
+    void findByUserId_ne_rend_que_les_siens() {
+        UUID me = newUser();
+        UUID other = newUser();
+        UUID mine = UUID.randomUUID();
+        repository.insertIfAbsent(UUID.randomUUID(), me, mine);
+        repository.insertIfAbsent(UUID.randomUUID(), other, UUID.randomUUID());
+        entityManager.clear();
+
+        assertThat(repository.findByUserIdOrderByCreatedAtDesc(me))
+                .extracting(TripLikeEntity::getTripId).containsExactly(mine);
+    }
+
     @Test
     @DisplayName("countByTripIds omet les trajets sans j'aime")
     void countByTripIds_omet_les_trajets_sans_j_aime() {
