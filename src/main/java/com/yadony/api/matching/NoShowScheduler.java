@@ -14,7 +14,8 @@ import java.util.List;
 
 /**
  * Story 9.6 — remise non effectuée à l'échéance (date limite + 1 h de grâce), sans scan ni
- * signalement en cours.
+ * signalement en cours, ET trajet déjà parti : tant que l'heure de départ n'est pas atteinte, le
+ * voyageur peut encore scanner la remise et le colis reste ACCEPTED, même date limite dépassée.
  * <ul>
  *   <li>carte, mobile money : le voyageur est déclaré absent ({@link NoShowService#recordTravelerNoShow}) ;</li>
  *   <li>espèces : le colis est annulé sans fautif, commission rendue au voyageur
@@ -38,11 +39,14 @@ public class NoShowScheduler {
     static final Duration RESOLVED_SENDER_NO_SHOW_GRACE = Duration.ofHours(24);
 
     private final BidRepository bidRepository;
+    private final AnnouncementRepository announcementRepository;
     private final NoShowService noShowService;
 
     public NoShowScheduler(BidRepository bidRepository,
+                           AnnouncementRepository announcementRepository,
                            NoShowService noShowService) {
         this.bidRepository = bidRepository;
+        this.announcementRepository = announcementRepository;
         this.noShowService = noShowService;
     }
 
@@ -74,6 +78,7 @@ public class NoShowScheduler {
 
         List<BidEntity> noShowBids = candidates.stream()
                 .filter(b -> isPastGrace(b, now))
+                .filter(b -> tripHasDeparted(b, now))
                 .toList();
 
         log.debug("No-show scheduler: {} bids to process ({} candidates)", noShowBids.size(), candidates.size());
@@ -91,6 +96,17 @@ public class NoShowScheduler {
                 log.error("Error processing no-show for bid {}: {}", bid.getId(), e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Le trajet du colis est-il parti ? Règle unique {@link DepartureRules#hasDeparted} (date +
+     * heure dans le fuseau du trajet). Annonce introuvable : on ne bloque pas, le comportement
+     * reste celui de la date limite seule.
+     */
+    private boolean tripHasDeparted(BidEntity bid, Instant now) {
+        return announcementRepository.findById(bid.getAnnouncementId())
+                .map(a -> DepartureRules.hasDeparted(a, now))
+                .orElse(true);
     }
 
     /** Date limite du colis (UTC) + 1 h de grâce, strictement dépassée. */
