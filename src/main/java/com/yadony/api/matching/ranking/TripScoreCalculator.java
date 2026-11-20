@@ -13,6 +13,7 @@ public class TripScoreCalculator {
     private static final double PRIOR_RATING = 4.0;
     private static final double PRIOR_COUNT = 5.0;
     private static final double LN_51 = Math.log(51);
+    private static final double LN_21 = Math.log(21);
     private static final double FRESHNESS_WINDOW_DAYS = 30.0;
 
     private final TripRankingProperties props;
@@ -36,6 +37,15 @@ public class TripScoreCalculator {
      * @return score entre 0 et 100 (0 si tous les poids sont à zéro)
      */
     public double score(TravelerQuality q, boolean onlinePayment, long daysToDeparture, long ageDays) {
+        return score(q, onlinePayment, daysToDeparture, ageDays, 0);
+    }
+
+    /**
+     * @param likeCount nombre de j'aime du trajet (négatif traité comme 0) ; le bonus sature à 20
+     * @return score entre 0 et 100 (0 si tous les poids sont à zéro)
+     */
+    public double score(TravelerQuality q, boolean onlinePayment, long daysToDeparture, long ageDays,
+                        long likeCount) {
         double sum = props.weightSum();
         if (sum <= 0) {
             return 0;
@@ -45,7 +55,8 @@ public class TripScoreCalculator {
                 + w.rating() * rating(q)
                 + w.deliveries() * deliveries(q)
                 + w.freshness() * freshness(daysToDeparture, ageDays)
-                + w.onlinePayment() * (onlinePayment ? 1.0 : 0.0);
+                + w.onlinePayment() * (onlinePayment ? 1.0 : 0.0)
+                + w.likes() * likes(likeCount);
         return clamp(total / sum) * 100;
     }
 
@@ -74,6 +85,11 @@ public class TripScoreCalculator {
         double departure = clamp(1 - Math.max(0, daysToDeparture) / FRESHNESS_WINDOW_DAYS);
         double age = clamp(1 - Math.max(0, ageDays) / FRESHNESS_WINDOW_DAYS);
         return 0.5 * departure + 0.5 * age;
+    }
+
+    /** J'aime : min(1, ln(1 + n) / ln(21)), saturé à 20 j'aime. */
+    private double likes(long likeCount) {
+        return clamp(Math.log(1 + Math.max(0, likeCount)) / LN_21);
     }
 
     private static double clamp(double v) {

@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -42,6 +43,7 @@ public class FavoriteService {
     private final GuestUserProvisioner guestUserProvisioner;
     private final BlockVisibility blockVisibility;
     private final AuditService auditService;
+    private final com.yadony.api.likes.TripLikeService tripLikeService;
 
     public FavoriteService(FavoriteRepository favoriteRepository,
                            UserRepository userRepository,
@@ -51,7 +53,8 @@ public class FavoriteService {
                            PackageRequestSearchMapper packageRequestSearchMapper,
                            GuestUserProvisioner guestUserProvisioner,
                            BlockVisibility blockVisibility,
-                           AuditService auditService) {
+                           AuditService auditService,
+                           com.yadony.api.likes.TripLikeService tripLikeService) {
         this.favoriteRepository = favoriteRepository;
         this.userRepository = userRepository;
         this.announcementRepository = announcementRepository;
@@ -61,6 +64,7 @@ public class FavoriteService {
         this.guestUserProvisioner = guestUserProvisioner;
         this.blockVisibility = blockVisibility;
         this.auditService = auditService;
+        this.tripLikeService = tripLikeService;
     }
 
     /**
@@ -176,7 +180,13 @@ public class FavoriteService {
         List<AnnouncementEntity> active = presentableTrips(ids, blockVisibility.hiddenUserIdsFor(callerId), callerId);
         if (active.isEmpty()) return List.of();
         Set<UUID> favIdSet = new HashSet<>(ids); // all are favorites
-        return announcementSearchMapper.toSearchResponseList(active, favIdSet);
+        // J'aime : un seul appel groupé pour toute la liste.
+        List<UUID> activeIds = active.stream().map(AnnouncementEntity::getId).toList();
+        Map<UUID, Long> likeCounts = tripLikeService.countsFor(activeIds);
+        Set<UUID> likedByCaller = tripLikeService.likedBy(callerId, activeIds);
+        return announcementSearchMapper.toSearchResponseList(active, favIdSet).stream()
+                .map(r -> r.withLikes(likeCounts.getOrDefault(r.id(), 0L), likedByCaller.contains(r.id())))
+                .toList();
     }
 
     /**

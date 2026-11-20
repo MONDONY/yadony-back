@@ -38,6 +38,7 @@ class UserDataExportServiceTest {
     @Mock private PickupAddressRepository pickupAddressRepository;
     @Mock private DeliveryAddressRepository deliveryAddressRepository;
     @Mock private FavoriteRepository favoriteRepository;
+    @Mock private com.yadony.api.likes.TripLikeRepository tripLikeRepository;
     @Mock private KycRepository kycRepository;
     @Mock private com.yadony.api.auth.FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.alerts.SearchInterestRepository searchInterestRepository;
@@ -50,7 +51,8 @@ class UserDataExportServiceTest {
                         "+221771234567", "aissatou@example.com"));
         return new UserDataExportService(
                 recipientRepository, pickupAddressRepository, deliveryAddressRepository,
-                favoriteRepository, kycRepository, firebaseContact, searchInterestRepository);
+                favoriteRepository, kycRepository, firebaseContact, searchInterestRepository,
+                tripLikeRepository);
     }
 
     private static void setId(Object entity, UUID id) {
@@ -194,5 +196,64 @@ class UserDataExportServiceTest {
         assertThat(export.kyc().rejectionReason()).isEqualTo("DOCUMENT_EXPIRED");
         assertThat(export.kyc().verificationRemindersSent()).isEqualTo(2);
         assertThat(export.kyc().verificationRemindersOptedOutAt()).isEqualTo(desinscrit);
+    }
+
+    @Test
+    @DisplayName("exporte les j'aime de l'utilisateur, du plus récent au plus ancien")
+    void export_includesOwnTripLikes() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = makeUser(userId);
+        UUID recentTrip = UUID.randomUUID();
+        UUID oldTrip = UUID.randomUUID();
+        var recent = new com.yadony.api.likes.TripLikeEntity(userId, recentTrip);
+        var old = new com.yadony.api.likes.TripLikeEntity(userId, oldTrip);
+        java.time.LocalDateTime t1 = java.time.LocalDateTime.of(2026, 11, 20, 9, 0);
+        java.time.LocalDateTime t0 = java.time.LocalDateTime.of(2026, 11, 1, 9, 0);
+        setField(recent, "createdAt", t1);
+        setField(old, "createdAt", t0);
+        when(tripLikeRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(recent, old));
+
+        UserDataExportDto export = service().export(user);
+
+        assertThat(export.tripLikes()).extracting(UserDataExportDto.TripLikeExport::tripId)
+                .containsExactly(recentTrip, oldTrip);
+        assertThat(export.tripLikes().get(0).createdAt()).isEqualTo(t1);
+        assertThat(export.tripLikes().get(1).createdAt()).isEqualTo(t0);
+    }
+
+    @Test
+    @DisplayName("sans j'aime, la liste est vide")
+    void export_noTripLikes_emptyList() {
+        UUID userId = UUID.randomUUID();
+        when(tripLikeRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+
+        assertThat(service().export(makeUser(userId)).tripLikes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ne lit que les j'aime de l'utilisateur exporté")
+    void export_readsOnlyOwnLikes() {
+        UUID userId = UUID.randomUUID();
+        service().export(makeUser(userId));
+
+        org.mockito.Mockito.verify(tripLikeRepository).findByUserIdOrderByCreatedAtDesc(userId);
+        org.mockito.Mockito.verifyNoMoreInteractions(tripLikeRepository);
+    }
+
+    private static void setField(Object entity, String name, Object value) {
+        Class<?> c = entity.getClass();
+        while (c != null) {
+            try {
+                Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                f.set(entity, value);
+                return;
+            } catch (NoSuchFieldException e) {
+                c = c.getSuperclass();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        throw new IllegalStateException(name);
     }
 }

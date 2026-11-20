@@ -246,6 +246,10 @@ class GuestDataExposureIT {
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
             "handoverDeadline", "isFavorite", "urgent", "currency", "negotiable",
             "availablePaymentMethods",
+            // likeCount : compteur public de j'aime, affiché sur la carte du trajet que le visiteur
+            // parcourt ; aucune identité. likedByMe : toujours faux pour un invité (aucun j'aime sans
+            // compte), champ du contrat de la carte.
+            "likeCount", "likedByMe",
             // Fuseau IANA de la ville de départ (PROD-1R) : déduit de la ville, déjà publique ;
             // sert seulement à afficher la date limite à l'heure locale du départ.
             "departureTimezone",

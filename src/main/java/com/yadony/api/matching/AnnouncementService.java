@@ -329,6 +329,7 @@ public class AnnouncementService {
 
     /** Interrupteurs des modes de transport (bateau fermé tant qu'il n'est pas ouvert depuis l'admin). */
     private final TransportModeGuard transportModeGuard;
+    private final com.yadony.api.likes.TripLikeService tripLikeService;
 
     /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
     private TripDelayRepository tripDelayRepository;
@@ -368,7 +369,8 @@ public class AnnouncementService {
             TripRankingProperties rankingProperties,
             TripScoreCalculator tripScoreCalculator,
             TravelerParcelsNetPort travelerParcelsNet,
-            TransportModeGuard transportModeGuard
+            TransportModeGuard transportModeGuard,
+            com.yadony.api.likes.TripLikeService tripLikeService
     ) {
         this.announcementRepository = announcementRepository;
         this.bidRepository = bidRepository;
@@ -394,6 +396,7 @@ public class AnnouncementService {
         this.tripScoreCalculator = tripScoreCalculator;
         this.travelerParcelsNet = travelerParcelsNet;
         this.transportModeGuard = transportModeGuard;
+        this.tripLikeService = tripLikeService;
     }
 
     // La clé porte la taille de page en plus du numéro : l'app compte les résultats
@@ -802,13 +805,17 @@ public class AnnouncementService {
     private Map<UUID, Double> rankingScores(List<RankingRow> rows, Map<UUID, UserEntity> travelers,
                                             LocalDate today) {
         Map<UUID, Double> scores = new HashMap<>();
+        // Un seul comptage des j'aime pour tous les candidats (au plus maxCandidates).
+        Map<UUID, Long> likeCounts = rows.isEmpty() ? Map.of()
+                : tripLikeService.countsFor(rows.stream().map(RankingRow::id).toList());
         for (RankingRow a : rows) {
-            scores.put(a.id(), rankingScore(a, travelers.get(a.travelerId()), today));
+            scores.put(a.id(), rankingScore(a, travelers.get(a.travelerId()), today,
+                    likeCounts.getOrDefault(a.id(), 0L)));
         }
         return scores;
     }
 
-    private double rankingScore(RankingRow a, UserEntity traveler, LocalDate today) {
+    private double rankingScore(RankingRow a, UserEntity traveler, LocalDate today, long likeCount) {
         TripScoreCalculator.TravelerQuality quality = traveler == null
                 ? new TripScoreCalculator.TravelerQuality(0, 0, 0, null, 0)
                 : new TripScoreCalculator.TravelerQuality(traveler.getCancellationCount(), traveler.getNoShowCount(),
@@ -820,7 +827,7 @@ public class AnnouncementService {
                 : java.time.temporal.ChronoUnit.DAYS.between(today, a.departureDate());
         long ageDays = a.createdAt() == null ? 0
                 : java.time.temporal.ChronoUnit.DAYS.between(a.createdAt().toLocalDate(), today);
-        return tripScoreCalculator.score(quality, online, daysToDeparture, ageDays);
+        return tripScoreCalculator.score(quality, online, daysToDeparture, ageDays, likeCount);
     }
 
     /** Score décroissant, id en départage : ordre total stable sous pagination. */
@@ -890,6 +897,10 @@ public class AnnouncementService {
         // Audience : seulement les trajets du lecteur, les autres restent à null.
         Map<UUID, Long> ownViewCounts = announcementViewService.ownerViewCounts(viewerId, entities);
 
+        // J'aime : un seul appel groupé par page. Lecteur anonyme : jamais « aimé par moi ».
+        Map<UUID, Long> likeCounts = tripLikeService.countsFor(announcementIds);
+        Set<UUID> likedByViewer = viewerId == null ? Set.of() : tripLikeService.likedBy(viewerId, announcementIds);
+
         List<AnnouncementSearchResponse> result = new java.util.ArrayList<>(entities.size());
         for (AnnouncementEntity a : entities) {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
@@ -900,7 +911,8 @@ public class AnnouncementService {
                             convertedPricePerKgForResponse(a, viewerCurrency),
                             viewerCurrency,
                             pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency));
-            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId())));
+            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId()))
+                    .withLikes(likeCounts.getOrDefault(a.getId(), 0L), likedByViewer.contains(a.getId())));
         }
         return result;
     }

@@ -39,6 +39,7 @@ class FavoriteServiceTest {
     @Mock GuestUserProvisioner guestUserProvisioner;
     @Mock BlockVisibility blockVisibility;
     @Mock com.yadony.api.common.AuditService auditService;
+    @Mock com.yadony.api.likes.TripLikeService tripLikeService;
 
     FavoriteService service;
 
@@ -52,7 +53,7 @@ class FavoriteServiceTest {
         service = new FavoriteService(favoriteRepository, userRepository,
                 announcementRepository, packageRequestRepository,
                 announcementSearchMapper, packageRequestSearchMapper,
-                guestUserProvisioner, blockVisibility, auditService);
+                guestUserProvisioner, blockVisibility, auditService, tripLikeService);
         userId = UUID.randomUUID();
         tripId = UUID.randomUUID();
 
@@ -429,6 +430,7 @@ class FavoriteServiceTest {
         when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
 
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         // Service now calls toSearchResponseList with the filtered active list (a1 only)
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
 
@@ -438,6 +440,37 @@ class FavoriteServiceTest {
         assertThat(res.get(0)).isSameAs(dto);
         verify(announcementSearchMapper).toSearchResponseList(eq(List.of(a1)), anySet());
         verify(announcementSearchMapper, never()).toSearchResponse(any(AnnouncementEntity.class), anyBoolean());
+    }
+
+    @Test
+    void getFavoriteTrips_carriesLikeCountAndLikedByMe_withOneBatchedCall() {
+        UUID t1 = UUID.randomUUID();
+        UUID t2 = UUID.randomUUID();
+        when(favoriteRepository.findTargetIds(userId, FavoriteTargetType.TRIP)).thenReturn(List.of(t1, t2));
+        AnnouncementEntity a1 = mock(AnnouncementEntity.class);
+        when(a1.getId()).thenReturn(t1);
+        when(a1.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        AnnouncementEntity a2 = mock(AnnouncementEntity.class);
+        when(a2.getId()).thenReturn(t2);
+        when(a2.getStatus()).thenReturn(AnnouncementStatus.ACTIVE);
+        when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
+        AnnouncementSearchResponse d1 = mock(AnnouncementSearchResponse.class);
+        when(d1.id()).thenReturn(t1);
+        AnnouncementSearchResponse d2 = mock(AnnouncementSearchResponse.class);
+        when(d2.id()).thenReturn(t2);
+        AnnouncementSearchResponse d1Liked = mock(AnnouncementSearchResponse.class);
+        AnnouncementSearchResponse d2Plain = mock(AnnouncementSearchResponse.class);
+        when(d1.withLikes(4L, true)).thenReturn(d1Liked);
+        when(d2.withLikes(0L, false)).thenReturn(d2Plain);
+        when(announcementSearchMapper.toSearchResponseList(anyList(), anySet())).thenReturn(List.of(d1, d2));
+        when(tripLikeService.countsFor(anyCollection())).thenReturn(Map.of(t1, 4L));
+        when(tripLikeService.likedBy(eq(userId), anyCollection())).thenReturn(Set.of(t1));
+
+        var res = service.getFavoriteTrips(userId);
+
+        assertThat(res).containsExactly(d1Liked, d2Plain);
+        verify(tripLikeService, times(1)).countsFor(anyCollection());
+        verify(tripLikeService, times(1)).likedBy(eq(userId), anyCollection());
     }
 
     @Test
@@ -457,6 +490,7 @@ class FavoriteServiceTest {
 
         when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
 
         var res = service.getFavoriteTrips(userId);
@@ -483,6 +517,7 @@ class FavoriteServiceTest {
 
         when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1, a2));
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet())).thenReturn(List.of(dto));
 
         var res = service.getFavoriteTrips(userId);
@@ -507,6 +542,7 @@ class FavoriteServiceTest {
 
         when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(shown, hiddenTrip));
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(shown)), anySet())).thenReturn(List.of(dto));
 
         assertThat(service.getFavoriteTrips(userId)).hasSize(1);
@@ -536,6 +572,7 @@ class FavoriteServiceTest {
         when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(closed, open));
         when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of());
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(open)), anySet())).thenReturn(List.of(dto));
 
         assertThat(service.getFavoriteTrips(userId)).hasSize(1);
@@ -554,6 +591,7 @@ class FavoriteServiceTest {
         when(a1.getStatus()).thenReturn(AnnouncementStatus.FULL);
         when(announcementRepository.findAllById(anyCollection())).thenReturn(List.of(a1));
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(anyList(), anySet())).thenReturn(List.of(dto));
 
         service.getFavoriteTrips(userId);
@@ -585,6 +623,7 @@ class FavoriteServiceTest {
         when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of(blockedTraveler));
 
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet()))
                 .thenReturn(List.of(dto));
 
@@ -610,6 +649,7 @@ class FavoriteServiceTest {
         when(blockVisibility.hiddenUserIdsFor(userId)).thenReturn(Set.of());
 
         AnnouncementSearchResponse dto = mock(AnnouncementSearchResponse.class);
+        when(dto.withLikes(anyLong(), anyBoolean())).thenReturn(dto);
         when(announcementSearchMapper.toSearchResponseList(eq(List.of(a1)), anySet()))
                 .thenReturn(List.of(dto));
 

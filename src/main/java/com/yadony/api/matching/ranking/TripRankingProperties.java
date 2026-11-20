@@ -1,6 +1,7 @@
 package com.yadony.api.matching.ranking;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
@@ -19,7 +20,7 @@ public record TripRankingProperties(@DefaultValue Weights weights, int exactThre
                                     int maxCandidatesWithoutCity) {
 
     public TripRankingProperties {
-        if (weights == null) weights = new Weights(30, 25, 20, 15, 10);
+        if (weights == null) weights = new Weights(30, 25, 20, 15, 10, 10);
         if (exactThreshold <= 0) exactThreshold = 7;
         if (similarMax <= 0) similarMax = 20;
         if (maxCandidates <= 0) maxCandidates = 1000;
@@ -27,15 +28,22 @@ public record TripRankingProperties(@DefaultValue Weights weights, int exactThre
     }
 
     /**
-     * Poids des critères : seule une valeur absente prend le défaut (30/25/20/15/10), un 0 explicite
+     * Poids des critères : seule une valeur absente prend le défaut (30/25/20/15/10/10), un 0 explicite
      * est conservé (critère désactivé) et une valeur négative est refusée.
      */
     public record Weights(@DefaultValue("30") int reliability, @DefaultValue("25") int rating,
                           @DefaultValue("20") int deliveries, @DefaultValue("15") int freshness,
-                          @DefaultValue("10") int onlinePayment) {
+                          @DefaultValue("10") int onlinePayment, @DefaultValue("10") int likes) {
 
+        /** Cinq poids : le critère des j'aime est désactivé (0). */
+        public Weights(int reliability, int rating, int deliveries, int freshness, int onlinePayment) {
+            this(reliability, rating, deliveries, freshness, onlinePayment, 0);
+        }
+
+        @ConstructorBinding
         public Weights {
-            if (reliability < 0 || rating < 0 || deliveries < 0 || freshness < 0 || onlinePayment < 0) {
+            if (reliability < 0 || rating < 0 || deliveries < 0 || freshness < 0 || onlinePayment < 0
+                    || likes < 0) {
                 throw new IllegalArgumentException("Les poids du classement ne peuvent pas être négatifs");
             }
         }
@@ -44,6 +52,6 @@ public record TripRankingProperties(@DefaultValue Weights weights, int exactThre
     /** Somme des poids, utilisée pour normaliser le score. */
     public double weightSum() {
         return (double) weights.reliability() + weights.rating() + weights.deliveries()
-                + weights.freshness() + weights.onlinePayment();
+                + weights.freshness() + weights.onlinePayment() + weights.likes();
     }
 }

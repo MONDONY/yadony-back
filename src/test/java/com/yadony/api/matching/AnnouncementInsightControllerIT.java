@@ -92,12 +92,13 @@ class AnnouncementInsightControllerIT {
     @Test
     void insights_owner_returnsUniqueViewersAndPosterViews() throws Exception {
         UUID id = UUID.randomUUID();
-        when(service.getInsights(USER_UUID, id)).thenReturn(new AnnouncementInsightsResponse(12, 7));
+        when(service.getInsights(USER_UUID, id)).thenReturn(new AnnouncementInsightsResponse(12, 7, 5));
 
         mockMvc.perform(get("/announcements/" + id + "/insights").with(authentication(authAs("TRAVELER"))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.uniqueViewerCount").value(12))
-            .andExpect(jsonPath("$.shareViewCount").value(7));
+            .andExpect(jsonPath("$.shareViewCount").value(7))
+            .andExpect(jsonPath("$.likeCount").value(5));
     }
 
     @Test

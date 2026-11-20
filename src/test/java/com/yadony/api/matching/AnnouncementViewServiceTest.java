@@ -28,6 +28,7 @@ class AnnouncementViewServiceTest {
 
     @Mock private AnnouncementRepository announcementRepository;
     @Mock private AnnouncementViewRepository viewRepository;
+    @Mock private com.yadony.api.likes.TripLikeService tripLikeService;
 
     private AnnouncementViewService service;
 
@@ -37,7 +38,7 @@ class AnnouncementViewServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AnnouncementViewService(announcementRepository, viewRepository);
+        service = new AnnouncementViewService(announcementRepository, viewRepository, tripLikeService);
     }
 
     private AnnouncementEntity trip(boolean listed) {
@@ -130,6 +131,22 @@ class AnnouncementViewServiceTest {
     }
 
     @Test
+    void getInsights_owner_returnsLikeCount() {
+        givenTrip(true);
+        when(tripLikeService.countsFor(List.of(announcementId))).thenReturn(Map.of(announcementId, 9L));
+
+        assertThat(service.getInsights(travelerId, announcementId).likeCount()).isEqualTo(9L);
+    }
+
+    @Test
+    void getInsights_noLikes_returnsZero() {
+        givenTrip(true);
+        when(tripLikeService.countsFor(List.of(announcementId))).thenReturn(Map.of());
+
+        assertThat(service.getInsights(travelerId, announcementId).likeCount()).isZero();
+    }
+
+    @Test
     void getInsights_someoneElse_isNotFound() {
         givenTrip(true);
 
@@ -137,6 +154,7 @@ class AnnouncementViewServiceTest {
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
         verify(viewRepository, never()).countByAnnouncementId(any());
+        verifyNoInteractions(tripLikeService);
     }
 
     // ─── ownerViewCounts (fil de recherche) ─────────────────────────────────

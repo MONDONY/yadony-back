@@ -17,6 +17,8 @@ import com.yadony.api.export.dto.UserDataExportDto;
 import com.yadony.api.export.dto.UserDataExportDto.FavoriteExport;
 import com.yadony.api.export.dto.UserDataExportDto.KycExport;
 import com.yadony.api.export.dto.UserDataExportDto.ProfileExport;
+import com.yadony.api.export.dto.UserDataExportDto.TripLikeExport;
+import com.yadony.api.likes.TripLikeRepository;
 import com.yadony.api.favorites.FavoriteRepository;
 import com.yadony.api.kyc.KycRepository;
 import org.springframework.stereotype.Service;
@@ -36,6 +38,7 @@ public class UserDataExportService {
     private final KycRepository kycRepository;
     private final FirebaseContactService firebaseContact;
     private final SearchInterestRepository searchInterestRepository;
+    private final TripLikeRepository tripLikeRepository;
 
     public UserDataExportService(RecipientRepository recipientRepository,
                                   PickupAddressRepository pickupAddressRepository,
@@ -43,7 +46,8 @@ public class UserDataExportService {
                                   FavoriteRepository favoriteRepository,
                                   KycRepository kycRepository,
                                   FirebaseContactService firebaseContact,
-                                  SearchInterestRepository searchInterestRepository) {
+                                  SearchInterestRepository searchInterestRepository,
+                                  TripLikeRepository tripLikeRepository) {
         this.recipientRepository = recipientRepository;
         this.pickupAddressRepository = pickupAddressRepository;
         this.deliveryAddressRepository = deliveryAddressRepository;
@@ -51,6 +55,7 @@ public class UserDataExportService {
         this.kycRepository = kycRepository;
         this.firebaseContact = firebaseContact;
         this.searchInterestRepository = searchInterestRepository;
+        this.tripLikeRepository = tripLikeRepository;
     }
 
     public UserDataExportDto export(UserEntity user) {
@@ -100,6 +105,11 @@ public class UserDataExportService {
                 .map(f -> new FavoriteExport(f.getTargetType().name(), f.getTargetId(), f.getCreatedAt()))
                 .collect(Collectors.toList());
 
+        List<TripLikeExport> tripLikes = tripLikeRepository.findByUserIdOrderByCreatedAtDesc(user.getId())
+                .stream()
+                .map(l -> new TripLikeExport(l.getTripId(), l.getCreatedAt()))
+                .collect(Collectors.toList());
+
         List<SearchInterestExport> searchInterests = searchInterestRepository
                 .findAllByUserIdOrderByLastSearchedAtDesc(user.getId())
                 .stream()
@@ -114,6 +124,7 @@ public class UserDataExportService {
                 pickupAddresses,
                 deliveryAddresses,
                 favorites,
+                tripLikes,
                 searchInterests,
                 LocalDateTime.now(ZoneOffset.UTC)
         );

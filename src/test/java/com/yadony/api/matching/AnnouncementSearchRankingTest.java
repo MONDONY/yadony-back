@@ -92,6 +92,7 @@ class AnnouncementSearchRankingTest {
 
     private AnnouncementService service;
     private TripScoreCalculator scoreCalculator;
+    private com.yadony.api.likes.TripLikeService tripLikeService;
     private final Map<UUID, UserEntity> users = new HashMap<>();
     /** Annonces créées par le test : servies par {@code findAllById} (chargement de la page). */
     private final Map<UUID, AnnouncementEntity> announcements = new HashMap<>();
@@ -121,6 +122,7 @@ class AnnouncementSearchRankingTest {
                 com.yadony.api.config.PlatformSettingsTestFactory.withUrgencyThresholdDays(3));
         TripRankingProperties props = new TripRankingProperties(null, 0, 0, 0, 0);
         scoreCalculator = org.mockito.Mockito.spy(new TripScoreCalculator(props));
+        tripLikeService = org.mockito.Mockito.mock(com.yadony.api.likes.TripLikeService.class);
         service = new AnnouncementService(
                 announcementRepository, bidRepository, userRepository,
                 auditService, eventPublisher, config,
@@ -133,7 +135,8 @@ class AnnouncementSearchRankingTest {
                 mock(TravelerPayoutNetworksPort.class),
                 props, scoreCalculator,
                 mock(TravelerParcelsNetPort.class),
-                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class));
+                org.mockito.Mockito.mock(com.yadony.api.matching.TransportModeGuard.class),
+                tripLikeService);
     }
 
     // ─── Fabriques ────────────────────────────────────────────────────────────
@@ -332,6 +335,54 @@ class AnnouncementSearchRankingTest {
         assertThat(pageable.getValue().getPageSize()).isEqualTo(300);
         assertThat(pageable.getValue().getSort().getOrderFor("departureDate")).isNotNull();
         assertThat(pageable.getValue().getSort().getOrderFor("travelerIsPro")).isNull();
+    }
+
+    @Test
+    @DisplayName("j'aime : à qualité égale, le trajet à 15 j'aime sort avant celui à 0, même avec un id plus grand")
+    void likes_breakTieInFavourOfLikedTrip() {
+        UserEntity t = traveler();
+        AnnouncementEntity none = trip(t, 11);
+        AnnouncementEntity liked = trip(t, 11);
+        reId(none, UUID.fromString("00000000-0000-0000-0000-000000000001"));
+        reId(liked, UUID.fromString("00000000-0000-0000-0000-000000000002"));
+        stubFindAll(List.of(none, liked));
+        when(tripLikeService.countsFor(any())).thenReturn(Map.of(liked.getId(), 15L));
+
+        TripSearchPage<AnnouncementSearchResponse> page = new Q().run();
+
+        assertThat(ids(page)).containsExactly(liked.getId(), none.getId());
+    }
+
+    @Test
+    @DisplayName("j'aime : sans j'aime, l'id départage toujours")
+    void withoutLikes_idStillBreaksTies() {
+        UserEntity t = traveler();
+        AnnouncementEntity a = trip(t, 11);
+        AnnouncementEntity b = trip(t, 11);
+        reId(a, UUID.fromString("00000000-0000-0000-0000-000000000009"));
+        reId(b, UUID.fromString("00000000-0000-0000-0000-000000000003"));
+        stubFindAll(List.of(a, b));
+
+        TripSearchPage<AnnouncementSearchResponse> page = new Q().run();
+
+        assertThat(ids(page)).containsExactly(b.getId(), a.getId());
+    }
+
+    @Test
+    @DisplayName("j'aime : le premier countsFor reçoit les identifiants des candidats")
+    @SuppressWarnings("unchecked")
+    void likes_countsForCalledOverCandidatesIds() {
+        UserEntity t = traveler();
+        AnnouncementEntity a = trip(t, 11);
+        AnnouncementEntity b = trip(t, 12);
+        stubFindAll(List.of(a, b));
+        ArgumentCaptor<java.util.Collection<UUID>> captor = ArgumentCaptor.forClass(java.util.Collection.class);
+
+        new Q().run();
+
+        // Un appel pour le classement (les deux candidats) ; les suivants servent l'affichage.
+        verify(tripLikeService, atLeastOnce()).countsFor(captor.capture());
+        assertThat(captor.getAllValues().get(0)).containsExactlyInAnyOrder(a.getId(), b.getId());
     }
 
     @Test
@@ -804,6 +855,8 @@ class AnnouncementSearchRankingTest {
         assertThat(pageable.getValue().getSort()).extracting(o -> o.getProperty())
                 .containsExactly("departureDate", "travelerIsGpPro", "id");
         verify(scoreCalculator, never()).score(any(), ArgumentMatchers.anyBoolean(),
+                ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong());
+        verify(scoreCalculator, never()).score(any(), ArgumentMatchers.anyBoolean(),
                 ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong());
         // Seul le voyageur de la ligne servie est lu, jamais un lot de candidats.
         @SuppressWarnings("unchecked")
@@ -831,6 +884,8 @@ class AnnouncementSearchRankingTest {
         assertThat(page.similarAnnouncements()).isEmpty();
         verify(announcementRepository, times(1)).findAll(
                 ArgumentMatchers.<Specification<AnnouncementEntity>>any(), any(Pageable.class));
+        verify(scoreCalculator, never()).score(any(), ArgumentMatchers.anyBoolean(),
+                ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong());
         verify(scoreCalculator, never()).score(any(), ArgumentMatchers.anyBoolean(),
                 ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong());
     }

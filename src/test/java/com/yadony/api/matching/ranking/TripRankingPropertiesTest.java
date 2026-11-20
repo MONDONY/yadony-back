@@ -25,11 +25,12 @@ class TripRankingPropertiesTest {
         assertThat(defaults.weights().deliveries()).isEqualTo(20);
         assertThat(defaults.weights().freshness()).isEqualTo(15);
         assertThat(defaults.weights().onlinePayment()).isEqualTo(10);
+        assertThat(defaults.weights().likes()).isEqualTo(10);
         assertThat(defaults.exactThreshold()).isEqualTo(7);
         assertThat(defaults.similarMax()).isEqualTo(20);
         assertThat(defaults.maxCandidates()).isEqualTo(1000);
         assertThat(defaults.maxCandidatesWithoutCity()).isEqualTo(300);
-        assertThat(defaults.weightSum()).isEqualTo(100.0);
+        assertThat(defaults.weightSum()).isEqualTo(110.0);
     }
 
     @Test
@@ -49,12 +50,29 @@ class TripRankingPropertiesTest {
         TripRankingProperties p = bind(Map.of("yadony.ranking.weights.freshness", "0"));
         assertThat(p.weights().freshness()).isZero();
         assertThat(p.weights().reliability()).isEqualTo(30);
-        assertThat(p.weightSum()).isEqualTo(85.0);
+        assertThat(p.weightSum()).isEqualTo(95.0);
     }
 
     @Test
     void negativeWeight_isRejected() {
         assertThatThrownBy(() -> bind(Map.of("yadony.ranking.weights.rating", "-1")))
                 .hasRootCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void likesWeight_bindsAndZeroIsKept() {
+        assertThat(bind(Map.of("yadony.ranking.weights.likes", "0")).weights().likes()).isZero();
+        assertThat(bind(Map.of("yadony.ranking.weights.likes", "25")).weights().likes()).isEqualTo(25);
+    }
+
+    @Test
+    void negativeLikesWeight_isRejected() {
+        assertThatThrownBy(() -> bind(Map.of("yadony.ranking.weights.likes", "-1")))
+                .hasRootCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void nullWeights_defaultToSixValues() {
+        assertThat(new TripRankingProperties(null, 0, 0, 0, 0).weightSum()).isEqualTo(110.0);
     }
 }
