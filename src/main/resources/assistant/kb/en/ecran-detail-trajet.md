@@ -12,4 +12,4 @@ routes:
   - path: /announcements/trips
     label: My trips
 ---
-Ticket with orange "To do · N" pill, kilos, price, status; the like count shows on the card and the "Poster" tile. "To do": one big card for the most urgent action (with its deadline), 3 rows after it, then "+ N more to do". Requests keep "Request 1 of N" (Decline, Accept). One "Parcels" line ("2 need your action") opens the "Parcels" sheet (Estimated earnings). "Your trip": Route, Payments, Conditions, Poster, Arrival. The sticky button follows the most urgent action, never "Add card" or "Rate". ⋮ menu.
+Ticket with the orange "To do · N" pill, kilos and price, status card; the like count, with the views, is in the "Poster" tile. "To do": one big card for the most urgent action (with its deadline), 3 rows after it, then "+ N more to do". Requests keep "Request 1 of N" (Decline, Accept). One "Parcels" line ("2 need your action") opens the "Parcels" sheet (Estimated earnings). "Your trip": Route, Payments, Conditions, Poster, Arrival. The sticky button follows the most urgent action, never "Add card" or "Rate". ⋮ menu.
