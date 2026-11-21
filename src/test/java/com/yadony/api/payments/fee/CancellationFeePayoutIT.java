@@ -82,7 +82,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
  * Versement du dédommagement d'annulation au voyageur sur la vraie pile : remboursement partiel réel
  * ({@link RefundProcessor}, transaction REQUIRES_NEW), événement {@link CancellationFeeRetainedEvent} écouté après
  * commit, vrai port {@code cancellation} et son verrou de ligne, vrai audit, vraies alertes admin, planificateur.
- * PostgreSQL (Flyway jusqu'à V390) ; seul Stripe est simulé.
+ * PostgreSQL (Flyway jusqu'à V393) ; seul Stripe est simulé.
  */
 @SpringBootTest
 @ActiveProfiles("e2e")

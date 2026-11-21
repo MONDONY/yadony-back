@@ -227,7 +227,7 @@ public class MobileMoneyPayoutInitiator {
      * {@code currency}), rail mobile money. Variante de {@link #release} rattachée à la RETENUE, jamais au paiement :
      * le paiement du colis est déjà remboursé (en partie) à l'expéditeur, il n'y a ni claim {@code ESCROW → RELEASED}
      * ni versement de colis à protéger. L'opération porte le purpose {@code CANCELLATION_FEE} et
-     * {@code cancellation_fee_id} (V391), jamais {@code payment_id} : elle ne peut pas heurter le versement d'un colis
+     * {@code cancellation_fee_id} (V394), jamais {@code payment_id} : elle ne peut pas heurter le versement d'un colis
      * ({@code uq_pawapay_ops_live_per_payment}) et les écouteurs du paiement principal l'ignorent.
      *
      * <ol>

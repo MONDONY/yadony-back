@@ -50,7 +50,7 @@ import java.util.UUID;
  * avec l'aperçu montré à l'expéditeur. Une ligne déjà {@code DUE} quand on éteint l'interrupteur garde son cycle :
  * le règlement et le versement ne relisent pas l'interrupteur, l'argent promis au voyageur doit arriver.
  *
- * <p>Idempotent : une seule ligne par colis (index unique V390) ; un second appel est sans effet. Les
+ * <p>Idempotent : une seule ligne par colis (index unique V393) ; un second appel est sans effet. Les
  * trois appelants tiennent le verrou du colis. Un colis ou un trajet introuvable n'empêche pas
  * l'annulation : aucune retenue (en faveur de l'expéditeur).
  */
@@ -137,7 +137,7 @@ public class SenderCancellationFeeRecorder {
         fee.setRate(rate);
         fee.setReason(reason);
         fee.setStatus(CancellationFeeStatus.DUE);
-        // Colonnes NOT NULL (V390) : zéro tant que la retenue n'est pas réglée, devise du colis.
+        // Colonnes NOT NULL (V393) : zéro tant que la retenue n'est pas réglée, devise du colis.
         fee.setGrossFee(BigDecimal.ZERO);
         fee.setRefundFees(BigDecimal.ZERO);
         fee.setCommission(BigDecimal.ZERO);

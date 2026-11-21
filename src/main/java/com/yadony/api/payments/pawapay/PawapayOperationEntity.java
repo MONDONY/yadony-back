@@ -114,7 +114,7 @@ public class PawapayOperationEntity {
 
     /**
      * Retenue d'annulation dont cette opération verse le dédommagement au voyageur (purpose
-     * {@code CANCELLATION_FEE}, V391, PAYOUT seulement). Jamais avec {@code payment_id} : le paiement du
+     * {@code CANCELLATION_FEE}, V394, PAYOUT seulement). Jamais avec {@code payment_id} : le paiement du
      * colis est déjà remboursé, et les écouteurs du paiement principal prendraient ce versement pour celui
      * du colis livré.
      */

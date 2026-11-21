@@ -84,7 +84,7 @@ import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.timeout;
 
 /**
- * Retenue d'annulation réglée au remboursement, sur la vraie pile (PostgreSQL, Flyway jusqu'à V390,
+ * Retenue d'annulation réglée au remboursement, sur la vraie pile (PostgreSQL, Flyway jusqu'à V393,
  * transaction REQUIRES_NEW de {@link RefundProcessor}, vrai port {@code cancellation} et son verrou de
  * ligne, vrai audit) : seul Stripe est simulé. Prouve ce que les tests unitaires ne peuvent pas : un échec
  * Stripe défait le claim ET laisse la retenue due, et l'entité paiement chargée avant le claim n'écrase

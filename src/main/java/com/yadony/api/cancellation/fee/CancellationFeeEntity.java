@@ -16,7 +16,7 @@ import java.util.UUID;
 /**
  * Frais retenus sur le remboursement d'un expéditeur qui annule un colis accepté.
  * Une ligne par colis. En base (Postgres) l'unicité est un index partiel sur les lignes
- * non supprimées (V390) ; la contrainte déclarée ici sert au schéma H2 des tests.
+ * non supprimées (V393) ; la contrainte déclarée ici sert au schéma H2 des tests.
  */
 @Entity
 @Table(name = "cancellation_fees",
@@ -62,11 +62,11 @@ public class CancellationFeeEntity extends BaseEntity {
     @Column(name = "payout_ref", length = 100)
     private String payoutRef;
 
-    /** Dernier motif de l'attente de versement (V392), {@value #PAYOUT_PENDING_REASON_MAX} caractères au plus. */
+    /** Dernier motif de l'attente de versement (V395), {@value #PAYOUT_PENDING_REASON_MAX} caractères au plus. */
     @Column(name = "payout_pending_reason", length = PAYOUT_PENDING_REASON_MAX)
     private String payoutPendingReason;
 
-    /** Relance du versement par un administrateur (V392) : le plafond d'essais repart de cette date. */
+    /** Relance du versement par un administrateur (V395) : le plafond d'essais repart de cette date. */
     @Column(name = "payout_rearmed_at")
     private LocalDateTime payoutRearmedAt;
 

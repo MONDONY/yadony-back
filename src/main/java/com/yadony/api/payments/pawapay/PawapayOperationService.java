@@ -99,7 +99,7 @@ public class PawapayOperationService {
      * Versement du dédommagement d'annulation {@code cancellationFeeId} au voyageur (purpose
      * {@code CANCELLATION_FEE}, voyageur en {@code user_id}, {@code payment_id} toujours nul). Au plus un
      * versement vivant ou abouti par retenue : garde applicative + index
-     * {@code uq_pawapay_ops_live_per_cancellation_fee} (V391), traduits en 409.
+     * {@code uq_pawapay_ops_live_per_cancellation_fee} (V394), traduits en 409.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public PawapayOperationEntity createForCancellationFee(UUID travelerId, UUID cancellationFeeId, BigDecimal amount,
@@ -143,7 +143,7 @@ public class PawapayOperationService {
                         kind, op.getBidSupplementId(), causeMessage);
                 throw inProgress(kind);
             }
-            // Même filet pour le versement d'un dédommagement d'annulation (V391).
+            // Même filet pour le versement d'un dédommagement d'annulation (V394).
             if (lowerCause.contains("uq_pawapay_ops_live_per_cancellation_fee")) {
                 log.warn("pawaPay {} : versement déjà vivant pour la retenue {} : {}",
                         kind, op.getCancellationFeeId(), causeMessage);

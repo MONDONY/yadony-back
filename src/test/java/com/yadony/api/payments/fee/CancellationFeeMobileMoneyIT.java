@@ -82,8 +82,8 @@ import static org.mockito.Mockito.when;
 /**
  * Frais d'annulation sur le rail mobile money, sur la vraie pile : remboursement PARTIEL pawaPay du dépôt
  * ({@link RefundProcessor}), retenue réglée, versement pawaPay du net au voyageur rattaché à la retenue (purpose
- * {@code CANCELLATION_FEE}, index {@code uq_pawapay_ops_live_per_cancellation_fee} de V391), issue pawaPay appliquée
- * par les vrais écouteurs, planificateur. PostgreSQL (Flyway jusqu'à V391), barème pawaPay réel d'application.yml
+ * {@code CANCELLATION_FEE}, index {@code uq_pawapay_ops_live_per_cancellation_fee} de V394), issue pawaPay appliquée
+ * par les vrais écouteurs, planificateur. PostgreSQL (Flyway jusqu'à V394), barème pawaPay réel d'application.yml
  * (ORANGE_SEN : dépôt 2 %, remboursement 1,8 %), taux XOF réel (655,957) ; seul le client HTTP pawaPay est simulé.
  *
  * <p>65 600 F payés dont 3 124 F de commission, retenue 30 % plafonnée à 30 € = 19 678 F ; rendu 45 922 F ; frais

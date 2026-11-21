@@ -16,7 +16,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * V390 sur PostgreSQL embarqué : toutes les migrations Flyway puis {@code ddl-auto=validate}.
+ * V393 sur PostgreSQL embarqué : toutes les migrations Flyway puis {@code ddl-auto=validate}.
  * Le démarrage du contexte prouve que l'entité colle à la table ; on vérifie aussi que l'unicité
  * par colis est un index partiel (ignore les lignes supprimées).
  */

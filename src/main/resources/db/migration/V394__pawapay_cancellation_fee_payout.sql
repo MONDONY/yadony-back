@@ -1,4 +1,4 @@
--- V391 : versement pawaPay du dédommagement d'annulation au voyageur (rail mobile money).
+-- V394 : versement pawaPay du dédommagement d'annulation au voyageur (rail mobile money).
 --
 -- L'opération est rattachée à la retenue (cancellation_fees.id), jamais au paiement du colis : ce
 -- paiement est déjà remboursé (en partie) à l'expéditeur. Un PAYOUT porté par payment_id heurterait

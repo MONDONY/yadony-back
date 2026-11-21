@@ -51,7 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Enregistrement de la retenue sur la vraie pile (PostgreSQL, migrations Flyway dont V390, vrais
+ * Enregistrement de la retenue sur la vraie pile (PostgreSQL, migrations Flyway dont V393, vrais
  * services et vrais événements) : la ligne {@code DUE} naît dans la transaction de l'annulation, avant
  * le commit, pour que le remboursement ({@code AFTER_COMMIT}, asynchrone) la trouve ; elle disparaît
  * avec cette transaction si l'annulation est annulée. Seules les trois fautes de l'expéditeur la créent.

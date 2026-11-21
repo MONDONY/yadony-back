@@ -1,4 +1,4 @@
--- V392 : suivi du versement d'un dédommagement d'annulation en attente.
+-- V395 : suivi du versement d'un dédommagement d'annulation en attente.
 --
 -- payout_pending_reason : dernier motif de l'attente. Un nouveau motif sur une ligne déjà en attente est
 -- enregistré et audité (un changement de cause doit se voir), le même motif n'écrit rien (pas d'audit horaire).
