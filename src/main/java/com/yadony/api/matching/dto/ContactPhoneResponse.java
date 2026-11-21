@@ -14,8 +14,4 @@ public record ContactPhoneResponse(
         /** {@code SMS}, {@code YADONY} (déclaré, vérifié par l'équipe) ou {@code NONE} (non vérifié). */
         String verification
 ) {
-    /** Forme d'avant le numéro déclaré : numéro sans précision, jamais présenté comme vérifié. */
-    public ContactPhoneResponse(String phoneNumber) {
-        this(phoneNumber, "NONE");
-    }
 }

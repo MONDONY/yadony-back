@@ -73,25 +73,6 @@ public record UserResponse(
     String declaredPhone,
     String declaredPhoneLevel
 ) {
-    /** Forme d'avant le numéro déclaré : aucun numéro déclaré. */
-    public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
-                        String lastName, LocalDate birthDate, String city, Set<String> roles,
-                        String kycStatus, String status, int totalTrips, int totalShipments,
-                        Boolean isProAccount, StripeAccountStatus stripeAccountStatus, String country,
-                        String bio, Set<String> languages, String avatarUrl, Double averageRating,
-                        AdminInfo admin, String residenceStreet, String residenceLine2,
-                        String residencePostalCode, String onboardingSeenAt, String preferredLanguage,
-                        String messagingMutedUntil, boolean recetteMode, boolean gpPro,
-                        String travelerStatus, String businessName, String businessRegistrationNumber,
-                        String businessCountry) {
-        this(id, username, phoneNumber, email, firstName, lastName, birthDate, city, roles, kycStatus,
-                status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
-                languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
-                residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, recetteMode,
-                gpPro, travelerStatus, businessName, businessRegistrationNumber, businessCountry,
-                null, null);
-    }
-
     /** Forme d'avant le statut légal du voyageur (lot 2) : aucun statut déclaré. */
     public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
                         String lastName, LocalDate birthDate, String city, Set<String> roles,
