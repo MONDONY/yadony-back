@@ -4,18 +4,21 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.text.Normalizer;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -31,16 +34,23 @@ public class PromoService {
     private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final int PERSONAL_SUFFIX_LENGTH = 4;
     private static final int MAX_CODE_ATTEMPTS = 10;
+    private static final int WELCOME_MIN_LETTERS = 2;
+    private static final int WELCOME_MAX_LETTERS = 10;
+    private static final String WELCOME_SUFFIX = "05";
+    private static final String WELCOME_FALLBACK_PREFIX = "YADO";
 
     private final SecureRandom random = new SecureRandom();
 
     private final PromoCodeRepository promoCodeRepository;
     private final PromoRedemptionRepository redemptionRepository;
     private final AuditService auditService;
+    private final PromoCodeWriter promoCodeWriter;
 
     public PromoService(PromoCodeRepository promoCodeRepository,
                         PromoRedemptionRepository redemptionRepository,
-                        AuditService auditService) {
+                        AuditService auditService,
+                        PromoCodeWriter promoCodeWriter) {
+        this.promoCodeWriter = promoCodeWriter;
         this.promoCodeRepository = promoCodeRepository;
         this.redemptionRepository = redemptionRepository;
         this.auditService = auditService;
@@ -314,12 +324,47 @@ public class PromoService {
      *                   4 caractères garantit l'unicité ({@code MERCI-ABOU-7K2F}).
      * @param percent    remise, en fraction du prix payé (0.05 = 5 %).
      * @param validTo    fin de validité (UTC).
+     * @param origin     origine du code (récompense de parrainage, bienvenue du filleul…).
      */
     @Transactional
     public PromoCodeEntity createPersonalCode(UUID ownerUserId, String codePrefix, BigDecimal percent,
-                                              LocalDateTime validTo) {
+                                              LocalDateTime validTo, PromoCodeOrigin origin) {
+        return savePersonalCode(ownerUserId, uniquePersonalCode(codePrefix), percent, validTo, origin);
+    }
+
+    /**
+     * Code de bienvenue du filleul : {@code PRENOM05} (lettres A-Z du prénom sans accents,
+     * 10 maximum, suffixe {@code 05}). Repli sur {@code YADO-XXXX} quand le prénom donne moins
+     * de 2 lettres ou que le code est déjà pris (lignes supprimées comprises).
+     */
+    @Transactional
+    public PromoCodeEntity createReferralWelcomeCode(UUID refereeUserId, String firstName, BigDecimal percent,
+                                                     LocalDateTime validTo) {
+        String letters = Normalizer.normalize(firstName == null ? "" : firstName, Normalizer.Form.NFD)
+                .replaceAll("[^A-Za-z]", "")
+                .toUpperCase(Locale.ROOT);
+        if (letters.length() >= WELCOME_MIN_LETTERS) {
+            String candidate = letters.substring(0, Math.min(WELCOME_MAX_LETTERS, letters.length())) + WELCOME_SUFFIX;
+            if (!promoCodeRepository.existsByCodeIncludingDeleted(candidate)) {
+                PromoCodeEntity promo = newPersonalCode(refereeUserId, candidate, percent, validTo,
+                        PromoCodeOrigin.REFERRAL_WELCOME);
+                try {
+                    // Transaction à part : un doublon concurrent (UNIQUE sur code) ne doit pas
+                    // abîmer la transaction du rachat.
+                    return audited(promoCodeWriter.insertNow(promo), refereeUserId, percent, validTo);
+                } catch (DataIntegrityViolationException e) {
+                    log.info("Code de bienvenue {} déjà pris, repli sur un code aléatoire", candidate);
+                }
+            }
+        }
+        return savePersonalCode(refereeUserId, uniquePersonalCode(WELCOME_FALLBACK_PREFIX), percent, validTo,
+                PromoCodeOrigin.REFERRAL_WELCOME);
+    }
+
+    private PromoCodeEntity newPersonalCode(UUID ownerUserId, String code, BigDecimal percent,
+                                            LocalDateTime validTo, PromoCodeOrigin origin) {
         PromoCodeEntity promo = new PromoCodeEntity();
-        promo.setCode(uniquePersonalCode(codePrefix));
+        promo.setCode(code);
         promo.setRate(percent);
         promo.setDiscountKind(PromoDiscountKind.PRICE_PERCENT);
         promo.setOwnerUserId(ownerUserId);
@@ -329,10 +374,21 @@ public class PromoService {
         promo.setMaxRedemptions(1);
         promo.setPerUserLimit(1);
         promo.setStatus(PromoCodeStatus.ACTIVE);
-        PromoCodeEntity saved = promoCodeRepository.save(promo);
+        promo.setOrigin(origin);
+        return promo;
+    }
 
+    private PromoCodeEntity savePersonalCode(UUID ownerUserId, String code, BigDecimal percent,
+                                             LocalDateTime validTo, PromoCodeOrigin origin) {
+        return audited(promoCodeRepository.save(newPersonalCode(ownerUserId, code, percent, validTo, origin)),
+                ownerUserId, percent, validTo);
+    }
+
+    private PromoCodeEntity audited(PromoCodeEntity saved, UUID ownerUserId, BigDecimal percent,
+                                    LocalDateTime validTo) {
         Map<String, Object> details = new java.util.LinkedHashMap<>();
         details.put("code", saved.getCode());
+        details.put("origin", saved.getOrigin().name());
         details.put("percent", percent.toPlainString());
         details.put("validTo", validTo.toString());
         auditService.log("PROMO", saved.getId(), "PROMO_PERSONAL_CODE_CREATED", ownerUserId, details);

@@ -205,6 +205,8 @@ public class NotificationPrefsService {
             "CANCELLATION_FEE_RETAINED", "CANCELLATION_FEE_PAID_OUT",
             // Récompense de parrainage à choisir (crédit de solde ou code personnel)
             "REFERRAL_REWARD_AVAILABLE",
+            // Code de bienvenue du filleul parrainé (une seule fois, à l'inscription)
+            "REFERRAL_WELCOME",
             // Décision de l'admin sur le badge GP Pro
             "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
             // Récapitulatif annuel DAC7 : information légale (art. 1649 ter D, III du CGI), envoyé une fois par an

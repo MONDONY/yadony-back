@@ -123,7 +123,9 @@ public class AnnouncementController {
                 new AnnouncementSearchExtras(maxStops, PaymentMethodFilter.parse(paymentMethods), includeFull,
                         false, ItemSize.parseOrNull(minItemSize), viaCity,
                         minVolumeM3, maxPricePerM3, arrivalBefore));
-        var response = com.yadony.api.matching.dto.TripSearchPageResponse.from(page);
+        // La page vient peut-être du cache (5 min) : l'état des j'aime est relu à chaque requête.
+        var response = com.yadony.api.matching.dto.TripSearchPageResponse.from(
+                announcementService.withFreshLikes(page, firebaseUid));
         publishSearch(firebaseUid, departureCity, arrivalCity, departureDateFrom, departureDateTo,
                 pageable, response.bookableElements() != null ? response.bookableElements() : response.totalElements());
         return ResponseEntity.ok(response);

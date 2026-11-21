@@ -695,10 +695,47 @@ class NotificationTextsTest {
     }
 
     @Test
+    void referralWelcome_francais_prenomEtCode() {
+        assertThat(NotificationTexts.referralWelcome(TestMessages.fr(), "Amina", "AMINA05")).isEqualTo(
+                new NotificationText("Bienvenue sur Yadony",
+                        "Vous avez été parrainé par Amina. Voici votre code AMINA05 : -5 % de réduction sur votre premier envoi."));
+    }
+
+    @Test
+    void referralWelcome_anglais_prenomEtCode() {
+        assertThat(NotificationTexts.referralWelcome(TestMessages.en(), "Amina", "AMINA05")).isEqualTo(
+                new NotificationText("Welcome to Yadony",
+                        "You were referred by Amina. Here is your code AMINA05: 5% off your first shipment."));
+    }
+
+    @Test
+    void referralWelcome_blankReferrer_usesAnonymousBody() {
+        for (String blank : new String[]{null, "", "  "}) {
+            NotificationText fr = NotificationTexts.referralWelcome(TestMessages.fr(), blank, "AMINA05");
+            assertThat(fr.body()).isEqualTo(
+                    "Vous avez été parrainé. Voici votre code AMINA05 : -5 % de réduction sur votre premier envoi.")
+                    .doesNotContain("null");
+            NotificationText en = NotificationTexts.referralWelcome(TestMessages.en(), blank, "AMINA05");
+            assertThat(en.body()).isEqualTo("You were referred. Here is your code AMINA05: 5% off your first shipment.")
+                    .doesNotContain("null");
+        }
+    }
+
+    @Test
+    void referralWelcome_sansTiretCadratin_etTitreDansLeCap() {
+        for (Messages m : new Messages[]{TestMessages.fr(), TestMessages.en()}) {
+            NotificationText t = NotificationTexts.referralWelcome(m, "Kouassi-Konan Ahouansou", "AMINA05");
+            assertThat(t.title()).hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(t.title() + t.body()).doesNotContain("—").doesNotContain("{");
+        }
+    }
+
+    @Test
     void everyCatalogueEntryIsCoveredByTheWorstCase() {
         // kycVerificationReminder : textes produit plus longs que les caps push, testés à part (douze clés).
+        // referralWelcome : texte produit (code + remise) plus long que le cap du corps, testé à part.
         Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount", "mobileMoneyAmount",
-                "kycVerificationReminder");
+                "kycVerificationReminder", "referralWelcome");
         List<String> declared = new ArrayList<>();
         for (Method m : NotificationTexts.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers())

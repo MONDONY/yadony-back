@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
 
 /** Compteur et état « j'aime » dans la recherche : un seul appel groupé par page. */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("AnnouncementService.searchAnnouncements — likeCount et likedByMe")
+@DisplayName("AnnouncementService.withFreshLikes — likeCount et likedByMe")
 class AnnouncementServiceLikesTest {
 
     @Mock private AnnouncementRepository announcementRepository;
@@ -164,21 +164,35 @@ class AnnouncementServiceLikesTest {
                 "date", "asc", PageRequest.of(0, 10), viewerUid, null);
     }
 
+    private Page<AnnouncementSearchResponse> freshAs(String viewerUid, AnnouncementEntity... trips) {
+        return announcementService.withFreshLikes(searchAs(viewerUid, trips), viewerUid);
+    }
+
+    @Test
+    @DisplayName("la recherche elle-même ne calcule plus les j'aime (page mise en cache : 0 / faux)")
+    void search_itselfDoesNotComputeLikes() {
+        AnnouncementEntity trip = buildAnnouncement(buildTraveler());
+
+        Page<AnnouncementSearchResponse> page = searchAs(null, trip);
+
+        assertThat(page.getContent().get(0).likeCount()).isZero();
+        assertThat(page.getContent().get(0).likedByMe()).isFalse();
+        verify(tripLikeService, never()).countsFor(anyCollection());
+        verify(tripLikeService, never()).likedBy(any(), anyCollection());
+    }
+
     @Test
     @DisplayName("lecteur connecté : likeCount pour tous, likedByMe vrai seulement sur ses j'aime")
-    void search_connectedViewer_likeCountAndLikedByMe() {
+    void fresh_connectedViewer_likeCountAndLikedByMe() {
         AnnouncementEntity liked = buildAnnouncement(buildTraveler());
         AnnouncementEntity other = buildAnnouncement(buildTraveler());
         UUID viewerId = UUID.randomUUID();
-        UserEntity viewer = new UserEntity();
-        viewer.setFirebaseUid("uid-viewer");
-        setId(viewer, viewerId);
-        when(userRepository.findByFirebaseUid("uid-viewer")).thenReturn(Optional.of(viewer));
+        when(userRepository.findIdByFirebaseUid("uid-viewer")).thenReturn(Optional.of(viewerId));
         when(tripLikeService.countsFor(anyCollection()))
                 .thenReturn(Map.of(liked.getId(), 3L));
         when(tripLikeService.likedBy(eq(viewerId), anyCollection())).thenReturn(Set.of(liked.getId()));
 
-        Page<AnnouncementSearchResponse> page = searchAs("uid-viewer", liked, other);
+        Page<AnnouncementSearchResponse> page = freshAs("uid-viewer", liked, other);
 
         AnnouncementSearchResponse r1 = page.getContent().stream().filter(r -> r.id().equals(liked.getId())).findFirst().orElseThrow();
         AnnouncementSearchResponse r2 = page.getContent().stream().filter(r -> r.id().equals(other.getId())).findFirst().orElseThrow();
@@ -189,32 +203,30 @@ class AnnouncementServiceLikesTest {
     }
 
     @Test
-    @DisplayName("lecteur anonyme : likeCount rendu, likedByMe faux, aucun appel à likedBy")
-    void search_anonymousViewer_likedByMeFalse() {
+    @DisplayName("lecteur anonyme : likeCount rendu, likedByMe faux, aucun appel à likedBy ni lecture d'utilisateur")
+    void fresh_anonymousViewer_likedByMeFalse() {
         AnnouncementEntity trip = buildAnnouncement(buildTraveler());
         when(tripLikeService.countsFor(anyCollection())).thenReturn(Map.of(trip.getId(), 5L));
 
-        Page<AnnouncementSearchResponse> page = searchAs(null, trip);
+        Page<AnnouncementSearchResponse> page = freshAs(null, trip);
 
         assertThat(page.getContent().get(0).likeCount()).isEqualTo(5L);
         assertThat(page.getContent().get(0).likedByMe()).isFalse();
         verify(tripLikeService, never()).likedBy(any(), anyCollection());
+        verify(userRepository, never()).findIdByFirebaseUid(any());
     }
 
     @Test
     @DisplayName("un seul appel groupé par page, quel que soit le nombre de trajets")
-    void search_oneBatchedCallPerPage() {
+    void fresh_oneBatchedCallPerPage() {
         AnnouncementEntity a = buildAnnouncement(buildTraveler());
         AnnouncementEntity b = buildAnnouncement(buildTraveler());
         AnnouncementEntity c = buildAnnouncement(buildTraveler());
-        UserEntity viewer = new UserEntity();
-        viewer.setFirebaseUid("uid-viewer");
-        setId(viewer, UUID.randomUUID());
-        when(userRepository.findByFirebaseUid("uid-viewer")).thenReturn(Optional.of(viewer));
+        when(userRepository.findIdByFirebaseUid("uid-viewer")).thenReturn(Optional.of(UUID.randomUUID()));
         when(tripLikeService.countsFor(anyCollection())).thenReturn(Map.of());
         when(tripLikeService.likedBy(any(), anyCollection())).thenReturn(Set.of());
 
-        searchAs("uid-viewer", a, b, c);
+        freshAs("uid-viewer", a, b, c);
 
         verify(tripLikeService, times(1)).countsFor(anyCollection());
         verify(tripLikeService, times(1)).likedBy(any(), anyCollection());

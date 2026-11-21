@@ -897,10 +897,8 @@ public class AnnouncementService {
         // Audience : seulement les trajets du lecteur, les autres restent à null.
         Map<UUID, Long> ownViewCounts = announcementViewService.ownerViewCounts(viewerId, entities);
 
-        // J'aime : un seul appel groupé par page. Lecteur anonyme : jamais « aimé par moi ».
-        Map<UUID, Long> likeCounts = tripLikeService.countsFor(announcementIds);
-        Set<UUID> likedByViewer = viewerId == null ? Set.of() : tripLikeService.likedBy(viewerId, announcementIds);
-
+        // J'aime : non calculés ici (0 / faux). La page est mise en cache 5 min ; l'état frais
+        // est recollé à chaque requête par withFreshLikes, hors cache.
         List<AnnouncementSearchResponse> result = new java.util.ArrayList<>(entities.size());
         for (AnnouncementEntity a : entities) {
             AnnouncementSearchResponse base = announcementSearchMapper.toSearchResponse(
@@ -911,10 +909,46 @@ public class AnnouncementService {
                             convertedPricePerKgForResponse(a, viewerCurrency),
                             viewerCurrency,
                             pricePerKgDisplayConverted(base.pricePerKgDisplay(), a.getCurrency(), viewerCurrency));
-            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId()))
-                    .withLikes(likeCounts.getOrDefault(a.getId(), 0L), likedByViewer.contains(a.getId())));
+            result.add(priced.withUniqueViewerCount(ownViewCounts.get(a.getId())));
         }
         return result;
+    }
+
+    /**
+     * Recolle l'état FRAIS des j'aime sur une page de recherche (éventuellement servie par le
+     * cache {@code announcements-search}, qui garde 5 min le compteur et « aimé par moi » d'avant).
+     * Un seul {@code countsFor} et un seul {@code likedBy} pour tous les trajets de la page, bloc 2
+     * « similaires » compris. La page reçue n'est jamais modifiée : on renvoie des copies.
+     * Visiteur sans compte (ou compte inconnu) : le compteur est relu, {@code likedByMe} reste faux.
+     */
+    @Transactional(readOnly = true)
+    public Page<AnnouncementSearchResponse> withFreshLikes(Page<AnnouncementSearchResponse> page,
+                                                           String viewerFirebaseUid) {
+        List<SimilarAnnouncementResponse> similar = page instanceof TripSearchPage<?> trips
+                ? trips.similarAnnouncements()
+                : List.of();
+        Set<UUID> ids = new java.util.LinkedHashSet<>();
+        page.getContent().forEach(r -> ids.add(r.id()));
+        similar.forEach(s -> ids.add(s.announcement().id()));
+        if (ids.isEmpty()) {
+            return page;
+        }
+        UUID viewerId = (viewerFirebaseUid == null || viewerFirebaseUid.isBlank())
+                ? null
+                : userRepository.findIdByFirebaseUid(viewerFirebaseUid).orElse(null);
+        Map<UUID, Long> counts = tripLikeService.countsFor(ids);
+        Set<UUID> liked = viewerId == null ? Set.of() : tripLikeService.likedBy(viewerId, ids);
+        java.util.function.UnaryOperator<AnnouncementSearchResponse> fresh = r ->
+                r.withLikes(counts.getOrDefault(r.id(), 0L), liked.contains(r.id()));
+        List<AnnouncementSearchResponse> content = page.getContent().stream().map(fresh).toList();
+        if (page instanceof TripSearchPage<?> trips) {
+            return new TripSearchPage<>(content, page.getPageable(), page.getTotalElements(),
+                    trips.bookableElements(),
+                    similar.stream()
+                            .map(s -> new SimilarAnnouncementResponse(fresh.apply(s.announcement()), s.unmet()))
+                            .toList());
+        }
+        return new org.springframework.data.domain.PageImpl<>(content, page.getPageable(), page.getTotalElements());
     }
 
     /**
