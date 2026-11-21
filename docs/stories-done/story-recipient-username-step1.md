@@ -86,7 +86,8 @@ Les fiches de l'assistant (`identifiant-yadony`, `destinataire`, `ecran-destinat
 
 ## Tests
 - Des tests ciblés ont été lancés à chaque tâche (classes listées plus haut). Les tests de la base de connaissances de l'assistant passent (183 tests, 0 rouge : `KnowledgeBase*Test` et `AssistantServiceTest`).
-- À compléter par le contrôleur : suite complète `./mvnw test` + couverture JaCoCo (pourcentage).
+- Suite complète locale (21/11/2026, après fusion de `origin/main`, `./mvnw test jacoco:report`, 1 h 09) : 17 182 tests exécutés, 3 échecs et 99 erreurs, dont 93 erreurs `initdb` de PostgreSQL embarqué (le Mac de développement est limité à 32 segments de mémoire partagée, `kern.sysv.shmmni`, déjà occupés par d'autres applications ; les mêmes classes échouent même lancées seules, y compris `UsernameMigrationIT` qui passait seul auparavant). `CucumberE2ETest` échoue pour la même cause (contexte Spring `e2e` qui démarre aussi PostgreSQL embarqué : `initdb` failed). Restent 3 échecs d'assertion dans `V299V300TripCountryAndTimezoneMigrationTest` (fuseau attendu `Africa/Abidjan`, obtenu `Europe/Paris`) : un test de migration de trajets que cette branche ne touche pas, non rejoué localement faute de PostgreSQL disponible ; son verdict revient à la CI (Linux). Aucun test de cette branche ne ressort rouge hors cette limite d'environnement.
+- Couverture JaCoCo : le pourcentage global local (45 % lignes) est faussé par ces erreurs d'environnement (contextes Postgres jamais démarrés) et n'est pas utilisable ; à relever sur le rapport de la CI. Couverture des classes introduites par cette branche (lignes, rapport local) : `UsernamePolicy`, `UsernameService`, `UsernameLookupService`, `LookupRateLimiter`, `UsernamePurgeScheduler`, `UsernameRateLimitConfig`, `ReleasedUsernameEntity` et les DTO : 100 % ; `UsernameSuggester` : 91 %.
 - Tests ajoutés : voir la liste dans « Fichiers créés » et « Fichiers modifiés ».
 
 ## Décisions techniques
