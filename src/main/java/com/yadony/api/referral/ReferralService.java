@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.promo.PromoCodeEntity;
+import com.yadony.api.promo.PromoCodeOrigin;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.referral.events.ReferralWalletRewardChosenEvent;
 import org.springframework.context.ApplicationEventPublisher;
@@ -321,7 +322,7 @@ public class ReferralService {
         } else {
             BigDecimal percent = BigDecimal.valueOf(config.getRewardDiscountPercent()).movePointLeft(2);
             promo = promoService.createPersonalCode(user.getId(), personalCodePrefix(user), percent,
-                    now.plusMonths(config.getRewardDiscountValidityMonths()));
+                    now.plusMonths(config.getRewardDiscountValidityMonths()), PromoCodeOrigin.REFERRAL_REWARD);
             inv.setRewardPromoCodeId(promo.getId());
             details.put("promoCodeId", promo.getId().toString());
             details.put("code", promo.getCode());

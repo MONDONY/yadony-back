@@ -6,6 +6,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.promo.PromoCodeEntity;
+import com.yadony.api.promo.PromoCodeOrigin;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.referral.events.ReferralWalletRewardChosenEvent;
 import com.yadony.api.voucher.CommissionVoucherService;
@@ -137,14 +138,15 @@ class ReferralRewardChoiceServiceTest {
         ReferralInvitationEntity inv = invitation(referrerId, ReferralRewardStatus.AVAILABLE);
         when(invitationRepository.findByIdForUpdate(invitationId)).thenReturn(Optional.of(inv));
         PromoCodeEntity promo = personalPromo();
-        when(promoService.createPersonalCode(eq(referrerId), eq("MERCI-ABOU"), any(), any())).thenReturn(promo);
+        when(promoService.createPersonalCode(eq(referrerId), eq("MERCI-ABOU"), any(), any(), eq(PromoCodeOrigin.REFERRAL_REWARD))).thenReturn(promo);
         when(userRepository.findById(refereeId)).thenReturn(Optional.empty());
 
         ReferralRefereeResponse response = service.chooseReward(UID, invitationId, ReferralRewardChoice.DISCOUNT_CODE);
 
         ArgumentCaptor<BigDecimal> percent = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<LocalDateTime> validTo = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(promoService).createPersonalCode(eq(referrerId), eq("MERCI-ABOU"), percent.capture(), validTo.capture());
+        verify(promoService).createPersonalCode(eq(referrerId), eq("MERCI-ABOU"), percent.capture(), validTo.capture(),
+                eq(PromoCodeOrigin.REFERRAL_REWARD));
         assertThat(percent.getValue()).isEqualByComparingTo("0.05");
         assertThat(validTo.getValue()).isAfter(LocalDateTime.now(ZoneOffset.UTC).plusMonths(6).minusMinutes(1));
         assertThat(inv.getRewardPromoCodeId()).isEqualTo(promo.getId());
@@ -163,12 +165,13 @@ class ReferralRewardChoiceServiceTest {
         referrer.setFirstName("  ");
         ReferralInvitationEntity inv = invitation(referrerId, ReferralRewardStatus.AVAILABLE);
         when(invitationRepository.findByIdForUpdate(invitationId)).thenReturn(Optional.of(inv));
-        when(promoService.createPersonalCode(eq(referrerId), eq("MERCI-YADO"), any(), any())).thenReturn(personalPromo());
+        when(promoService.createPersonalCode(eq(referrerId), eq("MERCI-YADO"), any(), any(), eq(PromoCodeOrigin.REFERRAL_REWARD))).thenReturn(personalPromo());
         when(userRepository.findById(refereeId)).thenReturn(Optional.empty());
 
         service.chooseReward(UID, invitationId, ReferralRewardChoice.DISCOUNT_CODE);
 
-        verify(promoService).createPersonalCode(eq(referrerId), eq("MERCI-YADO"), any(), any());
+        verify(promoService).createPersonalCode(eq(referrerId), eq("MERCI-YADO"), any(), any(),
+                eq(PromoCodeOrigin.REFERRAL_REWARD));
     }
 
     @Test

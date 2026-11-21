@@ -314,10 +314,11 @@ public class PromoService {
      *                   4 caractères garantit l'unicité ({@code MERCI-ABOU-7K2F}).
      * @param percent    remise, en fraction du prix payé (0.05 = 5 %).
      * @param validTo    fin de validité (UTC).
+     * @param origin     origine du code (récompense de parrainage, bienvenue du filleul…).
      */
     @Transactional
     public PromoCodeEntity createPersonalCode(UUID ownerUserId, String codePrefix, BigDecimal percent,
-                                              LocalDateTime validTo) {
+                                              LocalDateTime validTo, PromoCodeOrigin origin) {
         PromoCodeEntity promo = new PromoCodeEntity();
         promo.setCode(uniquePersonalCode(codePrefix));
         promo.setRate(percent);
@@ -329,10 +330,12 @@ public class PromoService {
         promo.setMaxRedemptions(1);
         promo.setPerUserLimit(1);
         promo.setStatus(PromoCodeStatus.ACTIVE);
+        promo.setOrigin(origin);
         PromoCodeEntity saved = promoCodeRepository.save(promo);
 
         Map<String, Object> details = new java.util.LinkedHashMap<>();
         details.put("code", saved.getCode());
+        details.put("origin", origin.name());
         details.put("percent", percent.toPlainString());
         details.put("validTo", validTo.toString());
         auditService.log("PROMO", saved.getId(), "PROMO_PERSONAL_CODE_CREATED", ownerUserId, details);

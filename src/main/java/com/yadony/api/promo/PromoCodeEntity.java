@@ -60,6 +60,11 @@ public class PromoCodeEntity extends BaseEntity {
     @Column(name = "discount_kind", nullable = false, length = 20)
     private PromoDiscountKind discountKind = PromoDiscountKind.COMMISSION_POINTS;
 
+    /** D'où vient le code (V390). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "origin", nullable = false, length = 30)
+    private PromoCodeOrigin origin = PromoCodeOrigin.ADMIN;
+
     // ── getters/setters ──────────────────────────────────────────────────────
 
     public String getCode() { return code; }
@@ -94,6 +99,9 @@ public class PromoCodeEntity extends BaseEntity {
 
     public PromoDiscountKind getDiscountKind() { return discountKind; }
     public void setDiscountKind(PromoDiscountKind discountKind) { this.discountKind = discountKind; }
+
+    public PromoCodeOrigin getOrigin() { return origin; }
+    public void setOrigin(PromoCodeOrigin origin) { this.origin = origin; }
 
     /** Remise portée par ce code, telle que l'applique le résolveur de taux. */
     public PromoDiscount toDiscount() {

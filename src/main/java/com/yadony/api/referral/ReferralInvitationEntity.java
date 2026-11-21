@@ -66,6 +66,10 @@ public class ReferralInvitationEntity extends BaseEntity {
     @Column(name = "reward_promo_code_id")
     private UUID rewardPromoCodeId;
 
+    /** Code de bienvenue offert au filleul (V390), null tant qu'il n'est pas créé. */
+    @Column(name = "welcome_promo_code_id")
+    private UUID welcomePromoCodeId;
+
     public UUID getReferrerUserId() { return referrerUserId; }
     public void setReferrerUserId(UUID referrerUserId) { this.referrerUserId = referrerUserId; }
 
@@ -101,4 +105,7 @@ public class ReferralInvitationEntity extends BaseEntity {
 
     public UUID getRewardPromoCodeId() { return rewardPromoCodeId; }
     public void setRewardPromoCodeId(UUID rewardPromoCodeId) { this.rewardPromoCodeId = rewardPromoCodeId; }
+
+    public UUID getWelcomePromoCodeId() { return welcomePromoCodeId; }
+    public void setWelcomePromoCodeId(UUID welcomePromoCodeId) { this.welcomePromoCodeId = welcomePromoCodeId; }
 }

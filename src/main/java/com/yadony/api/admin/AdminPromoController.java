@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.promo.PromoCodeEntity;
+import com.yadony.api.promo.PromoCodeOrigin;
 import com.yadony.api.promo.PromoCodeRepository;
 import com.yadony.api.promo.PromoCodeStatus;
 import com.yadony.api.promo.PromoCodeTarget;
@@ -60,6 +61,7 @@ public class AdminPromoController {
         promo.setMaxRedemptions(request.maxRedemptions());
         promo.setPerUserLimit(request.perUserLimit() != null ? request.perUserLimit() : 1);
         promo.setStatus(PromoCodeStatus.ACTIVE);
+        promo.setOrigin(PromoCodeOrigin.ADMIN);
         PromoCodeEntity saved = promoCodeRepository.save(promo);
 
         auditService.log("PROMO", saved.getId(), "PROMO_CODE_CREATED", adminId(),

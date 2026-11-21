@@ -382,7 +382,8 @@ class PromoServiceTest {
             });
             LocalDateTime validTo = LocalDateTime.now(ZoneOffset.UTC).plusMonths(6);
 
-            PromoCodeEntity created = service.createPersonalCode(userId, "MERCI-ABOU", new BigDecimal("0.05"), validTo);
+            PromoCodeEntity created = service.createPersonalCode(userId, "MERCI-ABOU", new BigDecimal("0.05"), validTo,
+                    PromoCodeOrigin.REFERRAL_WELCOME);
 
             assertThat(created.getCode()).matches("MERCI-ABOU-[A-HJ-NP-Z2-9]{4}");
             assertThat(created.getOwnerUserId()).isEqualTo(userId);
@@ -393,6 +394,7 @@ class PromoServiceTest {
             assertThat(created.getPerUserLimit()).isEqualTo(1);
             assertThat(created.getValidTo()).isEqualTo(validTo);
             assertThat(created.getStatus()).isEqualTo(PromoCodeStatus.ACTIVE);
+            assertThat(created.getOrigin()).isEqualTo(PromoCodeOrigin.REFERRAL_WELCOME);
             verify(promoCodeRepository, times(2)).existsByCodeIncludingDeleted(any());
             verify(auditService).log(eq("PROMO"), eq(created.getId()), eq("PROMO_PERSONAL_CODE_CREATED"),
                     eq(userId), any());
@@ -403,7 +405,7 @@ class PromoServiceTest {
             when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(true);
 
             assertThatThrownBy(() -> service.createPersonalCode(userId, "MERCI-ABOU", new BigDecimal("0.05"),
-                    LocalDateTime.now(ZoneOffset.UTC).plusMonths(6)))
+                    LocalDateTime.now(ZoneOffset.UTC).plusMonths(6), PromoCodeOrigin.REFERRAL_REWARD))
                     .isInstanceOf(IllegalStateException.class);
             verify(promoCodeRepository, never()).save(any());
         }
