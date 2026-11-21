@@ -35,13 +35,14 @@ Un utilisateur peut modifier son identifiant Yadony (`users.username`), le retro
 ### Vue d'ensemble du flux
 1. L'utilisateur change son identifiant : `PUT /auth/me/username`. `UsernameService` vérifie le format, le délai de 30 jours depuis `username_changed_at`, et que le nom n'est ni pris ni réservé. Il enregistre le nouveau nom et réserve l'ancien dans `released_usernames`.
 2. L'app interroge `GET /auth/me/username/availability` pendant la saisie.
-3. L'expéditeur cherche un identifiant : `GET /recipient-invitations/lookup?username=`. Réponse explicite si le compte existe, 404 « Cet utilisateur n'existe pas » sinon.
+3. L'expéditeur cherche un identifiant : `GET /recipient-invitations/lookup?username=`. Réponse explicite si le compte existe, 404 sinon (le texte renvoyé est « Utilisateur introuvable » / « User not found » ; l'app affiche son propre texte). Un compte suspendu ou banni répond 404 comme un inconnu.
 4. Il envoie `POST /recipient-invitations` avec `username`. L'invité accepte ou refuse comme pour les canaux numéro et e-mail.
 5. Acceptation : la personne entre dans « Mes destinataires » de l'expéditeur, marquée « Dans Yadony », avec son numéro.
 6. Refus : l'expéditeur reçoit `RECIPIENT_INVITATION_DECLINED` et l'invitation quitte « Invitations envoyées ».
 
 ### Points d'entrée API
-- `PUT /auth/me/username` — change l'identifiant du compte connecté (le texte de la spec dit `/users/me/username`, le code expose `/auth/me/username`).
+- `PUT /auth/me/username` — change l'identifiant du compte connecté (la spec écrit `/users/me/username`, le code expose `/auth/me/username`).
+  Même écart pour les deux autres chemins : la spec parle de `/users/me/username/availability` et d'une recherche sous `/users`, le code expose `/auth/me/username/availability` et `/recipient-invitations/lookup`. L'app doit appeler les chemins du code.
 - `GET /auth/me/username/availability` — disponibilité et suggestions.
 - `GET /recipient-invitations/lookup?username=` — recherche exacte, utilisateur authentifié.
 - `POST /recipient-invitations` — champ `username` en plus de numéro et e-mail.
@@ -53,9 +54,12 @@ Un utilisateur peut modifier son identifiant Yadony (`users.username`), le retro
 
 ### Logique métier critique
 - Un changement par tranche de 30 jours, et l'ancien identifiant reste réservé 30 jours (anti-usurpation).
-- Le format exclut tout nom ou téléphone : l'identifiant ne révèle rien du compte.
-- Recherche et envoi partagent un seul quota de 30 par heure.
-- Le pseudo courant d'un utilisateur qui a bloqué l'expéditeur reste masqué.
+- Le format (3 à 20 caractères, a-z, 0-9, `.` et `_`) n'exclut pas à lui seul les noms propres : l'identifiant est choisi par l'utilisateur et visible des contreparties. Il refuse en revanche à la création et au changement (jamais à la recherche d'un compte existant) : les mots réservés et leurs équivalents (`admin`, `yadony`, `support`, `modera*`, `offici*`, `staff`, `equipe`, sosies 0/1/3 pour o/i/e) ; toute suite de 7 chiffres ou plus, pour qu'un identifiant ne passe pas pour un numéro de téléphone (422 `username-looks-like-phone`, raison `LOOKS_LIKE_PHONE` côté disponibilité), sauf la forme générée `user<chiffres>`.
+- À la finalisation d'un compte supprimé (RGPD), l'identifiant est libéré : réservé 30 jours dans `released_usernames`, et la ligne reçoit un identifiant généré.
+- Disponibilité : 120 vérifications par heure et par utilisateur (429 `username-availability-quota`), seau distinct de celui des recherches.
+- « Invitations envoyées » montre l'identifiant courant de l'invité seulement une fois l'invitation acceptée ; en attente, le libellé stocké à l'envoi reste affiché (idem dans la notification de refus).
+- Recherche et envoi partagent un seul quota de 30 par heure ; un identifiant de format invalide répond 404 sans consommer le quota. Nginx (`api_general`, 600 req/min par IP) s'ajoute mais ne borne pas l'énumération.
+- Le pseudo courant d'un invité qui a bloqué l'expéditeur reste masqué.
 
 ### Events Spring publiés / écoutés
 - Refus d'invitation : pas d'événement, appel direct du dispatcher, comme l'acceptation. `RecipientInvitationService.decline` écrit l'audit log puis appelle `notificationDispatcher.notifyUser(...)` de façon synchrone pour envoyer `RECIPIENT_INVITATION_DECLINED` (type FEED_ONLY, comme `ACCEPTED` : fil d'activité sans push). Seuls `RecipientInvitationCreatedEvent` et `RecipientInvitationRemovedEvent` existent dans `addressbook/invitation`.
@@ -63,7 +67,7 @@ Un utilisateur peut modifier son identifiant Yadony (`users.username`), le retro
 ### Pièges et points d'attention
 - Le quota recherche + envoi vit dans un seau mémoire (`LookupRateLimiter`) : valable pour une seule JVM, à revoir si le back passe en plusieurs instances.
 - `UsernamePurgeScheduler` supprime physiquement les lignes de `released_usernames` (table de réservation à durée limitée, aucune donnée à conserver) : si la purge s'arrête, les anciens identifiants restent bloqués.
-- Le 404 explicite « Cet utilisateur n'existe pas » est une décision du propriétaire : il permet de deviner l'existence d'un identifiant, d'où le quota et l'authentification.
+- Le 404 explicite sur un identifiant inconnu est une décision du propriétaire (texte renvoyé : « Utilisateur introuvable » / « User not found ») : il permet de deviner l'existence d'un identifiant, d'où le quota et l'authentification.
 - Index unique sur `lower(username)` (`ux_users_username_lower`), toutes lignes comprises, soft-deleted incluses. La migration V391 demande un contrôle préalable de doublons (requête en commentaire du fichier).
 - Course sur l'index unique : une violation est convertie en erreur « identifiant pris », pas en 500.
 - Les fiches de l'assistant décrivent le comportement voulu, mais la pastille du profil, la ligne « Identifiant Yadony » et l'onglet « Identifiant » n'existent pas encore dans l'app : elles ne le seront qu'avec la PR app. Les routes des fiches ne citent que `/profile/edit` et `/profile/recipients`, déjà présentes. Les fiches sont lues depuis le jar : effet après déploiement du back.
@@ -75,7 +79,7 @@ Les fiches de l'assistant (`identifiant-yadony`, `destinataire`, `ecran-destinat
 - [x] Modifier son identifiant une fois tous les 30 jours — `UsernameService`, test `UsernameServiceTest` et `AuthControllerUsernameIT`.
 - [x] L'ancien identifiant reste réservé 30 jours — `released_usernames` et purge planifiée.
 - [x] Rechercher un destinataire par identifiant — `UsernameLookupService`, `RecipientInvitationLookupIT`.
-- [x] Identifiant inconnu : message explicite « Cet utilisateur n'existe pas » (404).
+- [x] Identifiant inconnu : 404 explicite (« Utilisateur introuvable » / « User not found » ; l'app affiche son propre texte).
 - [x] Inviter par identifiant — `POST /recipient-invitations` avec `username`.
 - [x] Refus : l'expéditeur est notifié et l'invitation disparaît de la liste.
 - [x] Acceptation : le destinataire rejoint le carnet, « Dans Yadony », avec son numéro.
