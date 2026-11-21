@@ -1,6 +1,8 @@
 package com.yadony.api.promo;
 
 import com.yadony.api.admin.AdminPromoController;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.promo.dto.CreatePromoRequest;
@@ -30,9 +32,10 @@ class AdminPromoControllerTest {
 
     @Mock PromoCodeRepository promoCodeRepository;
     @Mock AuditService auditService;
+    @Mock UserRepository userRepository;
 
     private AdminPromoController controller() {
-        return new AdminPromoController(promoCodeRepository, auditService);
+        return new AdminPromoController(promoCodeRepository, auditService, userRepository);
     }
 
     private PromoCodeEntity savedPromo(String code, BigDecimal rate) {
@@ -84,7 +87,7 @@ class AdminPromoControllerTest {
                 savedPromo("B", new BigDecimal("0.08"))
         ));
 
-        var list = controller().list();
+        var list = controller().list(null);
         assertThat(list).hasSize(2);
     }
 
@@ -123,5 +126,133 @@ class AdminPromoControllerTest {
             var req = new CreatePromoRequest("X", new BigDecimal("-0.01"), null, null, null, null, null);
             assertThat(v.validate(req)).isNotEmpty();
         }
+    }
+
+    private PromoCodeEntity owned(String code, PromoCodeOrigin origin, UUID owner) {
+        PromoCodeEntity p = savedPromo(code, new BigDecimal("0.06"));
+        p.setOrigin(origin);
+        p.setOwnerUserId(owner);
+        return p;
+    }
+
+    private UserEntity user(UUID id, String first) {
+        UserEntity u = new UserEntity();
+        ReflectionTestUtils.setField(u, "id", id);
+        u.setFirstName(first);
+        u.setLastName("Secret");
+        return u;
+    }
+
+    private void assertReadonly(Throwable e) {
+        assertThat(e).isInstanceOf(YadonyBusinessException.class);
+        YadonyBusinessException b = (YadonyBusinessException) e;
+        assertThat(b.getErrorCode()).isEqualTo("promo-code-readonly");
+        assertThat(b.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    @DisplayName("list: origine et prénom du propriétaire, jamais le nom, chargés en une requête")
+    void list_exposesOriginAndFirstName_singleUserQuery() {
+        UUID o1 = UUID.randomUUID();
+        UUID o2 = UUID.randomUUID();
+        when(promoCodeRepository.findAll()).thenReturn(List.of(
+                owned("R1", PromoCodeOrigin.REFERRAL_REWARD, o1),
+                owned("R2", PromoCodeOrigin.REFERRAL_WELCOME, o2),
+                owned("R3", PromoCodeOrigin.REFERRAL_REWARD, o1),
+                savedPromo("G", new BigDecimal("0.06"))));
+        when(userRepository.findAllById(any())).thenReturn(List.of(user(o1, " Awa "), user(o2, null)));
+
+        var list = controller().list(null);
+
+        assertThat(list).extracting("ownerFirstName").containsExactly("Awa", null, "Awa", null);
+        assertThat(list.get(0).origin()).isEqualTo(PromoCodeOrigin.REFERRAL_REWARD);
+        assertThat(list.get(3).origin()).isEqualTo(PromoCodeOrigin.ADMIN);
+        assertThat(list.toString()).doesNotContain("Secret");
+        verify(userRepository, times(1)).findAllById(any());
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    @DisplayName("list: origin=REFERRAL ne charge que les codes de parrainage")
+    void list_filterReferral() {
+        when(promoCodeRepository.findByOriginIn(List.of(PromoCodeOrigin.REFERRAL_REWARD, PromoCodeOrigin.REFERRAL_WELCOME)))
+                .thenReturn(List.of());
+        assertThat(controller().list(AdminPromoController.OriginFilter.REFERRAL)).isEmpty();
+        verify(promoCodeRepository, never()).findAll();
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    @DisplayName("list: origin=ADMIN ne charge que les codes admin")
+    void list_filterAdmin() {
+        when(promoCodeRepository.findByOriginIn(List.of(PromoCodeOrigin.ADMIN)))
+                .thenReturn(List.of(savedPromo("A", new BigDecimal("0.06"))));
+        assertThat(controller().list(AdminPromoController.OriginFilter.ADMIN)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("origin inconnue : le paramètre n'est pas convertible en filtre")
+    void unknownOrigin_notAFilterValue() {
+        assertThatThrownBy(() -> AdminPromoController.OriginFilter.valueOf("BOGUS"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("update d'un code de parrainage → 409 promo-code-readonly")
+    void update_referralCodes_409() {
+        for (PromoCodeOrigin o : List.of(PromoCodeOrigin.REFERRAL_REWARD, PromoCodeOrigin.REFERRAL_WELCOME)) {
+            PromoCodeEntity p = owned("R", o, UUID.randomUUID());
+            UUID id = (UUID) ReflectionTestUtils.getField(p, "id");
+            when(promoCodeRepository.findById(id)).thenReturn(Optional.of(p));
+            var req = new com.yadony.api.promo.dto.UpdatePromoRequest(new BigDecimal("0.1"), null, null, null, null, null);
+            assertThatThrownBy(() -> controller().update(id, req)).satisfies(this::assertReadonly);
+        }
+        verify(promoCodeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("delete d'un code de parrainage → 409 promo-code-readonly")
+    void delete_referralCodes_409() {
+        for (PromoCodeOrigin o : List.of(PromoCodeOrigin.REFERRAL_REWARD, PromoCodeOrigin.REFERRAL_WELCOME)) {
+            PromoCodeEntity p = owned("R", o, UUID.randomUUID());
+            UUID id = (UUID) ReflectionTestUtils.getField(p, "id");
+            when(promoCodeRepository.findById(id)).thenReturn(Optional.of(p));
+            assertThatThrownBy(() -> controller().delete(id)).satisfies(this::assertReadonly);
+            assertThat(p.getDeletedAt()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("update d'un code ADMIN : toujours permis")
+    void update_adminCode_ok() {
+        PromoCodeEntity p = savedPromo("A", new BigDecimal("0.06"));
+        UUID id = (UUID) ReflectionTestUtils.getField(p, "id");
+        when(promoCodeRepository.findById(id)).thenReturn(Optional.of(p));
+        when(promoCodeRepository.save(p)).thenReturn(p);
+        var req = new com.yadony.api.promo.dto.UpdatePromoRequest(new BigDecimal("0.1"), null, null, null, null, null);
+        assertThat(controller().update(id, req).getBody().rate()).isEqualByComparingTo("0.1");
+    }
+
+    @Test
+    @DisplayName("setStatus d'un code de parrainage : permis")
+    void setStatus_referralCode_ok() {
+        UUID owner = UUID.randomUUID();
+        PromoCodeEntity p = owned("R", PromoCodeOrigin.REFERRAL_WELCOME, owner);
+        UUID id = (UUID) ReflectionTestUtils.getField(p, "id");
+        when(promoCodeRepository.findById(id)).thenReturn(Optional.of(p));
+        when(promoCodeRepository.save(p)).thenReturn(p);
+        when(userRepository.findById(owner)).thenReturn(Optional.of(user(owner, "Awa")));
+
+        var resp = controller().updateStatus(id, new UpdatePromoStatusRequest(PromoCodeStatus.DISABLED));
+
+        assertThat(resp.getBody().status()).isEqualTo(PromoCodeStatus.DISABLED);
+        assertThat(resp.getBody().ownerFirstName()).isEqualTo("Awa");
+    }
+
+    @Test
+    @DisplayName("sécurité : PROMO_MANAGE exigé sur le contrôleur")
+    void controllerRequiresPromoManage() {
+        var pre = AdminPromoController.class.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+        assertThat(pre.value()).isEqualTo("hasRole('ADMIN') and hasAuthority('PROMO_MANAGE')");
     }
 }

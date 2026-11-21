@@ -1,5 +1,7 @@
 package com.yadony.api.admin;
 
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.promo.PromoCodeEntity;
@@ -24,11 +26,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.Map;
 import java.util.UUID;
 
@@ -39,11 +44,17 @@ public class AdminPromoController {
 
     private final PromoCodeRepository promoCodeRepository;
     private final AuditService auditService;
+    private final UserRepository userRepository;
+
+    /** Filtre de la liste : {@code REFERRAL} regroupe les codes de récompense et de bienvenue. */
+    public enum OriginFilter { ADMIN, REFERRAL }
 
     public AdminPromoController(PromoCodeRepository promoCodeRepository,
-                                AuditService auditService) {
+                                AuditService auditService,
+                                UserRepository userRepository) {
         this.promoCodeRepository = promoCodeRepository;
         this.auditService = auditService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping
@@ -71,8 +82,27 @@ public class AdminPromoController {
     }
 
     @GetMapping
-    public List<PromoCodeResponse> list() {
-        return promoCodeRepository.findAll().stream().map(this::toResponse).toList();
+    public List<PromoCodeResponse> list(@RequestParam(required = false) OriginFilter origin) {
+        List<PromoCodeEntity> codes;
+        if (origin == null) {
+            codes = promoCodeRepository.findAll();
+        } else if (origin == OriginFilter.ADMIN) {
+            codes = promoCodeRepository.findByOriginIn(List.of(PromoCodeOrigin.ADMIN));
+        } else {
+            codes = promoCodeRepository.findByOriginIn(
+                    List.of(PromoCodeOrigin.REFERRAL_REWARD, PromoCodeOrigin.REFERRAL_WELCOME));
+        }
+        List<UUID> ownerIds = codes.stream().map(PromoCodeEntity::getOwnerUserId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<UUID, String> firstNames = new HashMap<>();
+        if (!ownerIds.isEmpty()) {
+            for (UserEntity u : userRepository.findAllById(ownerIds)) {
+                firstNames.put(u.getId(), cleanFirstName(u));
+            }
+        }
+        return codes.stream()
+                .map(p -> toResponse(p, p.getOwnerUserId() == null ? null : firstNames.get(p.getOwnerUserId())))
+                .toList();
     }
 
     @GetMapping("/{id}")
@@ -85,6 +115,7 @@ public class AdminPromoController {
             @PathVariable UUID id,
             @Valid @RequestBody UpdatePromoRequest request) {
         PromoCodeEntity promo = findOrThrow(id);
+        assertEditable(promo);
         if (request.rate() != null)           promo.setRate(request.rate());
         if (request.target() != null)         promo.setTarget(request.target());
         if (request.validFrom() != null)      promo.setValidFrom(request.validFrom());
@@ -112,6 +143,7 @@ public class AdminPromoController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         PromoCodeEntity promo = findOrThrow(id);
+        assertEditable(promo);
         promo.softDelete();
         promoCodeRepository.save(promo);
         auditService.log("PROMO", id, "PROMO_CODE_DELETED", adminId(), Map.of("code", promo.getCode()));
@@ -131,11 +163,32 @@ public class AdminPromoController {
         return null;
     }
 
+    private void assertEditable(PromoCodeEntity promo) {
+        if (promo.getOrigin() != PromoCodeOrigin.ADMIN) {
+            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "promo-code-readonly",
+                    "problem.admin.promo-code-readonly");
+        }
+    }
+
+    private static String cleanFirstName(UserEntity u) {
+        String f = u.getFirstName();
+        return f == null || f.isBlank() ? null : f.trim();
+    }
+
     private PromoCodeResponse toResponse(PromoCodeEntity p) {
+        String firstName = null;
+        if (p.getOwnerUserId() != null) {
+            firstName = userRepository.findById(p.getOwnerUserId()).map(AdminPromoController::cleanFirstName).orElse(null);
+        }
+        return toResponse(p, firstName);
+    }
+
+    private PromoCodeResponse toResponse(PromoCodeEntity p, String ownerFirstName) {
         return new PromoCodeResponse(
                 p.getId(), p.getCode(), p.getRate(), p.getTarget(),
                 p.getValidFrom(), p.getValidTo(), p.getMaxRedemptions(),
                 p.getPerUserLimit(), p.getRedeemedCount(), p.getStatus(),
-                p.getCreatedAt(), p.getOwnerUserId(), p.getDiscountKind());
+                p.getCreatedAt(), p.getOwnerUserId(), p.getDiscountKind(),
+                p.getOrigin(), ownerFirstName);
     }
 }

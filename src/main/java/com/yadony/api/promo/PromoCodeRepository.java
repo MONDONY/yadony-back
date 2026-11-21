@@ -6,12 +6,16 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface PromoCodeRepository extends JpaRepository<PromoCodeEntity, UUID> {
 
     Optional<PromoCodeEntity> findByCode(String code);
+
+    List<PromoCodeEntity> findByOriginIn(Collection<PromoCodeOrigin> origins);
 
     /**
      * Code déjà pris, y compris par un code supprimé : l'unicité de {@code promo_codes.code}
