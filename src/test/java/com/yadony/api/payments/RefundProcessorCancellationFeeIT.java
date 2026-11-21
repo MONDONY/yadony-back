@@ -134,6 +134,7 @@ class RefundProcessorCancellationFeeIT {
     @Autowired TransactionTemplate tx;
     @Autowired com.yadony.api.cancellation.fee.CancellationFeePreviewService previewService;
     @Autowired com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder recorder;
+    @Autowired com.yadony.api.admin.AdminPaymentController adminPaymentController;
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
     @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
@@ -147,6 +148,8 @@ class RefundProcessorCancellationFeeIT {
 
     @BeforeEach
     void setUp() {
+        // Dispatcher simulé : la langue des notifications de la retenue (écouteur réel, asynchrone).
+        when(notificationDispatcher.messagesFor(any())).thenReturn(com.yadony.api.common.i18n.TestMessages.fr());
         UserEntity traveler = persistUser(Role.TRAVELER);
         UserEntity sender = persistUser(Role.SENDER);
         AnnouncementEntity trip = persistTrip(traveler);
@@ -446,7 +449,6 @@ class RefundProcessorCancellationFeeIT {
     void noShowFee_retained_senderNotifiedOnceWithBothAmounts() {
         jdbc.update("UPDATE cancellation_fees SET reason = 'SENDER_NO_SHOW' WHERE bid_id = ?", bidId);
         UUID senderId = feeRepository.findByBidId(bidId).orElseThrow().getSenderId();
-        when(notificationDispatcher.messagesFor(any())).thenReturn(com.yadony.api.common.i18n.TestMessages.fr());
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
              MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
             stubIntent(piStatic, "succeeded");
@@ -463,6 +465,42 @@ class RefundProcessorCancellationFeeIT {
         assertThat(refund()).isFalse();
         verify(notificationDispatcher, after(1_000).times(1)).notifyUser(eq(senderId), anyString(), anyString(),
                 anyMap());
+    }
+
+    @Test
+    @DisplayName("remboursement intégral par l'administration (carte) : la retenue due est close ADMIN_FULL_REFUND, auditée")
+    void adminFullRefund_card_closesTheDueFeeAsNotApplicable() {
+        var admin = new com.yadony.api.admin.account.AdminPrincipal(UUID.randomUUID(), "admin@yadony.test",
+                com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin");
+        var authorities = new java.util.ArrayList<org.springframework.security.core.authority.SimpleGrantedAuthority>();
+        com.yadony.api.admin.account.AdminRole.ADMIN.permissions()
+                .forEach(perm -> authorities.add(new org.springframework.security.core.authority.SimpleGrantedAuthority(perm.name())));
+        authorities.add(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"));
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(admin, null, authorities));
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            adminPaymentController.refund(paymentId);
+
+            assertThat(params.getValue().getAmount()).as("remboursement intégral").isNull();
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId))
+                .isEqualTo("REFUNDED");
+        CancellationFeeEntity fee = feeRepository.findByBidId(bidId).orElseThrow();
+        assertThat(fee.getStatus()).isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        assertThat(fee.getGrossFee()).isEqualByComparingTo("0");
+        assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT payload ->> 'reason' FROM audit_log WHERE entity_id = ? AND action = ?",
+                String.class, bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo("ADMIN_FULL_REFUND");
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isZero();
     }
 
     @Test

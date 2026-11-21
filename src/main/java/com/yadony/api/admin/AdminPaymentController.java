@@ -20,6 +20,7 @@ import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
+import com.yadony.api.payments.fee.CancellationFeeSettlement;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.RefundProcessor;
 import com.yadony.api.payments.EscrowCaptureService;
@@ -146,6 +147,11 @@ public class AdminPaymentController {
     private final Clock clock;
     /** Ajouts de la fiche (alerte, liens, alertes ouvertes, litige bancaire), filtrés par permission. */
     private final AdminPaymentLinks paymentLinks;
+    /**
+     * Retenue d'annulation encore due d'un colis que l'administration rembourse en entier hors de
+     * {@code RefundProcessor} (rail carte) : close, sinon elle resterait due à vie.
+     */
+    private final CancellationFeeSettlement cancellationFees;
 
     public AdminPaymentController(PaymentRepository paymentRepository,
                                   AdminAlertRepository adminAlertRepository,
@@ -169,7 +175,9 @@ public class AdminPaymentController {
                                   com.yadony.api.disputes.DisputeRepository disputeRepository,
                                   com.yadony.api.payments.ReleaseNetCalculator netCalculator,
                                   Clock clock,
-                                  AdminPaymentLinks paymentLinks) {
+                                  AdminPaymentLinks paymentLinks,
+                                  CancellationFeeSettlement cancellationFees) {
+        this.cancellationFees = cancellationFees;
         this.clock = clock;
         this.paymentLinks = paymentLinks;
         this.netCalculator = netCalculator;
@@ -746,6 +754,10 @@ public class AdminPaymentController {
 
         // Reflect the committed DB transition on the managed entity for the response.
         payment.setStatus(PaymentStatus.REFUNDED);
+
+        // Expéditeur remboursé EN ENTIER hors de RefundProcessor : une retenue d'annulation encore due ne sera jamais
+        // réglée. Close NOT_APPLICABLE (motif ADMIN_FULL_REFUND) dans la transaction de ce remboursement, après Stripe.
+        cancellationFees.waiveAfterAdminFullRefund(payment);
 
         resolveRelatedAlerts(id);
         publishRefunded(payment);

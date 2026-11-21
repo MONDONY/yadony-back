@@ -143,7 +143,7 @@ class StripeOutsideTransactionIT {
                 mock(PawapaySubmissionService.class), mock(RefundProcessor.class), entityManager, transactionManager,
                 mock(PayoutHoldPolicy.class), mock(AdminPaymentInsights.class), mock(AdminPaymentTimeline.class),
                 escrowCapture, executor, disputeRepository, new ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
-                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none(), org.mockito.Mockito.mock(com.yadony.api.payments.fee.CancellationFeeSettlement.class));
 
         UserEntity traveler = new UserEntity();
         traveler.setStripeAccountId("acct_traveler");
