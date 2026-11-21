@@ -33,6 +33,7 @@ class PromoServiceTest {
     @Mock PromoCodeRepository promoCodeRepository;
     @Mock PromoRedemptionRepository redemptionRepository;
     @Mock AuditService auditService;
+    @Mock PromoCodeWriter promoCodeWriter;
 
     PromoService service;
 
@@ -41,7 +42,7 @@ class PromoServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PromoService(promoCodeRepository, redemptionRepository, auditService);
+        service = new PromoService(promoCodeRepository, redemptionRepository, auditService, promoCodeWriter);
     }
 
     private PromoCodeEntity activePromo(BigDecimal rate) {
@@ -411,7 +412,12 @@ class PromoServiceTest {
         }
 
         private PromoCodeEntity welcome(String firstName) {
-            doAnswer(inv -> {
+            lenient().doAnswer(inv -> {
+                PromoCodeEntity e = inv.getArgument(0);
+                ReflectionTestUtils.setField(e, "id", UUID.randomUUID());
+                return e;
+            }).when(promoCodeWriter).insertNow(any());
+            lenient().doAnswer(inv -> {
                 PromoCodeEntity e = inv.getArgument(0);
                 ReflectionTestUtils.setField(e, "id", UUID.randomUUID());
                 return e;
@@ -436,7 +442,8 @@ class PromoServiceTest {
             assertThat(created.getPerUserLimit()).isEqualTo(1);
             assertThat(created.getStatus()).isEqualTo(PromoCodeStatus.ACTIVE);
             verify(auditService).log(eq("PROMO"), eq(created.getId()), eq("PROMO_PERSONAL_CODE_CREATED"),
-                    eq(userId), any());
+                    eq(userId), argThat(d -> "REFERRAL_WELCOME".equals(d.get("origin"))
+                            && "AMINA05".equals(d.get("code"))));
         }
 
         @Test
@@ -456,6 +463,13 @@ class PromoServiceTest {
         }
 
         @Test
+        void welcomeCode_exactlyTwoLetters_isKept() {
+            when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(false);
+
+            assertThat(welcome("Al").getCode()).isEqualTo("AL05");
+        }
+
+        @Test
         void welcomeCode_blankOrSingleLetterName_fallsBackToRandom() {
             when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(false);
 
@@ -463,6 +477,15 @@ class PromoServiceTest {
             assertThat(welcome("  ").getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
             assertThat(welcome("A").getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
             assertThat(welcome("12-'").getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
+        }
+
+        @Test
+        void welcomeCode_nonLatinName_fallsBackToRandom() {
+            when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(false);
+
+            assertThat(welcome("أمينة").getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
+            assertThat(welcome("王小明").getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
+            verifyNoInteractions(promoCodeWriter);
         }
 
         @Test
@@ -475,6 +498,38 @@ class PromoServiceTest {
 
             assertThat(created.getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
             assertThat(created.getOrigin()).isEqualTo(PromoCodeOrigin.REFERRAL_WELCOME);
+            verifyNoInteractions(promoCodeWriter);
+        }
+
+        @Test
+        void welcomeCode_uniqueViolationOnFirstAttempt_fallsBackToRandomAndAuditsOnce() {
+            when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(false);
+            when(promoCodeWriter.insertNow(any()))
+                    .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_promo_codes_code"));
+            doAnswer(inv -> {
+                PromoCodeEntity e = inv.getArgument(0);
+                ReflectionTestUtils.setField(e, "id", UUID.randomUUID());
+                return e;
+            }).when(promoCodeRepository).save(any());
+
+            PromoCodeEntity created = service.createReferralWelcomeCode(userId, "Amina", new BigDecimal("0.05"),
+                    LocalDateTime.now(ZoneOffset.UTC).plusMonths(6));
+
+            assertThat(created.getCode()).matches("YADO-[A-HJ-NP-Z2-9]{4}");
+            assertThat(created.getOrigin()).isEqualTo(PromoCodeOrigin.REFERRAL_WELCOME);
+            verify(auditService, times(1)).log(eq("PROMO"), any(), eq("PROMO_PERSONAL_CODE_CREATED"),
+                    eq(userId), argThat(d -> "REFERRAL_WELCOME".equals(d.get("origin"))));
+        }
+
+        @Test
+        void welcomeCode_otherFailureOnInsert_propagates() {
+            when(promoCodeRepository.existsByCodeIncludingDeleted(any())).thenReturn(false);
+            when(promoCodeWriter.insertNow(any())).thenThrow(new IllegalStateException("boom"));
+
+            assertThatThrownBy(() -> service.createReferralWelcomeCode(userId, "Amina", new BigDecimal("0.05"),
+                    LocalDateTime.now(ZoneOffset.UTC).plusMonths(6)))
+                    .isInstanceOf(IllegalStateException.class);
+            verify(promoCodeRepository, never()).save(any());
         }
 
         @Test

@@ -4,6 +4,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -43,10 +44,13 @@ public class PromoService {
     private final PromoCodeRepository promoCodeRepository;
     private final PromoRedemptionRepository redemptionRepository;
     private final AuditService auditService;
+    private final PromoCodeWriter promoCodeWriter;
 
     public PromoService(PromoCodeRepository promoCodeRepository,
                         PromoRedemptionRepository redemptionRepository,
-                        AuditService auditService) {
+                        AuditService auditService,
+                        PromoCodeWriter promoCodeWriter) {
+        this.promoCodeWriter = promoCodeWriter;
         this.promoCodeRepository = promoCodeRepository;
         this.redemptionRepository = redemptionRepository;
         this.auditService = auditService;
@@ -339,21 +343,26 @@ public class PromoService {
         String letters = Normalizer.normalize(firstName == null ? "" : firstName, Normalizer.Form.NFD)
                 .replaceAll("[^A-Za-z]", "")
                 .toUpperCase(Locale.ROOT);
-        String code = null;
         if (letters.length() >= WELCOME_MIN_LETTERS) {
             String candidate = letters.substring(0, Math.min(WELCOME_MAX_LETTERS, letters.length())) + WELCOME_SUFFIX;
             if (!promoCodeRepository.existsByCodeIncludingDeleted(candidate)) {
-                code = candidate;
+                PromoCodeEntity promo = newPersonalCode(refereeUserId, candidate, percent, validTo,
+                        PromoCodeOrigin.REFERRAL_WELCOME);
+                try {
+                    // Transaction à part : un doublon concurrent (UNIQUE sur code) ne doit pas
+                    // abîmer la transaction du rachat.
+                    return audited(promoCodeWriter.insertNow(promo), refereeUserId, percent, validTo);
+                } catch (DataIntegrityViolationException e) {
+                    log.info("Code de bienvenue {} déjà pris, repli sur un code aléatoire", candidate);
+                }
             }
         }
-        if (code == null) {
-            code = uniquePersonalCode(WELCOME_FALLBACK_PREFIX);
-        }
-        return savePersonalCode(refereeUserId, code, percent, validTo, PromoCodeOrigin.REFERRAL_WELCOME);
+        return savePersonalCode(refereeUserId, uniquePersonalCode(WELCOME_FALLBACK_PREFIX), percent, validTo,
+                PromoCodeOrigin.REFERRAL_WELCOME);
     }
 
-    private PromoCodeEntity savePersonalCode(UUID ownerUserId, String code, BigDecimal percent,
-                                             LocalDateTime validTo, PromoCodeOrigin origin) {
+    private PromoCodeEntity newPersonalCode(UUID ownerUserId, String code, BigDecimal percent,
+                                            LocalDateTime validTo, PromoCodeOrigin origin) {
         PromoCodeEntity promo = new PromoCodeEntity();
         promo.setCode(code);
         promo.setRate(percent);
@@ -366,11 +375,20 @@ public class PromoService {
         promo.setPerUserLimit(1);
         promo.setStatus(PromoCodeStatus.ACTIVE);
         promo.setOrigin(origin);
-        PromoCodeEntity saved = promoCodeRepository.save(promo);
+        return promo;
+    }
 
+    private PromoCodeEntity savePersonalCode(UUID ownerUserId, String code, BigDecimal percent,
+                                             LocalDateTime validTo, PromoCodeOrigin origin) {
+        return audited(promoCodeRepository.save(newPersonalCode(ownerUserId, code, percent, validTo, origin)),
+                ownerUserId, percent, validTo);
+    }
+
+    private PromoCodeEntity audited(PromoCodeEntity saved, UUID ownerUserId, BigDecimal percent,
+                                    LocalDateTime validTo) {
         Map<String, Object> details = new java.util.LinkedHashMap<>();
         details.put("code", saved.getCode());
-        details.put("origin", origin.name());
+        details.put("origin", saved.getOrigin().name());
         details.put("percent", percent.toPlainString());
         details.put("validTo", validTo.toString());
         auditService.log("PROMO", saved.getId(), "PROMO_PERSONAL_CODE_CREATED", ownerUserId, details);
