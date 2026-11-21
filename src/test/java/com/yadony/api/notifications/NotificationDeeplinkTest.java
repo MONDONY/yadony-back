@@ -234,6 +234,7 @@ class NotificationDeeplinkTest {
         assertThat(NotificationDeeplink.of("STRIPE_ONBOARDING_INCOMPLETE", Map.of())).contains("yadony://connect/onboarding/intro");
         assertThat(NotificationDeeplink.of("CARD_EXPIRING", Map.of())).contains("yadony://payments/commission-method");
         assertThat(NotificationDeeplink.of("REFERRAL_REWARD_AVAILABLE", Map.of())).contains("yadony://profile/referral");
+        assertThat(NotificationDeeplink.of("REFERRAL_WELCOME", Map.of())).contains("yadony://parcels/send-intro");
     }
 
     @Test

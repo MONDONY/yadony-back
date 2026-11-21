@@ -1,5 +1,6 @@
 package com.yadony.api.promo.dto;
 
+import com.yadony.api.promo.PromoCodeOrigin;
 import com.yadony.api.promo.PromoCodeStatus;
 import com.yadony.api.promo.PromoDiscountKind;
 import com.yadony.api.promo.PromoCodeTarget;
@@ -23,5 +24,9 @@ public record PromoCodeResponse(
         /** Propriétaire d'un code personnel de parrainage, {@code null} pour un code global. */
         UUID ownerUserId,
         /** Sens de {@code rate} : points de commission ou pourcentage du prix payé. */
-        PromoDiscountKind discountKind
+        PromoDiscountKind discountKind,
+        /** Origine du code : créé par l'admin ou émis par le parrainage. */
+        PromoCodeOrigin origin,
+        /** Prénom seul du propriétaire (jamais nom, téléphone ni e-mail), {@code null} si code global. */
+        String ownerFirstName
 ) {}

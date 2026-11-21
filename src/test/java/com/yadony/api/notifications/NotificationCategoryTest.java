@@ -26,6 +26,7 @@ class NotificationCategoryTest {
         assertThat(NotificationCategory.fromType("KYC_ACTION_REQUIRED")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("CARD_EXPIRING")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("REFERRAL_REWARD_AVAILABLE")).isEqualTo(NotificationCategory.PAIEMENTS);
+        assertThat(NotificationCategory.fromType("REFERRAL_WELCOME")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("negotiation_commission_pending")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("negotiation_awaiting_payment")).isEqualTo(NotificationCategory.PAIEMENTS);
         assertThat(NotificationCategory.fromType("BID_NEGOTIATION_COMMISSION_DUE")).isEqualTo(NotificationCategory.PAIEMENTS);

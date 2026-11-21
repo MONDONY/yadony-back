@@ -8,8 +8,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.yadony.api.common.PageResponse;
 import com.yadony.api.promo.PromoCodeEntity;
+import com.yadony.api.promo.PromoCodeOrigin;
 import com.yadony.api.promo.PromoService;
 import com.yadony.api.referral.events.ReferralWalletRewardChosenEvent;
+import com.yadony.api.referral.events.ReferralWelcomeCodeCreatedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -196,11 +198,19 @@ public class ReferralService {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "already-referred", "problem.already-referred");
         }
 
+        // Code de bienvenue du filleul : créé dans la même transaction que l'invitation (toutes
+        // les vérifications ont déjà réussi) ; la notification part après la validation
+        // (écouteur AFTER_COMMIT).
+        BigDecimal welcomePercent = BigDecimal.valueOf(config.getWelcomeDiscountPercent()).movePointLeft(2);
+        PromoCodeEntity welcome = promoService.createReferralWelcomeCode(referee.getId(), referee.getFirstName(),
+                welcomePercent, LocalDateTime.now(ZoneOffset.UTC).plusMonths(config.getWelcomeValidityMonths()));
+
         ReferralInvitationEntity invitation = new ReferralInvitationEntity();
         invitation.setReferrerUserId(referrerId);
         invitation.setRefereeUserId(referee.getId());
         invitation.setStatus("SIGNED_UP");
         invitation.setCodeUsed(code);
+        invitation.setWelcomePromoCodeId(welcome.getId());
         referralInvitationRepository.save(invitation);
 
         auditService.log(
@@ -214,6 +224,11 @@ public class ReferralService {
                         "code", code
                 )
         );
+
+        String referrerFirstName = userRepository.findById(referrerId)
+                .map(UserEntity::getFirstName).orElse(null);
+        eventPublisher.publishEvent(new ReferralWelcomeCodeCreatedEvent(
+                referee.getId(), referrerId, referrerFirstName, welcome.getCode()));
 
         log.info("Referral code redeemed: referee={} referrer={} code={}",
                 referee.getId(), referrerId, code);
@@ -321,7 +336,7 @@ public class ReferralService {
         } else {
             BigDecimal percent = BigDecimal.valueOf(config.getRewardDiscountPercent()).movePointLeft(2);
             promo = promoService.createPersonalCode(user.getId(), personalCodePrefix(user), percent,
-                    now.plusMonths(config.getRewardDiscountValidityMonths()));
+                    now.plusMonths(config.getRewardDiscountValidityMonths()), PromoCodeOrigin.REFERRAL_REWARD);
             inv.setRewardPromoCodeId(promo.getId());
             details.put("promoCodeId", promo.getId().toString());
             details.put("code", promo.getCode());

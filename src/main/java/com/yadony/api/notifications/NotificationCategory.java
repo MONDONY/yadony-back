@@ -35,7 +35,7 @@ public enum NotificationCategory {
             "PAYMENT_RELEASED", "MM_PAYMENT_PENDING", "MOBILE_MONEY_PAYMENT_CONFIRMED",
             "MOBILE_MONEY_PAYMENT_FAILED", "MM_PAYMENT_EXPIRED",
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
-            "STRIPE_ONBOARDING_INCOMPLETE", "CARD_EXPIRING", "WALLET_ADJUSTED", "REFERRAL_REWARD_AVAILABLE",
+            "STRIPE_ONBOARDING_INCOMPLETE", "CARD_EXPIRING", "WALLET_ADJUSTED", "REFERRAL_REWARD_AVAILABLE", "REFERRAL_WELCOME",
             "BANK_PAYOUT_PAID", "BANK_PAYOUT_FAILED",
             "wallet_topup_confirmed", "wallet_topup_failed",
             "negotiation_awaiting_payment", "negotiation_commission_pending",

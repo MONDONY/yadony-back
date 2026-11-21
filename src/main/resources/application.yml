@@ -608,6 +608,8 @@ yadony:
     reward-wallet-amount: ${YADONY_REFERRAL_REWARD_WALLET_AMOUNT:5.00}
     reward-discount-percent: ${YADONY_REFERRAL_REWARD_DISCOUNT_PERCENT:5}
     reward-discount-validity-months: ${YADONY_REFERRAL_REWARD_DISCOUNT_VALIDITY_MONTHS:6}
+    welcome-discount-percent: ${YADONY_REFERRAL_WELCOME_DISCOUNT_PERCENT:5}
+    welcome-validity-months: ${YADONY_REFERRAL_WELCOME_VALIDITY_MONTHS:6}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:}
