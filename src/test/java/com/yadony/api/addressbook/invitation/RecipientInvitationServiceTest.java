@@ -37,6 +37,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -177,7 +179,7 @@ class RecipientInvitationServiceTest {
     @Test
     void send_raceOnUniqueIndex_stillAnswersSent() {
         when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
-        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
+        doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
                 .isEqualTo(InvitationSentResponse.SENT);
@@ -256,6 +258,54 @@ class RecipientInvitationServiceTest {
     }
 
     @Test
+    void send_username_countsLookupQuotaBeforeResolving() {
+        when(usernameLookup.resolveVisible(inviter, "inconnu")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.send("uid-inviter", byUsername("inconnu")))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        var order = inOrder(usernameLookup);
+        order.verify(usernameLookup).acquireLookupQuota(inviter.getId());
+        order.verify(usernameLookup).resolveVisible(inviter, "inconnu");
+    }
+
+    @Test
+    void send_username_lookupQuotaExhausted_429_withoutResolving() {
+        doThrow(YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota",
+                "problem.recipient-lookup-quota")).when(usernameLookup).acquireLookupQuota(inviter.getId());
+
+        assertThatThrownBy(() -> service.send("uid-inviter", byUsername("fatou.sow")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                    assertThat(e.getErrorCode()).isEqualTo("recipient-lookup-quota");
+                });
+        verify(usernameLookup, never()).resolveVisible(any(), any());
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    private RecipientInvitationEntity usernameInvitation() {
+        return withId(new RecipientInvitationEntity(inviter.getId(), invitee.getId(), InvitationChannel.USERNAME,
+                InvitationTargets.hash("u:" + invitee.getId()), "@fatou.sow"));
+    }
+
+    @Test
+    void usernameInvitation_acceptDeclineRevoke_work() {
+        RecipientInvitationEntity toAccept = usernameInvitation();
+        when(repository.findById(toAccept.getId())).thenReturn(Optional.of(toAccept));
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(new FirebaseContactService.Contact(PHONE, null));
+        assertThat(service.accept(toAccept.getId(), "uid-invitee").status()).isEqualTo("ACCEPTED");
+        assertThat(toAccept.getRecipientId()).isNotNull();
+        service.revoke(toAccept.getId(), "uid-inviter");
+        assertThat(toAccept.getStatus()).isEqualTo(InvitationStatus.REVOKED);
+
+        RecipientInvitationEntity toDecline = usernameInvitation();
+        when(repository.findById(toDecline.getId())).thenReturn(Optional.of(toDecline));
+        assertThat(service.decline(toDecline.getId(), "uid-invitee").status()).isEqualTo("DECLINED");
+        verify(auditService).log(eq("RECIPIENT_INVITATION"), eq(toDecline.getId()),
+                eq("RECIPIENT_INVITATION_DECLINED"), eq(invitee.getId()), any());
+    }
+
+    @Test
     void send_ownUsername_422() {
         when(usernameLookup.resolveVisible(inviter, "moi")).thenReturn(Optional.of(inviter));
 
@@ -281,7 +331,7 @@ class RecipientInvitationServiceTest {
     @Test
     void send_username_raceOnUniqueIndex_stillAnswersSent() {
         when(usernameLookup.resolveVisible(inviter, "fatou.sow")).thenReturn(Optional.of(invitee));
-        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
+        doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
 
         assertThat(service.send("uid-inviter", byUsername("fatou.sow"))).isEqualTo(InvitationSentResponse.SENT);
         verify(eventPublisher, never()).publishEvent(any());
@@ -324,6 +374,21 @@ class RecipientInvitationServiceTest {
         assertThat(sent.get(0).channel()).isEqualTo("USERNAME");
         assertThat(sent.get(0).maskedTarget()).isEqualTo("@fatou.renamed");
         assertThat(sent.get(1).maskedTarget()).isEqualTo("+221 •• •• •• 12");
+    }
+
+    @Test
+    void sent_usernameInvitation_blockedInvitee_keepsStoredLabelNotNewHandle() {
+        invitee.setUsername("fatou.renamed");
+        RecipientInvitationEntity byName = withId(new RecipientInvitationEntity(inviter.getId(), invitee.getId(),
+                InvitationChannel.USERNAME, InvitationTargets.hash("u:" + invitee.getId()), "@fatou.sow"));
+        when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
+                .thenReturn(List.of(byName));
+        when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
+
+        var sent = service.sent("uid-inviter");
+
+        assertThat(sent.get(0).maskedTarget()).isEqualTo("@fatou.sow");
+        verify(userRepository, never()).findAllById(any());
     }
 
     // ── sent ────────────────────────────────────────────────────────────────

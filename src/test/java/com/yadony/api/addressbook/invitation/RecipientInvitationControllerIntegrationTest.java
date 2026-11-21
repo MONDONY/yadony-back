@@ -282,6 +282,22 @@ class RecipientInvitationControllerIntegrationTest {
     }
 
     @Test
+    void usernameSend_sharesTheLookupBucketOf30PerHour() throws Exception {
+        for (int i = 0; i < LookupRateLimiter.MAX_PER_HOUR - 1; i++) {
+            mockMvc.perform(get("/recipient-invitations/lookup").param("username", "inconnu.total")
+                    .with(authentication(as(INVITER_UID)))).andExpect(status().isNotFound());
+        }
+        // 30e appel du seau : un envoi, qui compte comme une recherche
+        mockMvc.perform(invite("{\"username\":\"inconnu.total\"}")).andExpect(status().isNotFound());
+        mockMvc.perform(invite("{\"username\":\"inconnu.total\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("recipient-lookup-quota"));
+        mockMvc.perform(get("/recipient-invitations/lookup").param("username", "inconnu.total")
+                .with(authentication(as(INVITER_UID)))).andExpect(status().isTooManyRequests());
+        assertThat(invitationRepository.findAll()).isEmpty();
+    }
+
+    @Test
     void sent_usernameInvitation_showsCurrentUsernameAfterRename() throws Exception {
         giveUsername(invitee, "fatou.sow");
         mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());

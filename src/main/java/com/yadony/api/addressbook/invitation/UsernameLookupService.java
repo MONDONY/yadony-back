@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Recherche d'un compte par identifiant. L'aperçu rendu se limite à l'identifiant et à l'initiale
@@ -38,15 +39,23 @@ public class UsernameLookupService {
         UserEntity me = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
         // Compté avant toute recherche, inconnus compris : c'est ce qui borne l'énumération.
-        if (!rateLimiter.tryAcquire(me.getId())) {
-            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota",
-                    "problem.recipient-lookup-quota");
-        }
+        acquireLookupQuota(me.getId());
         UserEntity found = resolveVisible(me, raw).orElseThrow(UsernameLookupService::notFound);
         if (found.getId().equals(me.getId())) {
             throw selfInvitation();
         }
         return new UsernameLookupResponse(found.getUsername(), initial(found));
+    }
+
+    /**
+     * Compte une recherche dans le plafond horaire de l'utilisateur (429 au-delà). Seau unique partagé
+     * entre l'aperçu et l'envoi par identifiant, à appeler avant toute résolution.
+     */
+    void acquireLookupQuota(UUID userId) {
+        if (!rateLimiter.tryAcquire(userId)) {
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota",
+                    "problem.recipient-lookup-quota");
+        }
     }
 
     /**

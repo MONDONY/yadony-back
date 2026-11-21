@@ -47,8 +47,10 @@ import java.util.stream.Stream;
  *
  * <p>Exception voulue par le propriétaire : le canal {@code username} répond 404 pour un
  * identifiant inconnu (ou masqué par un blocage) et 422 pour soi-même, car l'identifiant est
- * public par nature. L'énumération reste bornée par le quota quotidien d'invitations et par la
- * limite de recherche ({@link LookupRateLimiter}).
+ * public par nature. L'énumération est bornée par la limite de recherche ({@link LookupRateLimiter},
+ * 30 par heure et par utilisateur, seau partagé avec l'aperçu et compté avant la résolution, 429
+ * {@code recipient-lookup-quota} au-delà). Le quota quotidien d'invitations (20) ne compte que les
+ * invitations créées : un identifiant inconnu ne le consomme pas.
  */
 @Service
 public class RecipientInvitationService {
@@ -156,6 +158,8 @@ public class RecipientInvitationService {
      * explicite et soi-même un 422. Un doublon vivant (en attente ou accepté) ne crée rien.
      */
     private InvitationSentResponse sendByUsername(UserEntity inviter, Target target, String label) {
+        // Même seau que l'aperçu (30 par heure), compté avant la résolution, inconnus compris.
+        usernameLookup.acquireLookupQuota(inviter.getId());
         UserEntity invitee = usernameLookup.resolveVisible(inviter, target.value())
                 .orElseThrow(UsernameLookupService::notFound);
         if (invitee.getId().equals(inviter.getId())) {
@@ -182,7 +186,8 @@ public class RecipientInvitationService {
 
     /**
      * Invitations envoyées et non retirées ; une invitation non acceptée reste « PENDING ».
-     * Pour le canal identifiant, le libellé est l'identifiant COURANT de l'invité (il peut en changer).
+     * Pour le canal identifiant, le libellé est l'identifiant COURANT de l'invité (il peut en changer),
+     * sauf si un blocage masque le compte : le libellé stocké est alors conservé.
      */
     @Transactional(readOnly = true)
     public List<SentInvitationDto> sent(String firebaseUid) {
@@ -192,6 +197,9 @@ public class RecipientInvitationService {
         Set<UUID> byUsernameIds = invitations.stream()
                 .filter(i -> i.getChannel() == InvitationChannel.USERNAME && i.getInviteeUserId() != null)
                 .map(RecipientInvitationEntity::getInviteeUserId)
+                // Un compte masqué par un blocage (dans un sens ou l'autre) n'est pas relu : on garde le
+                // libellé stocké, pour qu'un renommage ne permette pas de le suivre.
+                .filter(inviteeId -> !blockVisibility.isHidden(inviter.getId(), inviteeId))
                 .collect(Collectors.toSet());
         Map<UUID, String> currentUsernames = byUsernameIds.isEmpty() ? Map.of()
                 : userRepository.findAllById(byUsernameIds).stream()
