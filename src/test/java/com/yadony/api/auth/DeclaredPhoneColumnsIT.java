@@ -14,7 +14,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** La migration V391 porte les colonnes et le contexte construit {@link DeclaredPhoneHasher}. */
+/** La migration V392 porte les colonnes et le contexte construit {@link DeclaredPhoneHasher}. */
 @SpringBootTest
 @ActiveProfiles("test")
 @Transactional

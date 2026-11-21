@@ -13,7 +13,7 @@ import java.sql.Statement;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** V391 sur un vrai PostgreSQL : quatre colonnes nullables et l'index sur l'empreinte. */
+/** V392 sur un vrai PostgreSQL : quatre colonnes nullables et l'index sur l'empreinte. */
 class DeclaredPhoneSchemaPostgresIT {
 
     private static EmbeddedPostgres postgres;
@@ -27,7 +27,7 @@ class DeclaredPhoneSchemaPostgresIT {
             s.execute("CREATE SCHEMA IF NOT EXISTS kyc_schema");
         }
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
-                .schemas("public", "kyc_schema").target("391").cleanDisabled(false).load().migrate();
+                .schemas("public", "kyc_schema").target("392").cleanDisabled(false).load().migrate();
     }
 
     @AfterAll
