@@ -1,6 +1,9 @@
 package com.yadony.api.auth;
 
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
+import com.yadony.api.common.YadonyBusinessException;
+import org.springframework.http.HttpStatus;
 import com.google.firebase.auth.UserRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -10,6 +13,8 @@ import org.mockito.ArgumentCaptor;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -103,6 +108,39 @@ class FirebaseContactServiceDeclaredPhoneTest {
     @DisplayName("Firebase indisponible : setDeclaredPhone ne fait rien")
     void setDeclaredPhone_unavailable_isNoop() throws Exception {
         new FirebaseContactService(null).setDeclaredPhone("uid-1", "+2250102030405");
+        verify(firebaseAuth, never()).setCustomUserClaims(anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("setDeclaredPhone : échec de setCustomUserClaims -> 500 firebase-error, cache invalidé")
+    void setDeclaredPhone_writeFails_throws500_andInvalidatesCache() throws Exception {
+        UserRecord record = record(Map.of());
+        when(firebaseAuth.getUser("uid-1")).thenReturn(record);
+        service.getContact("uid-1"); // amorce le cache
+        doThrow(mock(FirebaseAuthException.class))
+                .when(firebaseAuth).setCustomUserClaims(anyString(), anyMap());
+
+        assertThatThrownBy(() -> service.setDeclaredPhone("uid-1", "+2250102030405"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                    assertThat(e.getErrorCode()).isEqualTo("firebase-error");
+                });
+
+        service.getContact("uid-1");
+        // lecture initiale + lecture dans setDeclaredPhone + relecture après invalidation
+        verify(firebaseAuth, times(3)).getUser("uid-1");
+    }
+
+    @Test
+    @DisplayName("setDeclaredPhone : échec de getUser -> 500 firebase-error, aucune écriture")
+    void setDeclaredPhone_readFails_throws500_withoutWriting() throws Exception {
+        when(firebaseAuth.getUser("uid-1")).thenThrow(mock(FirebaseAuthException.class));
+
+        assertThatThrownBy(() -> service.setDeclaredPhone("uid-1", "+2250102030405"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                    assertThat(e.getErrorCode()).isEqualTo("firebase-error");
+                });
         verify(firebaseAuth, never()).setCustomUserClaims(anyString(), anyMap());
     }
 }
