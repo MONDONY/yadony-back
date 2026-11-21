@@ -143,4 +143,11 @@ class FirebaseContactServiceDeclaredPhoneTest {
                 });
         verify(firebaseAuth, never()).setCustomUserClaims(anyString(), anyMap());
     }
+
+    @Test
+    @DisplayName("isAvailable : vrai avec FirebaseAuth, faux sans (test/CI)")
+    void isAvailable_reflectsFirebaseAuthPresence() {
+        assertThat(service.isAvailable()).isTrue();
+        assertThat(new FirebaseContactService(null).isAvailable()).isFalse();
+    }
 }

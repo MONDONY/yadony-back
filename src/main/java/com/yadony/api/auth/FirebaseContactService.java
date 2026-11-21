@@ -85,6 +85,14 @@ public class FirebaseContactService {
     }
 
     /**
+     * Faux sans FirebaseAuth (test/CI). Les écritures se taisent alors ; un appelant qui ne peut
+     * pas faire semblant de réussir (numéro déclaré) le vérifie d'abord.
+     */
+    public boolean isAvailable() {
+        return !unavailable();
+    }
+
+    /**
      * Coordonnées de l'utilisateur pour un UID Firebase. Échec réseau / UID
      * inconnu → {@link Contact#EMPTY} (dégradation gracieuse, jamais d'exception
      * propagée pour ne pas casser un envoi SMS ou une réponse d'API).

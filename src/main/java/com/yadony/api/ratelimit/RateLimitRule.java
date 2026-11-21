@@ -88,7 +88,8 @@ public enum RateLimitRule {
      */
     OTP_VERIFY_IP(Key.IP, Set.of("POST"),
             List.of("/auth/email-otp/verify", "/auth/sms-otp/verify",
-                    "/auth/email-otp/attach", "/auth/sms-otp/attach"),
+                    "/auth/email-otp/attach", "/auth/sms-otp/attach",
+                    "/auth/sms-otp/declare"),
             60, Duration.ofMinutes(10));
 
     /** Ce qui identifie le demandeur pour une règle. */

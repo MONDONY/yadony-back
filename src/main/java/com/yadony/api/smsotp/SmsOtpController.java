@@ -3,6 +3,7 @@ package com.yadony.api.smsotp;
 import com.yadony.api.auth.AuthService;
 import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.common.YadonyBusinessException;
+import com.yadony.api.smsotp.dto.DeclarePhoneRequest;
 import com.yadony.api.smsotp.dto.SmsOtpAttachRequest;
 import com.yadony.api.smsotp.dto.SmsOtpSendRequest;
 import com.yadony.api.smsotp.dto.SmsOtpSendResponse;
@@ -25,9 +26,13 @@ public class SmsOtpController {
     private final SmsOtpService smsOtpService;
     private final AuthService authService;
 
-    public SmsOtpController(SmsOtpService smsOtpService, AuthService authService) {
+    private final DeclaredPhoneService declaredPhoneService;
+
+    public SmsOtpController(SmsOtpService smsOtpService, AuthService authService,
+                            DeclaredPhoneService declaredPhoneService) {
         this.smsOtpService = smsOtpService;
         this.authService = authService;
+        this.declaredPhoneService = declaredPhoneService;
     }
 
     @PostMapping("/send")
@@ -58,6 +63,18 @@ public class SmsOtpController {
             response.header(SESSION_TOKEN_HEADER, sessionToken);
         }
         return response.body(authService.getProfile(firebaseUid));
+    }
+
+    /**
+     * Déclare, sans SMS, le numéro d'un compte dont l'indicatif est bloqué (SMS jamais reçus).
+     * Le numéro va dans un claim Firebase propre, jamais dans {@code phoneNumber} : rien n'est
+     * donc vérifié ni révoqué, d'où pas d'en-tête de session ici.
+     */
+    @PostMapping("/declare")
+    public ResponseEntity<UserResponse> declare(@Valid @RequestBody DeclarePhoneRequest request) {
+        String firebaseUid = requireFirebaseUid();
+        declaredPhoneService.declare(firebaseUid, request.phoneNumber());
+        return ResponseEntity.ok(authService.getProfile(firebaseUid));
     }
 
     /**
@@ -119,7 +136,7 @@ public class SmsOtpController {
 
     /**
      * L'authentification est exigée par SecurityConfig, qui déclare
-     * {@code /auth/sms-otp/attach} en {@code .authenticated()} avant le permitAll du
+     * {@code /auth/sms-otp/attach} et {@code /declare} en {@code .authenticated()} avant le permitAll du
      * préfixe. Cette garde reste en second rideau et sert surtout à extraire l'UID.
      */
     private String requireFirebaseUid() {
