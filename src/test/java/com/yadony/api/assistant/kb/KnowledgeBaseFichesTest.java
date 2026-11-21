@@ -71,6 +71,18 @@ class KnowledgeBaseFichesTest {
     }
 
     @Test
+    void codeDeBienvenueParrainage_existeEnFrEtEn_etNAjouteQueDesRoutesConnues() {
+        KbCorpus corpus = KnowledgeBaseLoader.load(new PathMatchingResourcePatternResolver(), "classpath:assistant/kb");
+        for (String locale : List.of("fr", "en")) {
+            KbArticle fiche = corpus.articles(locale).stream()
+                    .filter(a -> a.id().equals("code-bienvenue-parrainage")).findFirst().orElseThrow();
+            assertThat(fiche.routes()).as(locale).extracting(KbRoute::path)
+                    .containsExactly("/profile/referral", "/parcels/send-intro");
+            assertThat(fiche.body()).as(locale).contains("AMINA05");
+        }
+    }
+
+    @Test
     void lesQuestionsFrequentesTrouventUneFiche() {
         KnowledgeBase kb = productionKb();
         assertThat(kb.search("fr", "Comment envoyer un colis ?", null, 4)).isNotEmpty();
