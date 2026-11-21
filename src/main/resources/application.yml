@@ -357,7 +357,16 @@ yadony:
     hold-days: ${YADONY_DELIVERY_NO_SHOW_HOLD_DAYS:7}
   # Frais retenus sur le remboursement d'un expéditeur qui annule (voir CancellationFeeProperties).
   # Palier le plus lointain = strictement plus de N jours ; les autres = au moins N jours.
+  # Barème validé au démarrage (taux dans [0, 1], plafond >= 0, seuils uniques) : invalide = démarrage refusé.
   cancellation-fee:
+    # Interrupteur, ÉTEINT par défaut : n'allumer qu'avec l'app qui affiche les frais et les CGU à jour.
+    # L'éteindre arrête seulement les NOUVELLES retenues : une retenue déjà due ou réglée suit son cours
+    # (remboursement partiel puis versement au voyageur).
+    enabled: ${YADONY_CANCELLATION_FEE_ENABLED:false}
+    # Date d'effet, instant ISO-8601 (ex. 2026-12-15T00:00:00Z) : seuls les colis CRÉÉS à partir de cet
+    # instant peuvent porter des frais (nouveaux colis seulement). Vide = aucun frais, même allumé
+    # (avertissement au démarrage).
+    effective-from: ${YADONY_CANCELLATION_FEE_EFFECTIVE_FROM:}
     cap-eur: 30
     tiers:
       - min-days-before: 5

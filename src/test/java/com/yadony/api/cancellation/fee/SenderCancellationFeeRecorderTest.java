@@ -29,6 +29,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -58,6 +59,9 @@ class SenderCancellationFeeRecorderTest {
     private static final UUID SENDER_ID = UUID.randomUUID();
     private static final UUID TRAVELER_ID = UUID.randomUUID();
     private static final UUID FEE_ID = UUID.randomUUID();
+    /** Date d'effet de l'interrupteur : les colis de ce test sont créés après, sauf mention contraire. */
+    private static final Instant EFFECTIVE_FROM = Instant.parse("2026-11-01T00:00:00Z");
+    private static final Instant CREATED_AT = Instant.parse("2026-11-15T08:00:00Z");
 
     @Mock CancellationFeeRepository fees;
     @Mock BidRepository bids;
@@ -68,8 +72,7 @@ class SenderCancellationFeeRecorderTest {
 
     @BeforeEach
     void setUp() {
-        recorder = new SenderCancellationFeeRecorder(fees, bids, announcements,
-                new CancellationFeeProperties(null, null), auditService, Clock.fixed(NOW, ZoneOffset.UTC));
+        recorder = recorder(new CancellationFeeProperties(true, EFFECTIVE_FROM, null, null));
         when(fees.findByBidId(BID_ID)).thenReturn(Optional.empty());
         when(fees.save(any(CancellationFeeEntity.class))).thenAnswer(inv -> {
             CancellationFeeEntity f = inv.getArgument(0);
@@ -235,7 +238,65 @@ class SenderCancellationFeeRecorderTest {
         verifyNoInteractions(auditService);
     }
 
+    // --- interrupteur d'activation (nouveaux colis seulement) ---
+
+    @Test
+    void featureDisabled_noRow() {
+        recorder = recorder(new CancellationFeeProperties(false, EFFECTIVE_FROM, null, null));
+        givenBid(BidStatus.CANCELLED, PaymentMethod.STRIPE, "EUR", Duration.ofHours(36));
+
+        recorder.onBidCancelledByParticipant(senderCancel(BidStatus.ACCEPTED, PaymentMethod.STRIPE));
+        recorder.record(BID_ID, CancellationFeeReason.SENDER_NO_SHOW);
+
+        verifyNothingRecorded();
+    }
+
+    @Test
+    void enabledWithoutEffectiveDate_noRow() {
+        recorder = recorder(new CancellationFeeProperties(true, null, null, null));
+        givenBid(BidStatus.CANCELLED, PaymentMethod.STRIPE, "EUR", Duration.ofHours(36));
+
+        recorder.record(BID_ID, CancellationFeeReason.SENDER_CANCEL);
+
+        verifyNothingRecorded();
+    }
+
+    @Test
+    void bidCreatedBeforeEffectiveDate_noRow() {
+        BidEntity bid = givenBid(BidStatus.CANCELLED, PaymentMethod.STRIPE, "EUR", Duration.ofHours(36));
+        ReflectionTestUtils.setField(bid, "createdAt",
+                LocalDateTime.ofInstant(EFFECTIVE_FROM.minusSeconds(1), ZoneOffset.UTC));
+
+        recorder.onBidCancelledByParticipant(senderCancel(BidStatus.ACCEPTED, PaymentMethod.STRIPE));
+
+        verifyNothingRecorded();
+    }
+
+    @Test
+    void bidCreatedAtEffectiveDate_recordsDue() {
+        BidEntity bid = givenBid(BidStatus.CANCELLED, PaymentMethod.STRIPE, "EUR", Duration.ofHours(36));
+        ReflectionTestUtils.setField(bid, "createdAt", LocalDateTime.ofInstant(EFFECTIVE_FROM, ZoneOffset.UTC));
+
+        recorder.onBidCancelledByParticipant(senderCancel(BidStatus.ACCEPTED, PaymentMethod.STRIPE));
+
+        assertThat(savedFee().getRate()).isEqualByComparingTo("0.20");
+    }
+
+    @Test
+    void bidCreatedAfterEffectiveDate_recordsDue() {
+        givenBid(BidStatus.CANCELLED, PaymentMethod.MOBILE_MONEY, "XOF", Duration.ofHours(12));
+
+        recorder.record(BID_ID, CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER);
+
+        assertThat(savedFee().getRate()).isEqualByComparingTo("0.30");
+    }
+
     // --- helpers ---
+
+    private SenderCancellationFeeRecorder recorder(CancellationFeeProperties properties) {
+        return new SenderCancellationFeeRecorder(fees, bids, new CancellationFeeEligibility(properties, announcements),
+                auditService, Clock.fixed(NOW, ZoneOffset.UTC));
+    }
 
     private BidCancelledByParticipantEvent senderCancel(BidStatus previousStatus, PaymentMethod method) {
         return new BidCancelledByParticipantEvent(BID_ID, ANN_ID, SENDER_ID, false, previousStatus, method);
@@ -249,6 +310,7 @@ class SenderCancellationFeeRecorderTest {
         bid.setStatus(status);
         bid.setPaymentMethod(method);
         bid.setCurrency(currency);
+        ReflectionTestUtils.setField(bid, "createdAt", LocalDateTime.ofInstant(CREATED_AT, ZoneOffset.UTC));
         when(bids.findById(BID_ID)).thenReturn(Optional.of(bid));
 
         AnnouncementEntity trip = new AnnouncementEntity();

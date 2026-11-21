@@ -2,12 +2,10 @@ package com.yadony.api.cancellation.fee;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.matching.AnnouncementEntity;
-import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.events.BidCancelledByParticipantEvent;
-import com.yadony.api.payments.cash.PaymentMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -47,6 +45,11 @@ import java.util.UUID;
  * survivre à une annulation défaite. Écrite avant le commit, dans la transaction qui annule, elle existe
  * dès que le remboursement peut partir et disparaît si l'annulation échoue.
  *
+ * <p><b>Interrupteur et date d'effet</b> : aucune ligne n'est écrite si {@link CancellationFeeEligibility} ne couvre
+ * pas le colis (frais éteints, date d'effet absente, colis créé avant elle, espèces). C'est la seule décision, partagée
+ * avec l'aperçu montré à l'expéditeur. Une ligne déjà {@code DUE} quand on éteint l'interrupteur garde son cycle :
+ * le règlement et le versement ne relisent pas l'interrupteur, l'argent promis au voyageur doit arriver.
+ *
  * <p>Idempotent : une seule ligne par colis (index unique V390) ; un second appel est sans effet. Les
  * trois appelants tiennent le verrou du colis. Un colis ou un trajet introuvable n'empêche pas
  * l'annulation : aucune retenue (en faveur de l'expéditeur).
@@ -60,19 +63,16 @@ public class SenderCancellationFeeRecorder {
 
     private final CancellationFeeRepository fees;
     private final BidRepository bids;
-    private final AnnouncementRepository announcements;
-    private final CancellationFeeProperties properties;
+    private final CancellationFeeEligibility eligibility;
     private final AuditService auditService;
     private final Clock clock;
 
     public SenderCancellationFeeRecorder(CancellationFeeRepository fees, BidRepository bids,
-                                         AnnouncementRepository announcements,
-                                         CancellationFeeProperties properties, AuditService auditService,
+                                         CancellationFeeEligibility eligibility, AuditService auditService,
                                          Clock clock) {
         this.fees = fees;
         this.bids = bids;
-        this.announcements = announcements;
-        this.properties = properties;
+        this.eligibility = eligibility;
         this.auditService = auditService;
         this.clock = clock;
     }
@@ -97,8 +97,9 @@ public class SenderCancellationFeeRecorder {
 
     /**
      * Crée la ligne {@code DUE} au taux du barème ({@link CancellationFeeTiers}, temps restant avant le
-     * départ à cet instant). Sans effet si une ligne existe déjà, si le colis n'est pas payé par carte ou
-     * mobile money, ou si le taux est nul (annulation assez tôt). Les montants restent à zéro jusqu'au
+     * départ à cet instant). Sans effet si une ligne existe déjà, si le colis n'est pas couvert
+     * ({@link CancellationFeeEligibility#assess} : frais éteints ou sans date d'effet, colis créé avant elle, ni carte
+     * ni mobile money), ou si le taux est nul (annulation assez tôt). Les montants restent à zéro jusqu'au
      * règlement par le paquet {@code payments} ({@link CancellationFeeRatePortAdapter#markRetained}) :
      * seul ce dernier connaît le montant payé, les frais et la commission.
      */
@@ -108,24 +109,20 @@ public class SenderCancellationFeeRecorder {
             return;
         }
         Optional<BidEntity> bid = bids.findById(bidId);
-        if (bid.isEmpty() || !retainable(bid.get().getPaymentMethod())) {
+        if (bid.isEmpty()) {
             return;
         }
-        Optional<AnnouncementEntity> trip = Optional.ofNullable(bid.get().getAnnouncementId())
-                .flatMap(announcements::findById);
-        if (trip.isEmpty()) {
-            log.warn("Retenue d'annulation non calculable : trajet du colis {} introuvable, aucune retenue", bidId);
+        Optional<CancellationFeeEligibility.Assessment> assessed = eligibility.assess(bid.get(), Instant.now(clock));
+        if (assessed.isEmpty() || assessed.get().rate().signum() <= 0) {
             return;
         }
-        BigDecimal rate = CancellationFeeTiers.rateFor(trip.get(), Instant.now(clock), properties);
-        if (rate.signum() <= 0) {
-            return;
-        }
+        AnnouncementEntity trip = assessed.get().trip();
+        BigDecimal rate = assessed.get().rate();
 
         CancellationFeeEntity fee = new CancellationFeeEntity();
         fee.setBidId(bidId);
         fee.setSenderId(bid.get().getSenderId());
-        fee.setTravelerId(trip.get().getTravelerId());
+        fee.setTravelerId(trip.getTravelerId());
         fee.setRate(rate);
         fee.setReason(reason);
         fee.setStatus(CancellationFeeStatus.DUE);
@@ -145,10 +142,5 @@ public class SenderCancellationFeeRecorder {
                 "senderId", String.valueOf(fee.getSenderId()),
                 "travelerId", String.valueOf(fee.getTravelerId())));
         log.info("Retenue d'annulation due sur le colis {} : {} au taux {}", bidId, reason, rate);
-    }
-
-    /** Argent plateforme à retenir : carte (séquestre Stripe) ou mobile money. Jamais espèces ni legacy. */
-    private static boolean retainable(PaymentMethod method) {
-        return method != null && (method.isCardEscrow() || method.isMobileMoney());
     }
 }

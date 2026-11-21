@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.yadony.api.matching.AnnouncementEntity;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -11,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
 import org.springframework.core.env.PropertySource;
@@ -97,6 +99,84 @@ class CancellationFeeTiersTest {
         assertThat(rate(trip)).isEqualByComparingTo("0");
     }
 
+    // --- prochaine hausse du taux (aperçu montré à l'expéditeur) ---
+
+    private static final Instant DEPARTURE = NOW.plus(Duration.ofDays(10));
+
+    private static Instant nextAt(Instant now) {
+        return CancellationFeeTiers.nextIncreaseAt(tripAt(DEPARTURE), now, PROPS);
+    }
+
+    private static BigDecimal rateAt(Instant now) {
+        return CancellationFeeTiers.rateFor(tripAt(DEPARTURE), now, PROPS);
+    }
+
+    @Test
+    void nextIncrease_freeWindow_isTheLastInstantAtZero() {
+        // Plus de 5 jours : le palier gratuit exige strictement plus de 120 h entières, il tient jusqu'à J-121 h inclus.
+        Instant boundary = DEPARTURE.minus(Duration.ofHours(121));
+
+        assertThat(nextAt(NOW)).isEqualTo(boundary);
+        assertThat(nextAt(boundary)).isEqualTo(boundary);
+        assertThat(rateAt(boundary)).isEqualByComparingTo("0");
+        assertThat(rateAt(boundary.plusSeconds(1))).isEqualByComparingTo("0.10");
+    }
+
+    @Test
+    void nextIncrease_tenPercentWindow_endsAtThreeDays() {
+        Instant boundary = DEPARTURE.minus(Duration.ofHours(72));
+        Instant justInTenPercent = DEPARTURE.minus(Duration.ofHours(121)).plusSeconds(1);
+
+        assertThat(nextAt(justInTenPercent)).isEqualTo(boundary);
+        assertThat(nextAt(boundary)).isEqualTo(boundary);
+        assertThat(rateAt(boundary)).isEqualByComparingTo("0.10");
+        assertThat(rateAt(boundary.plusSeconds(1))).isEqualByComparingTo("0.20");
+    }
+
+    @Test
+    void nextIncrease_twentyPercentWindow_endsAtOneDay() {
+        Instant boundary = DEPARTURE.minus(Duration.ofHours(24));
+
+        assertThat(nextAt(DEPARTURE.minus(Duration.ofHours(72)).plusSeconds(1))).isEqualTo(boundary);
+        assertThat(nextAt(DEPARTURE.minus(Duration.ofHours(48)))).isEqualTo(boundary);
+        assertThat(nextAt(boundary)).isEqualTo(boundary);
+        assertThat(rateAt(boundary)).isEqualByComparingTo("0.20");
+        assertThat(rateAt(boundary.plusSeconds(1))).isEqualByComparingTo("0.30");
+    }
+
+    @Test
+    void nextIncrease_maxTier_isNull() {
+        assertThat(nextAt(DEPARTURE.minus(Duration.ofHours(24)).plusSeconds(1))).isNull();
+        assertThat(nextAt(DEPARTURE.minusSeconds(60))).isNull();
+        assertThat(nextAt(DEPARTURE.plus(Duration.ofDays(2)))).isNull();
+    }
+
+    @Test
+    void nextIncrease_followsTheConfiguredScale_andSkipsEqualRates() {
+        // Barème autre que celui de production : 7 j gratuits, puis 15 % jusqu'à 2 j, 15 % encore jusqu'à 1 j, 50 %.
+        CancellationFeeProperties custom = new CancellationFeeProperties(new BigDecimal("30"), List.of(
+                new CancellationFeeProperties.Tier(7, BigDecimal.ZERO),
+                new CancellationFeeProperties.Tier(2, new BigDecimal("0.15")),
+                new CancellationFeeProperties.Tier(1, new BigDecimal("0.15")),
+                new CancellationFeeProperties.Tier(0, new BigDecimal("0.50"))));
+        AnnouncementEntity trip = tripAt(DEPARTURE);
+
+        assertThat(CancellationFeeTiers.nextIncreaseAt(trip, NOW, custom))
+                .isEqualTo(DEPARTURE.minus(Duration.ofHours(7 * 24 + 1)));
+        // 15 % puis encore 15 % : la prochaine HAUSSE est le passage à 50 %, à J-1.
+        assertThat(CancellationFeeTiers.nextIncreaseAt(trip, DEPARTURE.minus(Duration.ofHours(100)), custom))
+                .isEqualTo(DEPARTURE.minus(Duration.ofHours(24)));
+    }
+
+    @Test
+    void nextIncrease_noDepartureAt_usesDepartureDate() {
+        AnnouncementEntity trip = new AnnouncementEntity();
+        trip.setDepartureDate(LocalDate.of(2026, 11, 26)); // 26/11 00:00 UTC = 110 h après NOW : 10 %
+
+        assertThat(CancellationFeeTiers.nextIncreaseAt(trip, NOW, PROPS))
+                .isEqualTo(Instant.parse("2026-11-23T00:00:00Z"));
+    }
+
     @Test
     void properties_bindFromApplicationYamlDefaults() throws Exception {
         StandardEnvironment env = new StandardEnvironment();
@@ -104,10 +184,14 @@ class CancellationFeeTiersTest {
                 new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml"));
         sources.forEach(env.getPropertySources()::addLast);
 
-        CancellationFeeProperties bound = new Binder(ConfigurationPropertySources.get(env))
+        // Variables d'environnement résolues comme au démarrage (l'interrupteur et la date d'effet en dépendent).
+        CancellationFeeProperties bound = new Binder(ConfigurationPropertySources.get(env),
+                        new PropertySourcesPlaceholdersResolver(env))
                 .bind("yadony.cancellation-fee", CancellationFeeProperties.class)
                 .get();
 
+        assertThat(bound.enabled()).isFalse();
+        assertThat(bound.effectiveFrom()).isNull();
         assertThat(bound.capEur()).isEqualByComparingTo("30");
         assertThat(bound.tiers()).extracting(CancellationFeeProperties.Tier::minDaysBefore)
                 .containsExactly(5, 3, 1, 0);

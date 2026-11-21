@@ -52,6 +52,13 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  # Frais d'annulation allumés dans les contextes de test partagés, avec une date d'effet ancienne (tous les colis
+  # des tests sont « nouveaux ») : les tests des retenues gardent leurs assertions. L'état éteint, défaut de
+  # application.yml, et la date d'effet sont couverts sans contexte Spring de plus (CancellationFeeEligibilityTest,
+  # SenderCancellationFeeRecorderTest, CancellationFeePreviewServiceTest, CancellationFeePropertiesTest).
+  cancellation-fee:
+    enabled: true
+    effective-from: 2020-01-01T00:00:00Z
   # Endpoints DAC7 allumés dans le contexte de test partagé (TravelerTaxInfoIT) : l'état éteint, défaut de
   # application.yml, est couvert par TravelerTaxInfoControllerTest sans contexte Spring de plus.
   dac7:
