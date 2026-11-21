@@ -2,7 +2,6 @@ package com.yadony.api.likes;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
-import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.likes.dto.TripLikeResponse;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -14,7 +13,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.http.HttpStatus;
 
 import java.util.List;
 import java.util.Map;
@@ -61,15 +59,16 @@ class TripLikeServiceTest {
     }
 
     @Test
-    void like_sur_son_propre_trajet_leve_422_trip_like_own_trip() {
+    void like_sur_son_propre_trajet_est_accepte_et_compte() {
         givenTrip(AnnouncementStatus.ACTIVE, userId);
+        when(tripLikeRepository.insertIfAbsent(any(), eq(userId), eq(tripId))).thenReturn(1);
+        when(tripLikeRepository.countActive(tripId)).thenReturn(1L);
 
-        assertThatThrownBy(() -> service.like(userId, tripId))
-                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
-                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-                    assertThat(e.getErrorCode()).isEqualTo("trip-like-own-trip");
-                });
-        verify(tripLikeRepository, never()).insertIfAbsent(any(), any(), any());
+        var response = service.like(userId, tripId);
+
+        assertThat(response.likeCount()).isEqualTo(1);
+        assertThat(response.likedByMe()).isTrue();
+        verify(tripLikeRepository).insertIfAbsent(any(), eq(userId), eq(tripId));
     }
 
     @ParameterizedTest
