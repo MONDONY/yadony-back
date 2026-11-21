@@ -39,3 +39,6 @@ Passer en revue chaque lecteur du numéro : afficher (avec mention) ou ignorer l
 
 ## Mes choix (à corriger)
 Claim Firebase plutôt que colonne ; pas d'unicité ; bascule via la réponse `country-blocked`.
+
+## Décision du propriétaire (21/11, après revue de la tâche 5)
+Un numéro **déclaré non vérifié** ne rattache jamais un colis tout seul et ne donne jamais d'invitation de confiance : un faux compte qui déclarerait le numéro d'un destinataire verrait son code de retrait, et un voyageur pourrait se faire passer pour lui. Seuls un numéro vérifié par SMS ou « Vérifié par Yadony » rattache les colis et résout une invitation. Le numéro déclaré simple reste cherchable par l'admin (support), et sert à être joint (contact d'une contrepartie).
