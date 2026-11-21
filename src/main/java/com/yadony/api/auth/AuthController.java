@@ -38,9 +38,13 @@ public class AuthController {
     private final AuthService authService;
     private final GuestClaimService guestClaimService;
 
-    public AuthController(AuthService authService, GuestClaimService guestClaimService) {
+    private final UsernameService usernameService;
+
+    public AuthController(AuthService authService, GuestClaimService guestClaimService,
+                          UsernameService usernameService) {
         this.authService = authService;
         this.guestClaimService = guestClaimService;
+        this.usernameService = usernameService;
     }
 
     /**
@@ -102,6 +106,19 @@ public class AuthController {
     public ResponseEntity<UserResponse> updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(authService.updateProfile(firebaseUid, request));
+    }
+
+    /** Disponibilité d'un identifiant pour l'appelant (limitée en débit par Nginx sur /auth/me). */
+    @GetMapping("/me/username/availability")
+    public ResponseEntity<com.yadony.api.auth.dto.UsernameAvailabilityResponse> checkUsername(
+            @RequestParam("value") String value) {
+        return ResponseEntity.ok(usernameService.check(requireFirebaseUid(), value));
+    }
+
+    @PutMapping("/me/username")
+    public ResponseEntity<UserResponse> changeUsername(
+            @Valid @RequestBody com.yadony.api.auth.dto.ChangeUsernameRequest request) {
+        return ResponseEntity.ok(usernameService.change(requireFirebaseUid(), request.username()));
     }
 
     @PutMapping("/me/fcm-token")
