@@ -130,7 +130,7 @@ public class StripeReconciler {
                         // remboursement absent ou incomplet. Plus sans aller jusqu'au total : écart réel. Le
                         // TOTAL du paiement est cohérent (remboursé en entier après un premier partiel, la base
                         // suit au webhook charge.refunded) ; une retenue réglée sur un paiement finalement
-                        // remboursé en entier est signalée par l'invariant INV-19 une fois la base à jour.
+                        // remboursé en entier est signalée par l'invariant INV-20 une fois la base à jour.
                         long recordedMinor = CurrencyAmount.of(recorded, currency).minor();
                         if (!captured || refundedAtStripe == 0) {
                             codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");

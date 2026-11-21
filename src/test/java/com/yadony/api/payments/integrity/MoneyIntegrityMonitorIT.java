@@ -296,11 +296,11 @@ class MoneyIntegrityMonitorIT {
         auditRetainedAt(oldRetainedBid, "now() - interval '4 days'");
         persistRefundedCardPayment(oldPendingBid, "100.00", "70.00");
         UUID oldPending = persistFee(oldPendingBid, senderId, travelerId, "PAYOUT_PENDING", "30.00");
-        // Ligne créée il y a 4 jours (annulation), réglée il y a 1 heure : l'audit de la retenue fait foi.
         ageFee(oldPending, "now() - interval '4 days'");
         auditRetainedAt(oldPendingBid, "now() - interval '5 days'");
         persistRefundedCardPayment(freshRetainedBid, "100.00", "70.00");
         UUID freshRetained = persistFee(freshRetainedBid, senderId, travelerId, "RETAINED", "30.00");
+        // Ligne créée il y a 4 jours (annulation), réglée il y a 1 heure : l'audit de la retenue fait foi.
         ageFee(freshRetained, "now() - interval '4 days'");
         auditRetainedAt(freshRetainedBid, "now() - interval '1 hour'");
         persistRefundedCardPayment(oldPaidBid, "100.00", "70.00");
@@ -316,9 +316,10 @@ class MoneyIntegrityMonitorIT {
     /**
      * Retenue réglée : remboursé + brut retenu = payé, sinon l'expéditeur a été remboursé de trop (ou de trop peu)
      * alors que le voyageur est (ou sera) dédommagé. Le paiement d'un fil de négociation compte comme celui du colis.
+     * Règle CRITIQUE à part : son alerte part même quand INV-19 (retard de versement) est déjà en faute.
      */
     @Test
-    void inv19_retenueRegleeIncoherenteAvecLeMontantRembourse() {
+    void inv20_retenueRegleeIncoherenteAvecLeMontantRembourse_alerteCritiqueAPart() {
         UUID travelerId = persistUser();
         UUID senderId = persistUser();
         UUID announcementId = persistAnnouncement(travelerId);
@@ -338,11 +339,28 @@ class MoneyIntegrityMonitorIT {
         persistRefundedCardPayment(notRecordedBid, "100.00", null);
         UUID notRecorded = persistFee(notRecordedBid, senderId, travelerId, "PAYOUT_PENDING", "30.00");
         UUID noPayment = persistFee(noPaymentBid, senderId, travelerId, "RETAINED", "30.00");
+        // Retard de versement au montant exact : INV-19 seulement.
+        UUID lateBid = persistCardBid(announcementId, senderId);
+        persistRefundedCardPayment(lateBid, "100.00", "70.00");
+        UUID late = persistFee(lateBid, senderId, travelerId, "RETAINED", "30.00");
+        auditRetainedAt(lateBid, "now() - interval '4 days'");
 
-        assertThat(inv19Anomalies()).containsOnly(
+        MoneyIntegrityMonitor.Inspection inspection = monitor.inspect("INV-20", 50).orElseThrow();
+        assertThat(inspection.severity()).isEqualTo("CRITIQUE");
+        Map<String, String> byFee = new java.util.HashMap<>();
+        inspection.rows().forEach(r ->
+                byFee.put(String.valueOf(r.get("cancellation_fee_id")), String.valueOf(r.get("anomaly"))));
+        assertThat(byFee).containsOnly(
                 Map.entry(fullRefund.toString(), "RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT"),
                 Map.entry(notRecorded.toString(), "RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT"),
                 Map.entry(noPayment.toString(), "RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT"));
+        assertThat(inv19Anomalies()).containsOnly(Map.entry(late.toString(), "DEDOMMAGEMENT_NON_VERSE"));
+
+        Map<String, Long> counts = monitor.runAll();
+
+        assertThat(counts).containsEntry("INV-19", 1L).containsEntry("INV-20", 3L);
+        verify(alertEscalator).raiseOnce(eq("MONEY_INVARIANT_INV-20"), eq("CRITICAL"), anyString(), anyMap());
+        verify(alertEscalator).raiseOnce(eq("MONEY_INVARIANT_INV-19"), eq("WARN"), anyString(), anyMap());
     }
 
     private Map<String, String> inv19Anomalies() {
@@ -425,11 +443,11 @@ class MoneyIntegrityMonitorIT {
     }
 
     @Test
-    void lesDixNeufInvariantsTournentSurLeSchemaReelEtSontAZeroSurUneBaseVide() {
+    void lesVingtInvariantsTournentSurLeSchemaReelEtSontAZeroSurUneBaseVide() {
         Map<String, Long> counts = monitor.runAll();
 
         assertThat(counts).hasSize(MoneyInvariants.ALL.size());
-        assertThat(MoneyInvariants.ALL).hasSize(19);
+        assertThat(MoneyInvariants.ALL).hasSize(20);
         assertThat(counts.values()).allSatisfy(n -> assertThat(n).isZero());
         verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
     }

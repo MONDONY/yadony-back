@@ -174,7 +174,7 @@ class StripeReconcilerTest {
     void partielEnregistre_puisRembourseEnEntierChezStripe_avantLeWebhook_nEstPasSignale() throws Exception {
         // Premier remboursement partiel enregistré (70), puis le reste rendu : Stripe a tout rendu, le webhook
         // charge.refunded complet n'a pas encore mis la base à jour. État transitoire cohérent (l'ancienne règle
-        // « remboursé au moins le total » passait aussi) ; une retenue réglée reste surveillée par INV-19.
+        // « remboursé au moins le total » passait aussi) ; une retenue réglée reste surveillée par INV-20.
         PaymentEntity p = payment(PaymentStatus.REFUNDED, "100.00", "pi_partial_then_full");
         p.setRefundedAmount(new BigDecimal("70.00"));
         stripeHas(p, intent("pi_partial_then_full", "succeeded", 10000, "eur", 10000L));
