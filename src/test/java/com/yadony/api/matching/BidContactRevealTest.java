@@ -59,6 +59,9 @@ class BidContactRevealTest {
     @Mock private com.yadony.api.common.CommissionRateResolver commissionRateResolver;
     @Mock private FirebaseContactService firebaseContact;
 
+    @org.mockito.Spy private com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver =
+            new com.yadony.api.auth.DeclaredPhoneResolver(new com.yadony.api.auth.DeclaredPhoneHasher(""));
+
     @InjectMocks private BidService bidService;
 
     private UserEntity sender;

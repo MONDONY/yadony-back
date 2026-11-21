@@ -64,7 +64,7 @@ class ProfilePublicServiceTest {
     void setUp() throws Exception {
         profilePublicService = new ProfilePublicService(userRepository, ratingService,
                 userBusinessPrefsRepository, storageService, blockVisibility, TestMessages.resolver(),
-                firebaseContact);
+                firebaseContact, new DeclaredPhoneResolver(new DeclaredPhoneHasher("")));
         org.mockito.Mockito.lenient().when(firebaseContact.getContact(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new FirebaseContactService.Contact(null, null));
         user = new UserEntity();

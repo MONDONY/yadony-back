@@ -38,8 +38,27 @@ public record ProfilePublicResponse(
         /** Numéro d'immatriculation, seulement pour un professionnel (profil réservé aux connectés). */
         String businessRegistrationNumber,
         /** Pays d'immatriculation, seulement pour un professionnel. */
-        String businessCountry
+        String businessCountry,
+        /** Numéro déclaré sans SMS puis vérifié par l'équipe (jamais le numéro) ; faux si un SMS vérifie déjà le compte. */
+        boolean phoneYadonyVerified
 ) {
+    /** Forme d'avant le numéro déclaré : badge absent. */
+    public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
+                                 boolean kycVerified, boolean isProAccount, boolean isKiloPro, boolean gpPro,
+                                 int completedBidsCount, BigDecimal averageRating, int ratingCount,
+                                 String memberSince, List<String> badges, String contactMode,
+                                 Integer responseDelayHours, String bio, List<String> languages,
+                                 boolean phoneVerified, boolean emailVerified, String residenceCountry,
+                                 Integer measuredResponseMinutes, Integer lastSeenDaysAgo,
+                                 String travelerStatus, String businessName,
+                                 String businessRegistrationNumber, String businessCountry) {
+        this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
+                completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
+                responseDelayHours, bio, languages, phoneVerified, emailVerified, residenceCountry,
+                measuredResponseMinutes, lastSeenDaysAgo, travelerStatus, businessName,
+                businessRegistrationNumber, businessCountry, false);
+    }
+
     /** Forme d'avant le statut légal du voyageur (lot 2) : aucun statut. */
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
                                  boolean kycVerified, boolean isProAccount, boolean isKiloPro, boolean gpPro,
@@ -51,7 +70,7 @@ public record ProfilePublicResponse(
         this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
                 responseDelayHours, bio, languages, phoneVerified, emailVerified, residenceCountry,
-                measuredResponseMinutes, lastSeenDaysAgo, null, null, null, null);
+                measuredResponseMinutes, lastSeenDaysAgo, null, null, null, null, false);
     }
 
     public ProfilePublicResponse(String userId, String displayName, String avatarUrl,
@@ -62,6 +81,6 @@ public record ProfilePublicResponse(
         this(userId, displayName, avatarUrl, kycVerified, isProAccount, isKiloPro, gpPro,
                 completedBidsCount, averageRating, ratingCount, memberSince, badges, contactMode,
                 responseDelayHours, bio, languages, false, false, null, null, null,
-                null, null, null, null);
+                null, null, null, null, false);
     }
 }

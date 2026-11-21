@@ -62,7 +62,7 @@ class BidQuoteServiceTest {
                 // Aucune grille en vigueur (Optional vide par défaut) : chemin hérité du devis.
                 org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class),
                 org.mockito.Mockito.mock(com.yadony.api.tracking.TravelerTrackingQuery.class),
-                org.mockito.Mockito.mock(PayoutTriggerPolicy.class));
+                org.mockito.Mockito.mock(PayoutTriggerPolicy.class), null);
     }
 
     @AfterEach
