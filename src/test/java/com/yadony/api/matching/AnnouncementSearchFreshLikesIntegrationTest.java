@@ -149,6 +149,7 @@ class AnnouncementSearchFreshLikesIntegrationTest {
         AnnouncementSearchResponse guest = announcementService.withFreshLikes(cached, null).getContent().get(0);
         AnnouncementSearchResponse unknown = announcementService.withFreshLikes(cached, "inconnu-uid").getContent().get(0);
 
+        verify(tripLikeService, org.mockito.Mockito.never()).likedBy(any(), any());
         assertThat(guest.likeCount()).isEqualTo(1);
         assertThat(guest.likedByMe()).isFalse();
         assertThat(unknown.likeCount()).isEqualTo(1);

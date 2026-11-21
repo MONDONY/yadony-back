@@ -24,6 +24,10 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @EntityGraph(attributePaths = {"roles", "languages"})
     Optional<UserEntity> findByFirebaseUid(String firebaseUid);
 
+    /** Id seul (sans charger l'entité ni ses rôles/langues). Même filtre « non supprimé » que l'entité. */
+    @Query("select u.id from UserEntity u where u.firebaseUid = :firebaseUid")
+    Optional<UUID> findIdByFirebaseUid(@org.springframework.data.repository.query.Param("firebaseUid") String firebaseUid);
+
     /**
      * Langue préférée brute (colonne {@code preferred_language}, V264), vide si
      * l'utilisateur n'existe pas. Lu par {@code UserLanguageService} pour le port
