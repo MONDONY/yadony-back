@@ -4,6 +4,7 @@ import com.yadony.api.addressbook.invitation.dto.CreateRecipientInvitationReques
 import com.yadony.api.addressbook.invitation.dto.IncomingInvitationDto;
 import com.yadony.api.addressbook.invitation.dto.InvitationSentResponse;
 import com.yadony.api.addressbook.invitation.dto.SentInvitationDto;
+import com.yadony.api.addressbook.invitation.dto.UsernameLookupResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -26,9 +28,18 @@ import java.util.UUID;
 public class RecipientInvitationController {
 
     private final RecipientInvitationService service;
+    private final UsernameLookupService lookupService;
 
-    public RecipientInvitationController(RecipientInvitationService service) {
+    public RecipientInvitationController(RecipientInvitationService service, UsernameLookupService lookupService) {
         this.service = service;
+        this.lookupService = lookupService;
+    }
+
+    /** Aperçu minimal (identifiant + initiale) d'un compte, pour confirmer le destinataire avant d'inviter. */
+    @GetMapping("/lookup")
+    public UsernameLookupResponse lookup(@AuthenticationPrincipal String firebaseUid,
+                                         @RequestParam("username") String username) {
+        return lookupService.lookup(firebaseUid, username);
     }
 
     /** Toujours {@code 202 { "status": "SENT" }} pour une cible valide, compte existant ou non. */

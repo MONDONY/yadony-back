@@ -143,6 +143,9 @@ public class SecurityConfig {
                 // sinon écrire sur sa propre ligne invitée, promise à la purge.
                 .requestMatchers("/auth/me/residence-address").access(authenticatedNonGuest())
                 .requestMatchers("/auth/me/onboarding-seen").access(authenticatedNonGuest())
+                // Identifiant public : lecture de disponibilité et changement, comptes réels seulement.
+                .requestMatchers("/auth/me/username", "/auth/me/username/availability")
+                        .access(authenticatedNonGuest())
                 // Acceptation des engagements de publication : écrit sur la ligne `users`
                 // et dans audit_log (preuve légale). Un invité ne publie pas.
                 .requestMatchers("/auth/me/publish-commitments").access(authenticatedNonGuest())

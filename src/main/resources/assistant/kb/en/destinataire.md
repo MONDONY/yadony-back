@@ -7,5 +7,6 @@ routes:
     label: My recipients
 ---
 A new recipient is added when you choose the recipient of a shipment: a first and last name, which the traveler will see, and a number with the country code, for example +221, or tap "Choose from my contacts".
-They are then kept in Activity › My recipients, where you can edit them, set one as default or add a Yadony recipient by phone number or email, then pick them in one tap when creating a request.
+They are then kept in Activity › My recipients, where you can edit them, set one as default or add a Yadony recipient by phone number, email or Yadony identifier, then pick them in one tap when creating a request.
 A parcel's recipient can be changed (name or number) until handover: the pickup code and tracking link are then renewed, and the former recipient no longer has access.
+Adding a Yadony recipient sends the person an invitation: they accept or decline. If they accept, they join your list, marked "In Yadony". If they decline, you get a notification and the invitation disappears from your "Sent invitations".

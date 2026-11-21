@@ -124,6 +124,7 @@ public class NotificationPrefsService {
             // Invitations au carnet de destinataires (lot 4).
             Map.entry("RECIPIENT_INVITATION",         "pushRecipientParcels"),
             Map.entry("RECIPIENT_INVITATION_ACCEPTED", "pushActivityBids"),
+            Map.entry("RECIPIENT_INVITATION_DECLINED", "pushActivityBids"),
             Map.entry("RECIPIENT_INVITATION_REMOVED", "pushRecipientParcels"),
             // FLUTTER-GB : arrivée du trajet (instructions de retrait, à l'expéditeur) et
             // demande de colis retirée par la modération, suivies comme le reste du colis.
@@ -235,7 +236,7 @@ public class NotificationPrefsService {
             "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_REASSIGNED",
             // Expéditeur et voyageur : bonne nouvelle ou changement visible au moment d'agir
             "RECIPIENT_CONFIRMED", "RECIPIENT_CHANGED",
-            "RECIPIENT_INVITATION_ACCEPTED", "RECIPIENT_INVITATION_REMOVED",
+            "RECIPIENT_INVITATION_ACCEPTED", "RECIPIENT_INVITATION_DECLINED", "RECIPIENT_INVITATION_REMOVED",
             // Expirations découvertes à l'ouverture de l'app
             "request_expired", "bid_negotiation_expired",
             // Suite d'un signalement, consultable dans la boîte Annonces

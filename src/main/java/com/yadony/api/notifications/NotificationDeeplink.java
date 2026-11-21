@@ -100,7 +100,7 @@ public final class NotificationDeeplink {
             // retrouve le destinataire ajouté dans son carnet.
             // Retiré du carnet : il retrouve ses expéditeurs autorisés, à jour.
             case "RECIPIENT_INVITATION", "RECIPIENT_INVITATION_REMOVED" -> Optional.of("recipient-invitations");
-            case "RECIPIENT_INVITATION_ACCEPTED" -> Optional.of("profile/recipients");
+            case "RECIPIENT_INVITATION_ACCEPTED", "RECIPIENT_INVITATION_DECLINED" -> Optional.of("profile/recipients");
 
             case "GP_PRO_APPROVED", "GP_PRO_REJECTED", "GP_PRO_REVOKED",
                  "TRAVELER_STATUS_CONFIRMATION" -> Optional.of("profile/gp-pro");

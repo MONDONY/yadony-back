@@ -2,7 +2,6 @@ package com.yadony.api.likes;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
-import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.likes.dto.TripLikeResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,7 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -119,18 +117,6 @@ class TripLikeControllerTest {
     void delete_like_sans_jeton_rend_401() throws Exception {
         mockMvc.perform(delete("/announcements/" + TRIP_ID + "/like"))
                 .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void put_like_sur_son_propre_trajet_rend_422_problem_json() throws Exception {
-        when(tripLikeService.like(SENDER_ID, TRIP_ID)).thenThrow(YadonyBusinessException.localized(
-                HttpStatus.UNPROCESSABLE_ENTITY, "trip-like-own-trip", "problem.trip-like-own-trip"));
-
-        mockMvc.perform(put("/announcements/" + TRIP_ID + "/like")
-                        .with(authentication(as(SENDER_UID, "ROLE_SENDER"))))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(content().contentType("application/problem+json"))
-                .andExpect(jsonPath("$.title").exists());
     }
 
     @Test

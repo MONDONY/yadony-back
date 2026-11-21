@@ -1267,6 +1267,12 @@ public final class NotificationTexts {
                         who(m, inviteeFirstName, "notification.fallback.recipient")));
     }
 
+    /** À l'inviteur : l'invité a refusé ; {@code target} est la cible masquée, jamais un numéro ou un e-mail complet. */
+    public static NotificationText recipientInvitationDeclined(Messages m, String target) {
+        return new NotificationText(m.get("notification.recipient-invitation-declined.title"),
+                m.get("notification.recipient-invitation-declined.body", target));
+    }
+
     /** À l'invité : l'inviteur l'a retiré de ses destinataires, ses colis ne lui sont plus rattachés. */
     public static NotificationText recipientInvitationRemoved(Messages m, String inviterFirstName) {
         return new NotificationText(m.get("notification.recipient-invitation-removed.title"),

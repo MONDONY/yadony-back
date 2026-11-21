@@ -46,6 +46,10 @@ public class UserEntity extends BaseEntity {
     @Column(name = "username", nullable = false, unique = true, length = 32)
     private String username;
 
+    /** Date du dernier changement d'identifiant par l'utilisateur ; nulle tant qu'il n'en a fait aucun. */
+    @Column(name = "username_changed_at")
+    private java.time.OffsetDateTime usernameChangedAt;
+
     /**
      * Dernier rempart contre un {@code username} nul à l'insertion.
      *
@@ -555,6 +559,8 @@ public class UserEntity extends BaseEntity {
 
     public String getUsername() { return username; }
     public void setUsername(String username) { this.username = username; }
+    public java.time.OffsetDateTime getUsernameChangedAt() { return usernameChangedAt; }
+    public void setUsernameChangedAt(java.time.OffsetDateTime usernameChangedAt) { this.usernameChangedAt = usernameChangedAt; }
 
     /**
      * Nom affiché à une contrepartie : « Prénom N. », ou le {@link #getUsername() username}
