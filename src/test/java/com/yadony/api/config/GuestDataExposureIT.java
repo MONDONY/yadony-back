@@ -246,8 +246,8 @@ class GuestDataExposureIT {
             "priceGridItems", "reservedKg", "surplusEligible", "surplusPublished",
             "handoverDeadline", "isFavorite", "urgent", "currency", "negotiable",
             "availablePaymentMethods",
-            // likeCount : compteur public de j'aime, affiché sur la carte du trajet que le visiteur
-            // parcourt ; aucune identité. likedByMe : toujours faux pour un invité (aucun j'aime sans
+            // likeCount : compteur de j'aime servi par la recherche (l'app ne l'affiche qu'après un
+            // j'aime, ou au voyageur sur son propre trajet) ; aucune identité. likedByMe : toujours faux pour un invité (aucun j'aime sans
             // compte), champ du contrat de la carte.
             "likeCount", "likedByMe",
             // Fuseau IANA de la ville de départ (PROD-1R) : déduit de la ville, déjà publique ;

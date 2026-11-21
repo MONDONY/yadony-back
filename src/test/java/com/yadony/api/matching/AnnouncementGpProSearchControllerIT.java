@@ -36,10 +36,13 @@ class AnnouncementGpProSearchControllerIT {
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(), any(), any(), any(), any(), any(), any(), any(), any(Pageable.class), any(), any(), any()))
                 .thenReturn(Page.empty());
+        when(announcementService.withFreshLikes(any(), any())).thenAnswer(inv -> inv.getArgument(0));
         mockMvc.perform(get("/announcements" + query)
                         .with(authentication(new UsernamePasswordAuthenticationToken(
                                 "viewer-uid", null, List.of(new SimpleGrantedAuthority("ROLE_SENDER"))))))
                 .andExpect(status().isOk());
+        // Câblage : la page (peut-être en cache) passe par la relecture des j'aime pour ce lecteur.
+        verify(announcementService).withFreshLikes(any(), org.mockito.ArgumentMatchers.eq("viewer-uid"));
     }
 
     private Boolean lastGp() {
