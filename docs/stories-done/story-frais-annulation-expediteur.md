@@ -1,7 +1,7 @@
 # Story frais d'annulation à la charge de l'expéditeur (Backend)
 
 **Date :** 2026-11-21
-**Status :** ✅ Complète côté back, livrée ÉTEINTE (`yadony.cancellation-fee.enabled=false`)
+**Status :** ✅ Complète côté back, livrée ÉTEINTE (`yadony.cancellation-fee.enabled=false`). Suite complète locale : seuls deux tests de migration de fuseaux restent rouges (`V299V300TripCountryAndTimezoneMigrationTest`, `V344HandoverDeadlineLocalToUtcMigrationTest`), attribués au cache `embedded-pg` tronqué de la machine (fichiers de fuseaux absents), à confirmer sur la CI.
 
 Spec : `docs-claude-plans-draft/2026-11-21-frais-annulation-expediteur-design.md` (hors dépôt). Dépôts jumeaux à venir : app (affichage de l'aperçu), yadony-web (barème dans les CGU).
 
@@ -45,7 +45,7 @@ Paquet `payments/fee/` (les montants et l'argent) :
 - `payments/mobilemoney/MobileMoneyPayoutInitiator`, `payments/pawapay/*` : payout pawaPay rattaché à la retenue (`purpose CANCELLATION_FEE`), plafond d'essais.
 - `payments/PaymentRepository` (`recordRefundedAmount`, `findBidIdLinkedToThread`), `payments/PaymentService` (webhook `charge.refunded` partiel par UPDATE ciblé).
 - `payments/reconciliation/StripeReconciler` : compare au montant remboursé enregistré.
-- `payments/integrity/MoneyInvariants` : INV-07 ignore une retenue réglée au montant exact, nouvel invariant INV-19.
+- `payments/integrity/MoneyInvariants` : INV-07 ignore une retenue réglée au montant exact, nouveaux invariants INV-19 et INV-20.
 - `payments/wallet/fees/PawapayFeeTable` : frais d'un remboursement partiel.
 - `admin/AdminPaymentController` : « Rembourser » carte clôt une retenue due, relance de remboursement mobile money.
 - `cancellation/CancellationService` (`cancelAfterHandover`), `cancellation/SenderNoShowBidCancelListener` : appellent l'enregistrement.
@@ -125,7 +125,7 @@ Exemple : 100 € à J, commission 5 % : brut 30 €, frais Stripe 1,75 €, com
 
 **Pourquoi l'enregistrement est synchrone et `MANDATORY`.** Le remboursement part après le commit de l'annulation, sur un fil asynchrone, et doit trouver la ligne pour ne rendre que le net. Un `@TransactionalEventListener` l'écrirait après ce commit, en course avec le remboursement ; une transaction à part la ferait survivre à une annulation défaite. Écrite dans la transaction qui annule, elle existe dès que le remboursement peut partir et disparaît si l'annulation échoue. Hors transaction, `record` lève `IllegalTransactionStateException`.
 
-**Repli « remboursement intégral » et sa limite.** Une erreur du CALCUL (taux de change absent, barème invalide, arithmétique) ne bloque jamais l'expéditeur : remboursement intégral comme avant, alerte `FEE_COMPUTE_FAILED_<paymentId>`, ligne close `FEE_COMPUTATION_FAILED`, voyageur non dédommagé. Un échec de la BASE pendant le règlement (`DataAccessException`, `TransactionException`, `PersistenceException` non traduite, ou transaction du claim déjà condamnée) n'est PAS replié : l'exception remonte avant tout appel au prestataire, la transaction `REQUIRES_NEW` défait le claim, le paiement reste `ESCROW` et la retenue `DUE`, et le chemin habituel de nouvel essai s'applique (comme un échec Stripe). Replier ici rembourserait en entier chez le prestataire puis raterait le commit : argent sorti, paiement resté en séquestre. Cela vaut pour tout remboursement, fonction éteinte comprise (la lecture de la ligne a lieu à chaque remboursement d'un paiement capturé).
+**Repli « remboursement intégral » et sa limite.** Une erreur du CALCUL (taux de change absent, barème invalide, arithmétique) ne bloque jamais l'expéditeur : remboursement intégral comme avant, alerte `FEE_COMPUTE_FAILED_<paymentId>`, ligne close `FEE_COMPUTATION_FAILED`, voyageur non dédommagé. Un échec de la BASE pendant le règlement (`DataAccessException`, `TransactionException`, `PersistenceException` non traduite, ou transaction du claim déjà condamnée) n'est PAS replié : l'exception remonte avant tout appel au prestataire, la transaction `REQUIRES_NEW` défait le claim, le paiement reste `ESCROW` et la retenue `DUE`. Contrairement à un échec Stripe (alerte `STRIPE_REFUND_FAILED`), `RefundProcessor` ne lève AUCUNE alerte et rien ne relance ce remboursement : les signaux sont l'erreur journalisée par l'écouteur asynchrone (Sentry), puis INV-04 au bout d'une heure (séquestre sur un colis annulé) ; le geste est alors « Rembourser » de l'admin. Replier ici rembourserait en entier chez le prestataire puis raterait le commit : argent sorti, paiement resté en séquestre. Cela vaut pour tout remboursement, fonction éteinte comprise (la lecture de la ligne a lieu à chaque remboursement d'un paiement capturé).
 
 **Clés d'idempotence et unicité.**
 - Une ligne par colis : `ux_cancellation_fees_bid` ; l'enregistrement est sans effet si la ligne existe.
@@ -153,8 +153,9 @@ Exemple : 100 € à J, commission 5 % : brut 30 €, frais Stripe 1,75 €, com
 - `FEE_REFUND_MISMATCH_<paymentId>` et `MM_PARTIAL_REFUND_<paymentId>` (mobile money) : remboursement repris d'un autre montant ; le reste du dépôt est dû à l'expéditeur, à rendre à la main.
 - `CANCEL_FEE_PAYOUT_<feeId>` : versement en attente (une alerte par ligne, quel que soit le nombre d'essais) ; `CANCEL_FEE_STOPPED_<feeId>` : essais mobile money arrêtés. Geste : `retry-payout` (`PAYMENT_RELEASE`).
 - `STRIPE_REFUND_FAILED`, `PAWAPAY_REFUND_REJECTED_<paymentId>`, `PAWAPAY_REFUND_FAILED` : inchangées, la retenue reste due. Geste possible : `waive` (`PAYMENT_REFUND`), puis le remboursement habituel rend tout.
-- `MONEY_INVARIANT_INV-19` (sévérité HAUTE) : retenue restée `DUE` alors que le paiement est remboursé depuis plus de 24 h ; dédommagement pas versé 3 jours après la retenue ; remboursé + brut ≠ payé sur une ligne réglée (paiement d'un fil de négociation compris). INV-07 ne signale plus un remboursement Stripe partiel égal au payé moins le brut d'une ligne réglée.
-- Rapprochement Stripe quotidien : sur un paiement remboursé avec un montant enregistré, signale un remboursement absent ou inférieur, ou supérieur sans atteindre le total ; un total égal au paiement est cohérent (le webhook mettra la base à jour, INV-19 surveille ensuite la retenue).
+- `MONEY_INVARIANT_INV-19` (sévérité HAUTE, alerte WARN) : retenue restée `DUE` alors que le paiement est remboursé depuis plus de 24 h ; dédommagement pas versé 3 jours après la retenue.
+- `MONEY_INVARIANT_INV-20` (sévérité CRITIQUE, alerte CRITICAL) : remboursé + brut ≠ payé sur une ligne réglée (paiement d'un fil de négociation compris), par exemple un expéditeur remboursé en entier après la retenue alors que le voyageur est payé. Règle à part : les alertes sont dédupliquées par règle, un vieux retard de versement ne masque pas un écart d'argent. INV-07 ne signale plus un remboursement Stripe partiel égal au payé moins le brut d'une ligne réglée.
+- Rapprochement Stripe quotidien : sur un paiement remboursé avec un montant enregistré, signale un remboursement absent ou inférieur, ou supérieur sans atteindre le total ; un total égal au paiement est cohérent (le webhook mettra la base à jour, INV-20 surveille ensuite la retenue).
 
 ### Cas à régler à la main
 
@@ -163,18 +164,31 @@ Exemple : 100 € à J, commission 5 % : brut 30 €, frais Stripe 1,75 €, com
 - Reste d'un dépôt pawaPay (`MM_PARTIAL_REFUND_`, `FEE_REFUND_MISMATCH_`) : à rendre depuis le tableau de bord pawaPay, sans audit côté back.
 - Remboursement partiel pawaPay ÉCHOUÉ de façon asynchrone sur une ligne `RETAINED` : pas de sortie automatique vers un remboursement intégral ; la relance de remboursement de l'admin resoumet le même partiel.
 - Transfer refusé par Stripe (par exemple `source_transaction` sur une charge partiellement remboursée) : ligne `PAYOUT_PENDING`, alerte, relance après correction.
-- Remboursement intégral fait depuis le tableau de bord Stripe après une retenue : INV-19 (remboursé + brut ≠ payé) une fois le webhook arrivé.
+- Remboursement intégral fait depuis le tableau de bord Stripe après une retenue : INV-20 (remboursé + brut ≠ payé) une fois le webhook arrivé.
 - Colis négocié dont le paiement du fil précède la date d'effet alors que le colis est créé après : il peut porter des frais (la date d'effet lit `bids.created_at`).
 
 ### Pièges et points d'attention
 
 - Ne jamais lire la retenue avant le claim du paiement : seul le claim garantit un règlement unique.
 - Ne jamais poser `payment.setStatus(...)` ni un setter sur un paiement lu avant le claim : le flush écraserait `REFUNDED` par un statut périmé. `refunded_amount` passe par `recordRefundedAmount`.
-- Le paiement d'un fil de négociation n'a pas de `bid_id` : le colis se retrouve par `bids.linked_negotiation_thread_id` (`findBidIdLinkedToThread`, et la même jointure dans INV-07 et INV-19).
+- Le paiement d'un fil de négociation n'a pas de `bid_id` : le colis se retrouve par `bids.linked_negotiation_thread_id` (`findBidIdLinkedToThread`, et la même jointure dans INV-07, INV-19 et INV-20).
 - Colonnes argent NOT NULL : une ligne `DUE` porte des zéros et la devise du colis jusqu'au règlement.
 - Les profils de test partagés (`application-test.yml`, `application-e2e.yml`) laissent la fonction ÉTEINTE, comme en production. Les tests de la fonction l'allument avec `@ActiveProfiles({"test", "cancellation-fee"})` ou `({"e2e", "cancellation-fee"})`, jamais par `@TestPropertySource` (un seul contexte Spring de plus par profil de base).
 - Migrations V393 à V395 : renumérotées une fois avant toute application (V390 de `main` pris par #774). Prod refuse une migration plus basse que la dernière appliquée : une branche voisine qui tient V391 ou V392 doit se renuméroter si elle fusionne après.
 - Après ce renommage, un `target/` local garde les anciens `V390__cancellation_fees.sql`, `V391__…`, `V392__…` dans `target/classes/db/migration` : Flyway refuse alors de démarrer (« more than one migration with version 390 »). `./mvnw clean` une fois ; la CI part d'un dépôt propre.
+
+## Ce qui n'existe pas encore
+
+- Aucun bouton dans dony-admin : renoncer à une retenue (`/waive`) et relancer un versement (`/retry-payout`) ne passent que par l'API.
+- Les vues finance de l'admin ne montrent pas les opérations `CANCELLATION_FEE` (payouts pawaPay des dédommagements, Transfers Stripe `source=cancellation_fee`).
+- DAC7 : le dédommagement versé au voyageur n'est pas déclaré dans les rapports. Décision du propriétaire et du juridique.
+- Aucun endpoint n'expose le barème avant le paiement (checkout, CGU) : l'app doit le porter elle-même tant que ce n'est pas fait.
+- PR de l'app (affichage de l'aperçu) et PR des CGU (yadony-web) : à faire, dans les autres dépôts, après la PR back (règle des PR jumelles).
+- Aucun geste admin pour rendre le reste d'un dépôt pawaPay après un remboursement partiel repris (`MM_PARTIAL_REFUND_`, `FEE_REFUND_MISMATCH_`) : à faire à la main depuis le tableau de bord pawaPay, sans audit côté back.
+- Aucun nouvel essai automatique après un échec de la base pendant le règlement : erreur de l'écouteur asynchrone (Sentry), INV-04 au bout d'une heure, puis « Rembourser » de l'admin.
+- Vérification en mode TEST de Stripe d'un Transfer avec `source_transaction` sur une charge déjà remboursée en partie : toujours à faire avant l'activation.
+- Migrations : `telephone-declare` (V391) et toute autre branche ouverte doivent se renuméroter au-dessus de V395 si elles fusionnent après celle-ci.
+- `origin/main` a encore avancé depuis la fusion de cette branche : une nouvelle fusion de main est nécessaire avant d'ouvrir la PR.
 
 ## Critères d'acceptation couverts
 
@@ -193,7 +207,7 @@ Exemple : 100 € à J, commission 5 % : brut 30 €, frais Stripe 1,75 €, com
 - Passe large (2026-11-21, `./mvnw test -Djacoco.skip=true` sur `cancellation/**`, `payments/**`, `notifications/**`, `assistant/**`, `common/i18n/**`, les tests du contrôleur de paiements admin et les IT voisins des annulations) : 6 632 tests, 0 échec ; 5 classes en erreur d'infrastructure (`initdb failed` et « Connection refused » du PostgreSQL embarqué), vertes à la relance (53 tests).
 - Suite complète (`./mvnw test`, 2026-11-21) : 17 494 tests, 3 échecs, 125 erreurs. 123 classes en `initdb failed` (PostgreSQL embarqué, postgres orphelins sur la machine) : relancées, toutes vertes sauf deux tests de migration de fuseaux sans rapport avec la fonction, `V299V300TripCountryAndTimezoneMigrationTest` (2 échecs, « Africa/Abidjan » attendu) et `V344HandoverDeadlineLocalToUtcMigrationTest` (« invalid value for parameter TimeZone: Asia/Tokyo ») : le cache local du binaire PostgreSQL embarqué n'a plus ses fichiers de fuseaux (`share/postgresql/timezone` presque vide), problème de la machine, aucun fichier de ces tests ni de leurs migrations n'est touché par la branche.
 - Couverture JaCoCo de la suite complète : 95,6 % des lignes au total ; `cancellation/fee` 99,7 %, `payments/fee` 98,4 %, `payments/integrity` 97,9 %, `RefundProcessor` 96,6 %.
-- Tests de la fonction : `CancellationFeeTiersTest`, `CancellationFeeCalculatorTest`, `CancellationFeePropertiesTest`, `CancellationFeeEligibilityTest`, `SenderCancellationFeeRecorderTest`, `SenderCancellationFeeRecordingIT`, `CancellationFeePreviewServiceTest`, `CancellationFeePreviewControllerIntegrationTest`, `CancellationFeeRatePortAdapterTest`, `CancellationFeePayoutPortAdapterTest`, `CancellationFeeAdminServiceTest`, `CancellationFeeAdminControllerIT`, `CancellationFeeRepositoryTest`, `CancellationFeePostgresMigrationIT`, `CancellationFeeSettlementTest`, `CancellationFeeQuoteAdapterTest`, `CancellationFeePayoutServiceTest`, `CancellationFeePayoutListenerTest`, `CancellationFeePayoutOutcomeListenerTest`, `CancellationFeePayoutSchedulerTest`, `CancellationFeePayoutIT`, `CancellationFeeMobileMoneyTest`, `CancellationFeeMobileMoneyIT`, `SenderRefundInFlightAdapterTest`, `RefundProcessorCancellationFeeTest`, `RefundProcessorCancellationFeeIT`, `CancellationFeeSwitchedOffEndToEndIT`, `CancellationFeeNotificationListenerTest`, `MoneyIntegrityMonitorIT` (INV-07, INV-19), `StripeReconcilerTest`, `PawapayFeeTableTest`, `NotificationTextsTest`.
+- Tests de la fonction : `CancellationFeeTiersTest`, `CancellationFeeCalculatorTest`, `CancellationFeePropertiesTest`, `CancellationFeeEligibilityTest`, `SenderCancellationFeeRecorderTest`, `SenderCancellationFeeRecordingIT`, `CancellationFeePreviewServiceTest`, `CancellationFeePreviewControllerIntegrationTest`, `CancellationFeeRatePortAdapterTest`, `CancellationFeePayoutPortAdapterTest`, `CancellationFeeAdminServiceTest`, `CancellationFeeAdminControllerIT`, `CancellationFeeRepositoryTest`, `CancellationFeePostgresMigrationIT`, `CancellationFeeSettlementTest`, `CancellationFeeQuoteAdapterTest`, `CancellationFeePayoutServiceTest`, `CancellationFeePayoutListenerTest`, `CancellationFeePayoutOutcomeListenerTest`, `CancellationFeePayoutSchedulerTest`, `CancellationFeePayoutIT`, `CancellationFeeMobileMoneyTest`, `CancellationFeeMobileMoneyIT`, `SenderRefundInFlightAdapterTest`, `RefundProcessorCancellationFeeTest`, `RefundProcessorCancellationFeeIT`, `CancellationFeeSwitchedOffEndToEndIT`, `CancellationFeeNotificationListenerTest`, `MoneyIntegrityMonitorIT` (INV-07, INV-19, INV-20), `StripeReconcilerTest`, `PawapayFeeTableTest`, `NotificationTextsTest`.
 
 ## Décisions techniques
 
