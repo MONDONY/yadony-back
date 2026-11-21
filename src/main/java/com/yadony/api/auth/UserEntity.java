@@ -97,6 +97,24 @@ public class UserEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private KycStatus kycStatus = KycStatus.NOT_STARTED;
 
+    /**
+     * Empreinte HMAC du numéro déclaré sans SMS (V391). Le numéro reste dans un claim Firebase,
+     * jamais ici : voir {@link DeclaredPhoneHasher}.
+     */
+    @Column(name = "declared_phone_hash", length = 64)
+    private String declaredPhoneHash;
+
+    @Column(name = "declared_phone_level", length = 20)
+    @Enumerated(EnumType.STRING)
+    private DeclaredPhoneLevel declaredPhoneLevel;
+
+    @Column(name = "declared_phone_verified_at")
+    private LocalDateTime declaredPhoneVerifiedAt;
+
+    /** Administrateur ayant confirmé le numéro déclaré. */
+    @Column(name = "declared_phone_verified_by")
+    private java.util.UUID declaredPhoneVerifiedBy;
+
     @Column(name = "contact_kyc_only", nullable = false)
     private boolean contactKycOnly = true;
 
@@ -992,6 +1010,15 @@ public class UserEntity extends BaseEntity {
 
     public Integer getCommissionCardExpYear() { return commissionCardExpYear; }
     public void setCommissionCardExpYear(Integer commissionCardExpYear) { this.commissionCardExpYear = commissionCardExpYear; }
+
+    public String getDeclaredPhoneHash() { return declaredPhoneHash; }
+    public void setDeclaredPhoneHash(String v) { this.declaredPhoneHash = v; }
+    public DeclaredPhoneLevel getDeclaredPhoneLevel() { return declaredPhoneLevel; }
+    public void setDeclaredPhoneLevel(DeclaredPhoneLevel v) { this.declaredPhoneLevel = v; }
+    public LocalDateTime getDeclaredPhoneVerifiedAt() { return declaredPhoneVerifiedAt; }
+    public void setDeclaredPhoneVerifiedAt(LocalDateTime v) { this.declaredPhoneVerifiedAt = v; }
+    public java.util.UUID getDeclaredPhoneVerifiedBy() { return declaredPhoneVerifiedBy; }
+    public void setDeclaredPhoneVerifiedBy(java.util.UUID v) { this.declaredPhoneVerifiedBy = v; }
 
     public Instant getKycReminderAnchorAt() { return kycReminderAnchorAt; }
     public void setKycReminderAnchorAt(Instant v) { this.kycReminderAnchorAt = v; }

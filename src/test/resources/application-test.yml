@@ -52,6 +52,8 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  declared-phone:
+    hash-key: test-only-declared-phone-hash-key
   # Endpoints DAC7 allumés dans le contexte de test partagé (TravelerTaxInfoIT) : l'état éteint, défaut de
   # application.yml, est couvert par TravelerTaxInfoControllerTest sans contexte Spring de plus.
   dac7:

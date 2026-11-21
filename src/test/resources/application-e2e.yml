@@ -69,6 +69,8 @@ app:
     block-when-quota-exceeded: false
 
 yadony:
+  declared-phone:
+    hash-key: e2e-only-declared-phone-hash-key
   # Même raison qu'en test : un envoi ne doit pas dépendre de l'heure.
   notifications:
     email:

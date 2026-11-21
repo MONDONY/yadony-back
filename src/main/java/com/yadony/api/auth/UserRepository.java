@@ -36,6 +36,9 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query("select u.preferredLanguage from UserEntity u where u.id = :id")
     Optional<String> findPreferredLanguageById(@Param("id") UUID id);
 
+    /** Comptes ayant déclaré (sans SMS) le numéro dont voici l'empreinte, voir {@link DeclaredPhoneHasher}. */
+    List<UserEntity> findAllByDeclaredPhoneHash(String declaredPhoneHash);
+
     /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
     List<UserEntity> findAllByFcmToken(String fcmToken);
 

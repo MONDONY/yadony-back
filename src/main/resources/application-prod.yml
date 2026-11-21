@@ -37,6 +37,8 @@ stripe:
     billing-secret: ${STRIPE_WEBHOOK_BILLING_SECRET}
 
 yadony:
+  declared-phone:
+    hash-key: ${DECLARED_PHONE_HASH_KEY:?DECLARED_PHONE_HASH_KEY is required}
   kyc:
     enforce: true
   stripe:
