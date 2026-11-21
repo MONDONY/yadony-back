@@ -95,6 +95,9 @@ public class RefundProcessor {
     /** Rail mobile money : remboursement déjà en vol d'un autre montant que celui de la retenue (20 + 36). */
     static final String FEE_REFUND_MISMATCH_ALERT_PREFIX = "FEE_REFUND_MISMATCH_";
 
+    /** Rail mobile money : remboursement partiel repris sans retenue réglée, reste du dépôt à rendre (18 + 36). */
+    static final String PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX = "MM_PARTIAL_REFUND_";
+
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
@@ -219,8 +222,8 @@ public class RefundProcessor {
             if ("succeeded".equals(piStatus)) {
                 // Retenue d'annulation due par l'expéditeur fautif : lue ICI, APRÈS le claim
                 // markRefundedIfEscrow ci-dessus, jamais avant. Ce claim garantit un seul remboursement
-                // par paiement, donc un seul règlement de la retenue ; la lecture du taux par le port
-                // est volontairement sans verrou, le claim la sérialise.
+                // par paiement, donc un seul règlement de la retenue ; le taux est lu sous le verrou de
+                // la retenue (dueRateForUpdate) contre une renonciation concurrente de l'administration.
                 try {
                     retainedFee = cancellationFees.settle(payment, metadataId(pi, "sender_id"),
                             metadataId(pi, "traveler_id"));
@@ -562,6 +565,18 @@ public class RefundProcessor {
         } else {
             cancellationFees.waiveMobileMoneyIfDue(payment, deposit.getAmount());
         }
+        // Défense : un remboursement repris d'une tentative précédente, d'une partie du dépôt seulement, sans retenue
+        // réglée (retenue close entre-temps, calcul en échec, écart de montant). Jamais un succès silencieux affiché
+        // « remboursé en entier » : le montant réellement rendu est enregistré (UPDATE ciblé). La retenue reste dans
+        // l'état que les branches ci-dessus lui donnent (close ou absente) : rien n'est promis au voyageur, le reste
+        // du dépôt est dû à l'expéditeur et se règle à la main. Une alerte, sauf si une branche vient d'en lever une.
+        if (retainedFee.isEmpty() && refund.getAmount().compareTo(deposit.getAmount()) != 0) {
+            paymentRepository.recordRefundedAmount(paymentId, refund.getAmount());
+            enriched.put("refundedAmount", refund.getAmount().toPlainString());
+            if (feeComputationFailure == null && unmatchedFee == null) {
+                raisePartialRefundUnsettledAlert(payment, paymentId, refund, deposit);
+            }
+        }
 
         // Audit dans sa propre transaction — motif repris de MobileMoneyPayoutInitiator#release :
         // la trace du remboursement survit même si la transaction ambiante (le claim) échouait
@@ -570,6 +585,31 @@ public class RefundProcessor {
                 auditService.log("PAYMENT", paymentId, auditAction, auditActor, enriched));
         log.info("Remboursement mobile money {} soumis pour le paiement {} ({})", refund.getId(), paymentId, auditAction);
         return true;
+    }
+
+    /**
+     * Remboursement partiel repris sans retenue réglée : l'expéditeur ne récupère qu'une partie du dépôt, le reste est
+     * chez Yadony. Une alerte unique par paiement ; une alerte qui échoue ne remet pas en cause le remboursement.
+     */
+    private void raisePartialRefundUnsettledAlert(PaymentEntity payment, UUID paymentId, PawapayOperationEntity refund,
+                                                  PawapayOperationEntity deposit) {
+        BigDecimal held = deposit.getAmount().subtract(refund.getAmount());
+        try {
+            alerts.raiseOnce(PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX + paymentId,
+                    "Remboursement pawaPay " + refund.getId() + " repris pour le paiement " + paymentId + " : "
+                            + refund.getAmount().toPlainString() + " " + refund.getCurrency() + " rendus sur un dépôt de "
+                            + deposit.getAmount().toPlainString() + ", sans retenue d'annulation réglée. "
+                            + held.toPlainString() + " " + refund.getCurrency() + " restent chez Yadony, dus à "
+                            + "l'expéditeur : à rendre à la main",
+                    Map.of("paymentId", paymentId.toString(),
+                            "bidId", String.valueOf(payment.getBidId()),
+                            "operationId", refund.getId().toString(),
+                            "refundAmount", refund.getAmount().toPlainString(),
+                            "depositAmount", deposit.getAmount().toPlainString()));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX, paymentId,
+                    alertFailure);
+        }
     }
 
     private Map<String, Object> enrich(Map<String, String> payload, PaymentEntity payment) {

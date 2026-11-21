@@ -24,8 +24,10 @@ import java.util.function.Supplier;
  * frais Stripe réels de la charge (carte), barème pawaPay de l'opérateur du dépôt (mobile money).
  *
  * <p>Appelé par {@code RefundProcessor} sous le claim du paiement ({@code markRefundedIfEscrow}) : ce
- * claim garantit un seul remboursement par paiement, donc un seul règlement de la retenue, et rend sans
- * danger la lecture non verrouillée du taux.
+ * claim garantit un seul remboursement par paiement, donc un seul règlement de la retenue. Il ne sérialise pas une
+ * renonciation de l'administration, qui ne touche que la retenue : le taux est donc lu SOUS LE VERROU de la ligne
+ * ({@link CancellationFeeRatePort#dueRateForUpdate}), tenu jusqu'au commit du remboursement. Renonciation et règlement
+ * ne peuvent plus s'entrelacer : l'un finit, l'autre voit son résultat. Ordre des verrous : paiement puis retenue.
  */
 @Component
 public class CancellationFeeSettlement {
@@ -90,7 +92,7 @@ public class CancellationFeeSettlement {
             return Optional.empty();
         }
         return bidIdOf(payment)
-                .flatMap(port::dueRate)
+                .flatMap(port::dueRateForUpdate)
                 .map(rate -> compute(payment, senderId, travelerId, rate));
     }
 
@@ -108,7 +110,7 @@ public class CancellationFeeSettlement {
             return Optional.empty();
         }
         return bidIdOf(payment)
-                .flatMap(port::dueRate)
+                .flatMap(port::dueRateForUpdate)
                 .map(rate -> computeMobileMoney(payment, depositProvider, rate));
     }
 

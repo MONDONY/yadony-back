@@ -2,6 +2,7 @@ package com.yadony.api.cancellation.fee;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.fee.CancellationFeeBreakdown;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,6 +38,7 @@ class CancellationFeeRatePortAdapterTest {
 
     @Mock CancellationFeeRepository fees;
     @Mock AuditService auditService;
+    @Mock EntityManager entityManager;
     @InjectMocks CancellationFeeRatePortAdapter adapter;
 
     @Test
@@ -59,6 +61,64 @@ class CancellationFeeRatePortAdapterTest {
         when(fees.findByBidId(BID_ID)).thenReturn(Optional.empty());
 
         assertThat(adapter.dueRate(BID_ID)).isEmpty();
+    }
+
+    // ── Lecture verrouillée du taux (revue tâche 7, tour 2 : renonciation concurrente du règlement) ───────────
+
+    @Test
+    void dueRateForUpdate_nothingDue_neverLocks() {
+        // Remboursement ordinaire sans retenue : aucun verrou de plus (et aucun FOR NO KEY UPDATE sous H2).
+        when(fees.findByBidId(BID_ID)).thenReturn(Optional.of(fee(CancellationFeeStatus.NOT_APPLICABLE)));
+
+        assertThat(adapter.dueRateForUpdate(BID_ID)).isEmpty();
+
+        verify(fees, never()).findByBidIdForUpdate(any());
+        verifyNoInteractions(entityManager);
+    }
+
+    @Test
+    void dueRateForUpdate_dueRow_lockedAndRereadBeforeAnswering() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.DUE);
+        when(fees.findByBidId(BID_ID)).thenReturn(Optional.of(row));
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
+
+        assertThat(adapter.dueRateForUpdate(BID_ID)).hasValueSatisfying(r -> assertThat(r).isEqualByComparingTo("0.30"));
+
+        // L'instance a pu être chargée avant le verrou (lecture simple) : son état est relu sous le verrou.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(fees, entityManager);
+        order.verify(fees).findByBidIdForUpdate(BID_ID);
+        order.verify(entityManager).refresh(row);
+    }
+
+    @Test
+    void dueRateForUpdate_waivedWhileWaitingForTheLock_empty() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.DUE);
+        when(fees.findByBidId(BID_ID)).thenReturn(Optional.of(row));
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
+        // La renonciation a été commitée pendant l'attente du verrou : la relecture voit NOT_APPLICABLE.
+        org.mockito.Mockito.doAnswer(inv -> {
+            row.setStatus(CancellationFeeStatus.NOT_APPLICABLE);
+            return null;
+        }).when(entityManager).refresh(row);
+
+        assertThat(adapter.dueRateForUpdate(BID_ID)).isEmpty();
+    }
+
+    @Test
+    void markRetained_rereadsTheLockedRowBeforeWriting() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.DUE);
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
+        org.mockito.Mockito.doAnswer(inv -> {
+            row.setStatus(CancellationFeeStatus.NOT_APPLICABLE);
+            return null;
+        }).when(entityManager).refresh(row);
+
+        adapter.markRetained(BID_ID, BREAKDOWN, "EUR");
+
+        assertThat(row.getStatus()).as("jamais RETAINED par-dessus une renonciation commitée")
+                .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        verify(fees, never()).save(any());
+        verifyNoInteractions(auditService);
     }
 
     @Test
@@ -127,7 +187,7 @@ class CancellationFeeRatePortAdapterTest {
     @Test
     void capEur_isTheConfiguredCap() {
         CancellationFeeRatePortAdapter configured = new CancellationFeeRatePortAdapter(fees, auditService,
-                new CancellationFeeProperties(new BigDecimal("25"), null));
+                new CancellationFeeProperties(new BigDecimal("25"), null), entityManager);
 
         assertThat(configured.capEur()).isEqualByComparingTo("25");
     }

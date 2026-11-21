@@ -149,6 +149,9 @@ class CancellationFeeMobileMoneyTest {
             when(operations.findLive(paymentId, PawapayOperationKind.REFUND)).thenReturn(Optional.empty());
             when(operations.findLatest(paymentId, PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
             when(feePort.capEur()).thenReturn(new BigDecimal("30"));
+            // Le règlement lit le taux sous verrou (dueRateForUpdate) ; ici le port répond comme sa lecture simple.
+            org.mockito.Mockito.lenient().when(feePort.dueRateForUpdate(org.mockito.ArgumentMatchers.any()))
+                    .thenAnswer(inv -> feePort.dueRate(inv.getArgument(0)));
             when(feePort.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("0.30")));
             when(rateLookup.unitsPerEur("XOF")).thenReturn(XOF_PER_EUR);
             when(submission.submitRefund(eq(paymentId), eq(deposit), any())).thenAnswer(call ->
@@ -313,6 +316,49 @@ class CancellationFeeMobileMoneyTest {
             verify(feePort).markNotApplicable(bidId, "REFUND_ALREADY_IN_FLIGHT");
             verify(feePort, never()).markRetained(any(), any(), any());
             verify(paymentRepository, never()).recordRefundedAmount(any(), any());
+        }
+
+        @Test
+        void livePartialRefund_withoutAnyDueFee_amountRecordedAndOneAlert_neverASilentFullRefund() {
+            // Revue tâche 7, tour 2 : remboursement partiel d'une tentative annulée, retenue entre-temps close.
+            when(feePort.dueRate(bidId)).thenReturn(Optional.empty());
+            PawapayOperationEntity live = operation(PawapayOperationKind.REFUND, PawapayOperationStatus.CREATED,
+                    "45922", "ORANGE_SEN");
+            when(operations.findLive(paymentId, PawapayOperationKind.REFUND)).thenReturn(Optional.of(live));
+
+            assertThat(refund()).isTrue();
+
+            verify(submission, never()).submitRefund(any(), any(), any());
+            // Jamais « remboursé en entier » : le montant réellement rendu est enregistré.
+            verify(paymentRepository).recordRefundedAmount(eq(paymentId), argThat(a -> same(a, "45922")));
+            verify(alerts).raiseOnce(eq("MM_PARTIAL_REFUND_" + paymentId), contains("19678"), anyMap());
+            verify(feePort, never()).markRetained(any(), any(), any());
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Map<String, Object>> audit = ArgumentCaptor.forClass(Map.class);
+            verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("PAYMENT_REFUNDED_BID_REJECTED"), any(),
+                    audit.capture());
+            assertThat(audit.getValue()).containsEntry("refundedAmount", "45922");
+        }
+
+        @Test
+        void livePartialRefundOfAnotherAmount_withADueFee_mismatchAlert_andTheAmountRecorded() {
+            PawapayOperationEntity live = operation(PawapayOperationKind.REFUND, PawapayOperationStatus.ACCEPTED,
+                    "50000", "ORANGE_SEN");
+            when(operations.findLive(paymentId, PawapayOperationKind.REFUND)).thenReturn(Optional.of(live));
+
+            assertThat(refund()).isTrue();
+
+            verify(alerts).raiseOnce(eq("FEE_REFUND_MISMATCH_" + paymentId), anyString(), anyMap());
+            verify(feePort).markNotApplicable(bidId, "REFUND_ALREADY_IN_FLIGHT");
+            verify(paymentRepository).recordRefundedAmount(eq(paymentId), argThat(a -> same(a, "50000")));
+            // Une seule alerte pour cet écart : celle de la retenue suffit.
+            verify(alerts, never()).raiseOnce(eq("MM_PARTIAL_REFUND_" + paymentId), anyString(), anyMap());
+        }
+
+        @Test
+        void partialRefundAlertType_fitsTheAdminAlertsColumn() {
+            assertThat(("MM_PARTIAL_REFUND_" + UUID.randomUUID()).length())
+                    .isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
         }
 
         @Test

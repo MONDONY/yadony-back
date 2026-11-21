@@ -17,13 +17,21 @@ import java.util.UUID;
 public interface CancellationFeeRatePort {
 
     /**
-     * Lecture sans verrou : l'appelant la fait sous une garantie qui lui est propre (le claim du paiement
-     * pour un remboursement, voir {@code RefundProcessor}).
+     * Lecture simple, sans verrou : sert aux clôtures ({@link #markNotApplicable} revérifie sous verrou). Le
+     * RÈGLEMENT lit le taux par {@link #dueRateForUpdate}.
      *
      * @return le taux de la retenue (0 &lt; taux &le; 1) si une retenue est due et pas encore réglée pour
      *         ce colis ; vide sinon (aucune faute de l'expéditeur, espèces, retenue déjà réglée).
      */
     Optional<BigDecimal> dueRate(UUID bidId);
+
+    /**
+     * Comme {@link #dueRate}, mais sous le verrou de la ligne, tenu jusqu'à la fin de la transaction de l'appelant :
+     * à appeler dans la transaction du claim du remboursement, avant de régler. Le claim du paiement ne sérialise pas
+     * une renonciation de l'administration, qui ne touche que la retenue ; ce verrou, si. Sans retenue due, aucun
+     * verrou n'est pris.
+     */
+    Optional<BigDecimal> dueRateForUpdate(UUID bidId);
 
     /** Plafond du dédommagement par colis, en euros (barème du paquet {@code cancellation}). */
     BigDecimal capEur();

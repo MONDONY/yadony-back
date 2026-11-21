@@ -91,6 +91,9 @@ class RefundProcessorCancellationFeeTest {
         paymentId = UUID.randomUUID();
         bidId = UUID.randomUUID();
         lenient().when(feePort.capEur()).thenReturn(new BigDecimal("30"));
+        // Le règlement lit le taux sous verrou (dueRateForUpdate) ; ici le port répond comme sa lecture simple.
+        org.mockito.Mockito.lenient().when(feePort.dueRateForUpdate(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> feePort.dueRate(inv.getArgument(0)));
     }
 
     @Test

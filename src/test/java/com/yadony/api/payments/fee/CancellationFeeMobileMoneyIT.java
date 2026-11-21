@@ -409,6 +409,49 @@ class CancellationFeeMobileMoneyIT {
         awaitOpenAlerts(0);
     }
 
+    /**
+     * Revue tâche 7, tour 2 : un remboursement partiel resté CREATED (pawaPay muet) survit à l'annulation de la
+     * transaction. Renoncer à la retenue est refusé tant qu'il vit ; et si la retenue a été close par un autre chemin,
+     * le remboursement repris n'est jamais présenté comme intégral (montant enregistré, une alerte).
+     */
+    @Test
+    @DisplayName("partiel resté CREATED, transaction annulée : renonciation refusée (409), puis reprise sans retenue alertée")
+    void partialRefundLeftCreated_waiveRefused_thenReusedWithoutAFee_amountRecordedAndAlerted() {
+        when(client.initiateRefund(any())).thenThrow(new org.springframework.web.client.RestClientException("timeout"));
+
+        assertThatThrownBy(this::refund).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
+
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId))
+                .isEqualTo("ESCROW");
+        assertThat(status()).isEqualTo(CancellationFeeStatus.DUE);
+        UUID refundId = operationId(paymentId, "REFUND");
+        Map<String, Object> refundRow = jdbc.queryForMap("SELECT status, amount FROM pawapay_operations WHERE id = ?",
+                refundId);
+        assertThat(refundRow.get("status")).isEqualTo("CREATED");
+        assertThat((BigDecimal) refundRow.get("amount")).isEqualByComparingTo("45922");
+
+        assertThatThrownBy(() -> adminService.waive(bidId, UUID.randomUUID(),
+                "Partiel refusé par l'opérateur, remboursement intégral"))
+                .isInstanceOfSatisfying(com.yadony.api.common.YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("sender-refund-in-flight");
+                });
+        assertThat(status()).isEqualTo(CancellationFeeStatus.DUE);
+        assertThat(audits("CANCELLATION_FEE_NOT_APPLICABLE")).isZero();
+
+        // Défense en profondeur : retenue close par un autre chemin, puis reprise du remboursement vivant.
+        jdbc.update("UPDATE cancellation_fees SET status = 'NOT_APPLICABLE' WHERE id = ?", feeId);
+        assertThat(refund()).isTrue();
+
+        verify(client, times(1)).initiateRefund(any());
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId))
+                .isEqualTo("REFUNDED");
+        assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class, paymentId))
+                .as("jamais présenté comme remboursé en entier").isEqualByComparingTo("45922");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_alerts WHERE type = ? AND resolved = false",
+                Long.class, "MM_PARTIAL_REFUND_" + paymentId)).isEqualTo(1L);
+    }
+
     private void deadFeePayout(PawapayOperationStatus status) {
         PawapayOperationEntity op = PawapayOperationEntity.forCancellationFee(UUID.randomUUID(), travelerId, feeId,
                 new BigDecimal("16662"), "XOF", "ORANGE_SEN", "SN", ACCOUNT_MSISDN);

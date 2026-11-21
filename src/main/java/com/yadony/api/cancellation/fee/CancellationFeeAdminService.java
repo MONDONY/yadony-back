@@ -42,17 +42,23 @@ public class CancellationFeeAdminService {
     private final AuditService auditService;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    private final SenderRefundInFlightPort senderRefunds;
 
     public CancellationFeeAdminService(CancellationFeeRepository fees, AuditService auditService,
-                                       ApplicationEventPublisher events, Clock clock) {
+                                       ApplicationEventPublisher events, Clock clock,
+                                       SenderRefundInFlightPort senderRefunds) {
         this.fees = fees;
         this.auditService = auditService;
         this.events = events;
         this.clock = clock;
+        this.senderRefunds = senderRefunds;
     }
 
     /**
-     * Renonce à la retenue du colis {@code bidId}, encore due. 404 sans retenue, 409 si elle n'est plus due.
+     * Renonce à la retenue du colis {@code bidId}, encore due. 404 sans retenue, 409 si elle n'est plus due, 409
+     * {@code sender-refund-in-flight} si un remboursement de l'expéditeur est déjà vivant chez pawaPay. Sous le verrou
+     * de la retenue : un règlement en cours (qui le tient depuis sa lecture du taux) termine d'abord, la renonciation
+     * trouve alors la retenue réglée et répond 409.
      *
      * @param reason motif interne de l'administrateur, repris dans l'audit
      */
@@ -64,6 +70,15 @@ public class CancellationFeeAdminService {
             throw new YadonyBusinessException(HttpStatus.CONFLICT, "cancellation-fee-not-due",
                     "Cancellation Fee Not Due", "La retenue du colis " + bidId + " est " + fee.getStatus().name()
                             + " : on ne renonce qu'à une retenue encore due, avant le remboursement de l'expéditeur");
+        }
+        // Sous le verrou de la retenue, lectures simples côté paiements (jamais le verrou du paiement : le remboursement
+        // prend paiement puis retenue, la renonciation la retenue seule, aucun cycle).
+        if (senderRefunds.senderRefundInFlight(bidId)) {
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "sender-refund-in-flight",
+                    "Sender Refund In Flight", "Un remboursement de l'expéditeur est déjà en cours ou abouti chez "
+                            + "pawaPay pour le colis " + bidId + " (le dépôt moins la retenue). Renoncer maintenant le "
+                            + "laisserait remboursé d'une partie seulement, sans dédommagement pour le voyageur. Attendre "
+                            + "l'issue de ce remboursement : s'il échoue, la renonciation redevient possible.");
         }
         fee.setStatus(CancellationFeeStatus.NOT_APPLICABLE);
         fees.save(fee);

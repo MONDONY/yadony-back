@@ -49,9 +49,11 @@ class CancellationFeeAdminServiceTest {
     @Mock CancellationFeeRepository fees;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher events;
+    @Mock SenderRefundInFlightPort senderRefunds;
 
     private CancellationFeeAdminService service() {
-        return new CancellationFeeAdminService(fees, auditService, events, Clock.fixed(NOW, ZoneOffset.UTC));
+        return new CancellationFeeAdminService(fees, auditService, events, Clock.fixed(NOW, ZoneOffset.UTC),
+                senderRefunds);
     }
 
     @Test
@@ -91,6 +93,26 @@ class CancellationFeeAdminServiceTest {
                 });
 
         assertThat(row.getStatus()).isEqualTo(status);
+        verify(fees, never()).save(any());
+        verifyNoInteractions(auditService, events);
+    }
+
+    @Test
+    void waive_senderRefundStillInFlight_409WithoutAnyWrite() {
+        // Remboursement partiel vivant (tentative annulée après la soumission) : renoncer laisserait l'expéditeur
+        // remboursé d'une partie seulement, le voyageur sans rien.
+        CancellationFeeEntity row = fee(CancellationFeeStatus.DUE);
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
+        when(senderRefunds.senderRefundInFlight(BID_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service().waive(BID_ID, ADMIN_ID, REASON))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getErrorCode()).isEqualTo("sender-refund-in-flight");
+                    assertThat(e.getMessage()).contains("remboursement");
+                });
+
+        assertThat(row.getStatus()).isEqualTo(CancellationFeeStatus.DUE);
         verify(fees, never()).save(any());
         verifyNoInteractions(auditService, events);
     }

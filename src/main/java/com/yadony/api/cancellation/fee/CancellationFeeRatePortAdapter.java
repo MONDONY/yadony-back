@@ -3,6 +3,7 @@ package com.yadony.api.cancellation.fee;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.fee.CancellationFeeBreakdown;
 import com.yadony.api.payments.fee.CancellationFeeRatePort;
+import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,12 +29,14 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
     private final CancellationFeeRepository fees;
     private final AuditService auditService;
     private final CancellationFeeProperties properties;
+    private final EntityManager entityManager;
 
     public CancellationFeeRatePortAdapter(CancellationFeeRepository fees, AuditService auditService,
-                                          CancellationFeeProperties properties) {
+                                          CancellationFeeProperties properties, EntityManager entityManager) {
         this.fees = fees;
         this.auditService = auditService;
         this.properties = properties;
+        this.entityManager = entityManager;
     }
 
     @Override
@@ -41,6 +44,37 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
         return fees.findByBidId(bidId)
                 .filter(fee -> fee.getStatus() == CancellationFeeStatus.DUE)
                 .map(CancellationFeeEntity::getRate);
+    }
+
+    /**
+     * Taux dû lu SOUS LE VERROU de la ligne, tenu jusqu'à la fin de la transaction de l'appelant (celle du claim du
+     * remboursement) : une renonciation de l'administration ({@code CancellationFeeAdminService#waive}) attend la fin
+     * du règlement, ou le règlement attend la fin de la renonciation et voit alors la ligne close.
+     *
+     * <p>Lecture simple d'abord : sans retenue due, aucun verrou (le remboursement ordinaire n'en prend pas de plus,
+     * et le verrou JPQL ne s'exécute jamais sous H2). Une ligne close ne redevient jamais due, ce premier tri ne perd
+     * donc aucun cas. Ordre des verrous du remboursement : paiement (claim) puis retenue.
+     */
+    @Override
+    @Transactional
+    public Optional<BigDecimal> dueRateForUpdate(UUID bidId) {
+        if (dueRate(bidId).isEmpty()) {
+            return Optional.empty();
+        }
+        return lockedFresh(bidId)
+                .filter(fee -> fee.getStatus() == CancellationFeeStatus.DUE)
+                .map(CancellationFeeEntity::getRate);
+    }
+
+    /**
+     * La ligne du colis, verrouillée et RELUE : une lecture simple antérieure dans la même transaction a pu la mettre
+     * en cache avec un état périmé (DUE), que la requête verrouillée rendrait tel quel. Sans {@code @Version} sur
+     * l'entité, écrire sur cet état périmé écraserait une renonciation commitée pendant l'attente du verrou.
+     */
+    private Optional<CancellationFeeEntity> lockedFresh(UUID bidId) {
+        Optional<CancellationFeeEntity> fee = fees.findByBidIdForUpdate(bidId);
+        fee.ifPresent(entityManager::refresh);
+        return fee;
     }
 
     @Override
@@ -55,7 +89,7 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
     @Override
     @Transactional
     public void markNotApplicable(UUID bidId, String reason) {
-        fees.findByBidIdForUpdate(bidId)
+        lockedFresh(bidId)
                 .filter(fee -> fee.getStatus() == CancellationFeeStatus.DUE)
                 .ifPresent(fee -> {
                     fee.setStatus(CancellationFeeStatus.NOT_APPLICABLE);
@@ -75,7 +109,7 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
     public void markRetained(UUID bidId, CancellationFeeBreakdown breakdown, String currency) {
         Objects.requireNonNull(breakdown, "breakdown");
         Objects.requireNonNull(currency, "currency");
-        fees.findByBidIdForUpdate(bidId)
+        lockedFresh(bidId)
                 .filter(fee -> fee.getStatus() == CancellationFeeStatus.DUE)
                 .ifPresent(fee -> {
                     fee.setGrossFee(breakdown.grossFee());

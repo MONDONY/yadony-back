@@ -24,6 +24,9 @@ import java.util.UUID;
  *   <li><b>Relancer</b> un versement en attente : le plafond d'essais repart de zéro et le versement est tenté aussitôt,
  *       par le chemin habituel et toutes ses gardes.</li>
  * </ul>
+ *
+ * <p>Tout compte admin porte {@code ROLE_ADMIN} (SUPPORT compris) : chaque geste exige en plus la permission du
+ * mouvement d'argent qu'il ouvre, comme les autres gestes admin d'argent.
  */
 @RestController
 @PreAuthorize("hasRole('ADMIN')")
@@ -35,7 +38,9 @@ public class CancellationFeeAdminController {
         this.service = service;
     }
 
+    /** Rend tout à l'expéditeur au remboursement suivant : même permission que « Rembourser » (PAYMENT_REFUND). */
     @PostMapping("/admin/cancellation-fees/bids/{bidId}/waive")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_REFUND')")
     public ResponseEntity<AdminCancellationFeeResponse> waive(@PathVariable UUID bidId,
                                                               @Valid @RequestBody AdminCancellationFeeActionRequest request,
                                                               Authentication authentication) {
@@ -44,10 +49,12 @@ public class CancellationFeeAdminController {
     }
 
     /**
-     * La tentative a lieu après le commit du réarmement, avant la réponse : celle-ci dit l'état de la ligne à son issue
+     * Déclenche un versement : même permission que la relance d'un versement de colis (PAYMENT_RELEASE). La tentative
+     * a lieu après le commit du réarmement, avant la réponse : celle-ci dit l'état de la ligne à son issue
      * ({@code PAID_OUT}, ou toujours {@code PAYOUT_PENDING} avec le nouveau motif, ou en vol chez pawaPay).
      */
     @PostMapping("/admin/cancellation-fees/{feeId}/retry-payout")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_RELEASE')")
     public ResponseEntity<AdminCancellationFeeResponse> retryPayout(@PathVariable UUID feeId,
                                                                     @Valid @RequestBody AdminCancellationFeeActionRequest request,
                                                                     Authentication authentication) {

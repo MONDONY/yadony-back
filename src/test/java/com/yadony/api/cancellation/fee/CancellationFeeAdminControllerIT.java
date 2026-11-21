@@ -1,5 +1,6 @@
 package com.yadony.api.cancellation.fee;
 
+import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminPrincipal;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.cancellation.dto.AdminCancellationFeeResponse;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -45,12 +47,18 @@ class CancellationFeeAdminControllerIT {
     @Autowired MockMvc mockMvc;
     @MockitoBean CancellationFeeAdminService service;
 
-    private static UsernamePasswordAuthenticationToken admin() {
-        var principal = new AdminPrincipal(ADMIN_ID, "admin@yadony.com", AdminRole.ADMIN, false, "uid");
+    /** Compte admin d'un rôle donné, avec ses permissions et ROLE_ADMIN (comme AdminAuthService le pose toujours). */
+    private static UsernamePasswordAuthenticationToken admin(AdminRole role) {
+        var principal = new AdminPrincipal(ADMIN_ID, "admin@yadony.com", role, false, "uid");
         var all = new ArrayList<SimpleGrantedAuthority>();
-        AdminRole.ADMIN.permissions().forEach(p -> all.add(new SimpleGrantedAuthority(p.name())));
+        role.permissions().forEach(p -> all.add(new SimpleGrantedAuthority(p.name())));
         all.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
         return new UsernamePasswordAuthenticationToken(principal, null, all);
+    }
+
+    /** Rôle ADMIN : PAYMENT_REFUND et PAYMENT_RELEASE compris. */
+    private static UsernamePasswordAuthenticationToken admin() {
+        return admin(AdminRole.ADMIN);
     }
 
     /** Utilisateur de l'app (expéditeur et voyageur), jamais administrateur. */
@@ -86,6 +94,27 @@ class CancellationFeeAdminControllerIT {
                 .andExpect(status().isForbidden());
 
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void waive_supportAdmin_withoutPaymentRefund_403() throws Exception {
+        // Revue tâche 7, tour 2 : ROLE_ADMIN est posé sur tout compte admin, SUPPORT compris ; la permission tranche.
+        assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.PAYMENT_REFUND);
+
+        mockMvc.perform(post("/admin/cancellation-fees/bids/{bidId}/waive", BID_ID).contentType("application/json")
+                        .content(BODY).with(authentication(admin(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void waive_superAdmin_200() throws Exception {
+        when(service.waive(BID_ID, ADMIN_ID, REASON)).thenReturn(response("NOT_APPLICABLE", null));
+
+        mockMvc.perform(post("/admin/cancellation-fees/bids/{bidId}/waive", BID_ID).contentType("application/json")
+                        .content(BODY).with(authentication(admin(AdminRole.SUPER_ADMIN))))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -144,6 +173,26 @@ class CancellationFeeAdminControllerIT {
                 .andExpect(status().isForbidden());
 
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void retryPayout_supportAdmin_withoutPaymentRelease_403() throws Exception {
+        assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.PAYMENT_RELEASE);
+
+        mockMvc.perform(post("/admin/cancellation-fees/{feeId}/retry-payout", FEE_ID).contentType("application/json")
+                        .content(BODY).with(authentication(admin(AdminRole.SUPPORT))))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void retryPayout_superAdmin_200() throws Exception {
+        when(service.describe(FEE_ID)).thenReturn(response("PAYOUT_PENDING", "TOO_MANY_FAILED_PAYOUTS"));
+
+        mockMvc.perform(post("/admin/cancellation-fees/{feeId}/retry-payout", FEE_ID).contentType("application/json")
+                        .content(BODY).with(authentication(admin(AdminRole.SUPER_ADMIN))))
+                .andExpect(status().isOk());
     }
 
     @Test

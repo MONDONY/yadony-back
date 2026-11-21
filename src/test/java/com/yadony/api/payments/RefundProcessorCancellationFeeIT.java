@@ -59,7 +59,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import com.yadony.api.common.YadonyBusinessException;
+import org.springframework.http.HttpStatus;
+
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -318,6 +323,115 @@ class RefundProcessorCancellationFeeIT {
         assertThat(payment.get("status")).isEqualTo("REFUNDED");
         assertThat((BigDecimal) payment.get("refunded_amount")).isEqualByComparingTo("70.00");
         assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+    }
+
+    /**
+     * Revue tâche 7, tour 2 : renonciation pendant le règlement. Le règlement tient le verrou de la retenue (lecture du
+     * taux sous verrou) jusqu'à son commit : la renonciation attend, puis trouve la retenue RETAINED et répond 409.
+     * Ordre des verrous : remboursement = paiement (claim) puis retenue ; renonciation = retenue seule.
+     */
+    @Test
+    @DisplayName("renonciation pendant le règlement : elle attend le verrou puis reçoit 409, la retenue reste RETAINED")
+    void waiveDuringTheSettlement_waitsForTheLock_thenConflicts() throws Exception {
+        CountDownLatch refundSent = new CountDownLatch(1);
+        CountDownLatch releaseRefund = new CountDownLatch(1);
+        AtomicReference<RefundCreateParams> sent = new AtomicReference<>();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> refundRun = pool.submit(() -> {
+                try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+                     MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+                    stubIntent(piStatic, "succeeded");
+                    refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                            .thenAnswer(call -> {
+                                sent.set(call.getArgument(0));
+                                refundSent.countDown();
+                                assertThat(releaseRefund.await(30, TimeUnit.SECONDS)).isTrue();
+                                return mock(Refund.class);
+                            });
+                    return refund();
+                }
+            });
+            assertThat(refundSent.await(30, TimeUnit.SECONDS)).isTrue();
+            Future<?> waiveRun = pool.submit(() -> adminService.waive(bidId, UUID.randomUUID(),
+                    "Renonciation pendant le règlement, test de concurrence"));
+
+            Thread.sleep(1_500);
+            assertThat(waiveRun.isDone()).as("la renonciation attend le verrou de la retenue").isFalse();
+            releaseRefund.countDown();
+
+            assertThat(refundRun.get(60, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> waiveRun.get(60, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class)
+                    .cause().isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("cancellation-fee-not-due");
+                    });
+        } finally {
+            releaseRefund.countDown();
+            pool.shutdownNow();
+        }
+
+        assertThat(sent.get().getAmount()).as("remboursement partiel").isEqualTo(7000L);
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isEqualTo(1);
+        assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isZero();
+    }
+
+    /**
+     * Renonciation commitée pendant que le règlement attend le verrou : le règlement a lu « due » sans verrou avant la
+     * renonciation, puis relit la ligne SOUS le verrou et voit NOT_APPLICABLE. Remboursement intégral, jamais RETAINED
+     * par-dessus la renonciation (l'instance chargée par la première lecture est relue, pas réutilisée).
+     */
+    @Test
+    @DisplayName("renonciation commitée pendant l'attente du règlement : remboursement intégral, retenue NOT_APPLICABLE")
+    void waiveCommittedWhileTheSettlementWaits_fullRefund_neverRetainedOverTheWaiver() throws Exception {
+        CountDownLatch waived = new CountDownLatch(1);
+        CountDownLatch commitWaiver = new CountDownLatch(1);
+        AtomicReference<RefundCreateParams> sent = new AtomicReference<>();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> waiveRun = pool.submit(() -> tx.executeWithoutResult(status -> {
+                adminService.waive(bidId, UUID.randomUUID(), "Renonciation pendant le règlement, test de concurrence");
+                waived.countDown();
+                try {
+                    assertThat(commitWaiver.await(30, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }));
+            assertThat(waived.await(30, TimeUnit.SECONDS)).isTrue();
+            Future<Boolean> refundRun = pool.submit(() -> {
+                try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+                     MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+                    stubIntent(piStatic, "succeeded");
+                    refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                            .thenAnswer(call -> {
+                                sent.set(call.getArgument(0));
+                                return mock(Refund.class);
+                            });
+                    return refund();
+                }
+            });
+
+            Thread.sleep(1_500);
+            assertThat(refundRun.isDone()).as("le règlement attend le verrou de la retenue").isFalse();
+            commitWaiver.countDown();
+
+            waiveRun.get(60, TimeUnit.SECONDS);
+            assertThat(refundRun.get(60, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            commitWaiver.countDown();
+            pool.shutdownNow();
+        }
+
+        assertThat(sent.get().getAmount()).as("remboursement intégral").isNull();
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus())
+                .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isZero();
+        assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class, paymentId))
+                .isNull();
     }
 
     /** Événement Stripe {@code charge.refunded} de ce paiement (montants en unités mineures). */
