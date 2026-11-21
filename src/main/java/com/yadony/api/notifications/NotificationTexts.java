@@ -1148,6 +1148,18 @@ public final class NotificationTexts {
         return new NotificationText(m.get("notification.referral-reward-available.title"), body);
     }
 
+    /**
+     * Bienvenue du filleul parrainé : son code promo de bienvenue (-5 % sur le premier envoi).
+     * Sans prénom de parrain connu, le texte ne le nomme pas. Texte produit plus long que le cap
+     * du corps push : le corps est raccourci à l'écran et reste complet dans {@code fullBody}.
+     */
+    public static NotificationText referralWelcome(Messages m, String referrerName, String code) {
+        String body = referrerName == null || referrerName.isBlank()
+                ? m.get("notification.referral-welcome.body-anonymous", code)
+                : m.get("notification.referral-welcome.body", NotificationCaps.shortDisplayName(referrerName), code);
+        return new NotificationText(m.get("notification.referral-welcome.title"), body);
+    }
+
     // ── Support ──────────────────────────────────────────────────────────────
 
     /** Réponse du support dans un fil que l'utilisateur connaît déjà. */
