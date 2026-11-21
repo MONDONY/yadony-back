@@ -55,6 +55,7 @@ class SmsOtpControllerDeclareIT {
     @MockitoSpyBean AuditService auditService;
     @MockitoBean FirebaseContactService firebaseContact;
     @MockitoBean PlatformSettingsService platformSettings;
+    @Autowired org.springframework.context.ApplicationEventPublisher publisher;
 
     private String uid;
     private UserEntity user;
@@ -169,6 +170,29 @@ class SmsOtpControllerDeclareIT {
         mockMvc.perform(declare(as(uid), phone))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("declared-phone-unavailable"));
+    }
+
+    @Test
+    void declare_firebaseRefuses_rollsBackHash() throws Exception {
+        org.mockito.Mockito.doThrow(new RuntimeException("firebase"))
+                .when(firebaseContact).setDeclaredPhone(uid, phone);
+
+        mockMvc.perform(declare(as(uid), phone)).andExpect(status().is5xxServerError());
+
+        assertThat(userRepository.findByFirebaseUid(uid).orElseThrow().getDeclaredPhoneHash()).isNull();
+    }
+
+    @Test
+    void phoneAttachedEvent_publishedForReal_clearsDeclaredHashClaimAndLevel() throws Exception {
+        mockMvc.perform(declare(as(uid), phone)).andExpect(status().isOk());
+        assertThat(userRepository.findByFirebaseUid(uid).orElseThrow().getDeclaredPhoneHash()).isNotNull();
+
+        publisher.publishEvent(new com.yadony.api.auth.events.UserPhoneAttachedEvent(user.getId()));
+
+        UserEntity saved = userRepository.findByFirebaseUid(uid).orElseThrow();
+        assertThat(saved.getDeclaredPhoneHash()).isNull();
+        assertThat(saved.getDeclaredPhoneLevel()).isNull();
+        verify(firebaseContact).setDeclaredPhone(uid, null);
     }
 
     private MockHttpServletRequestBuilder declare(RequestPostProcessor auth, String number) {

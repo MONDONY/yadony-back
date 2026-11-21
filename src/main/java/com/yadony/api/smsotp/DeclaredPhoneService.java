@@ -87,37 +87,38 @@ public class DeclaredPhoneService {
             user.setDeclaredPhoneVerifiedAt(null);
             user.setDeclaredPhoneVerifiedBy(null);
         }
-        userRepository.save(user);
-        // En dernier : si Firebase refuse, la transaction est annulée et la base reste cohérente.
-        firebaseContact.setDeclaredPhone(firebaseUid, e164);
-
+        // Flush d'abord : vérifie la version (@Version) et pose le verrou de ligne, de sorte qu'un
+        // échec de la base survienne AVANT l'écriture Firebase. Puis l'audit, puis Firebase en
+        // dernier : s'il refuse, la transaction est annulée (base et audit) sans claim orphelin.
+        userRepository.saveAndFlush(user);
         log.info("Numéro déclaré sans SMS : uid={} ({})", firebaseUid, Msisdn.mask(e164));
         // Payload sans PII : ni numéro ni empreinte dans audit_log.
         auditService.log("USER", user.getId(), "USER_PHONE_DECLARED", user.getId(),
                 Map.of("level", user.getDeclaredPhoneLevel().name()));
+        firebaseContact.setDeclaredPhone(firebaseUid, e164);
     }
 
     /**
      * Un numéro vérifié par SMS vient d'être rattaché : il fait foi, la déclaration (claim, empreinte,
-     * niveau, validation) tombe. Après validation, dans sa propre transaction ; une panne Firebase
-     * ne doit pas remonter jusqu'au rattachement, déjà acquis.
+     * niveau, validation) tombe. Le claim (numéro en clair) part en premier : si Firebase refuse,
+     * l'exception annule la transaction, l'empreinte reste et un nouvel essai demeure possible. Rien
+     * n'est avalé (Spring journalise en ERROR les échecs d'un écouteur après validation) ; le
+     * rattachement, lui, est déjà acquis. Se déclenche aussi si seul un claim orphelin subsiste.
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onPhoneAttached(UserPhoneAttachedEvent event) {
-        try {
-            userRepository.findById(event.userId())
-                    .filter(user -> user.getDeclaredPhoneHash() != null)
-                    .ifPresent(user -> {
-                        user.setDeclaredPhoneHash(null);
-                        user.setDeclaredPhoneLevel(null);
-                        user.setDeclaredPhoneVerifiedAt(null);
-                        user.setDeclaredPhoneVerifiedBy(null);
-                        userRepository.save(user);
-                        firebaseContact.setDeclaredPhone(user.getFirebaseUid(), null);
-                    });
-        } catch (Exception e) {
-            log.warn("Effacement du numéro déclaré impossible pour {} : {}", event.userId(), e.toString());
-        }
+        userRepository.findById(event.userId()).ifPresent(user -> {
+            if (user.getDeclaredPhoneHash() == null
+                    && firebaseContact.getContact(user.getFirebaseUid()).declaredPhone() == null) {
+                return;
+            }
+            firebaseContact.setDeclaredPhone(user.getFirebaseUid(), null);
+            user.setDeclaredPhoneHash(null);
+            user.setDeclaredPhoneLevel(null);
+            user.setDeclaredPhoneVerifiedAt(null);
+            user.setDeclaredPhoneVerifiedBy(null);
+            userRepository.save(user);
+        });
     }
 }

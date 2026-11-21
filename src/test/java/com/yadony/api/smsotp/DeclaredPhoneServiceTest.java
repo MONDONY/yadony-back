@@ -73,7 +73,7 @@ class DeclaredPhoneServiceTest {
 
         assertThat(user.getDeclaredPhoneHash()).isEqualTo(hasher.hash(PHONE));
         assertThat(user.getDeclaredPhoneLevel()).isEqualTo(DeclaredPhoneLevel.DECLARED);
-        verify(userRepository).save(user);
+        verify(userRepository).saveAndFlush(user);
         verify(firebaseContact).setDeclaredPhone(UID, PHONE);
         verify(firebaseContact, never()).updatePhone(anyString(), anyString());
     }
@@ -88,7 +88,7 @@ class DeclaredPhoneServiceTest {
                     assertThat(e.getErrorCode()).isEqualTo("phone-declare-not-allowed");
                 });
         verify(firebaseContact, never()).setDeclaredPhone(anyString(), anyString());
-        verify(userRepository, never()).save(any());
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -193,7 +193,7 @@ class DeclaredPhoneServiceTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                     assertThat(e.getErrorCode()).isEqualTo("declared-phone-unavailable");
                 });
-        verify(userRepository, never()).save(any());
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -205,7 +205,7 @@ class DeclaredPhoneServiceTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
                     assertThat(e.getErrorCode()).isEqualTo("declared-phone-unavailable");
                 });
-        verify(userRepository, never()).save(any());
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -237,14 +237,38 @@ class DeclaredPhoneServiceTest {
     }
 
     @Test
-    void phoneAttachedBySms_firebaseFailure_isSwallowed() {
+    void phoneAttachedBySms_firebaseFailure_propagatesAndKeepsHash() {
         user.setDeclaredPhoneHash(hasher.hash(PHONE));
         when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
         org.mockito.Mockito.doThrow(new RuntimeException("boom"))
                 .when(firebaseContact).setDeclaredPhone(UID, null);
 
+        assertThatThrownBy(() -> service.onPhoneAttached(new UserPhoneAttachedEvent(user.getId())))
+                .hasMessage("boom");
+        assertThat(user.getDeclaredPhoneHash()).isNotNull();
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void phoneAttachedBySms_orphanClaimWithoutHash_isCleared() {
+        when(firebaseContact.getContact(UID)).thenReturn(new Contact("+33612345678", null, PHONE));
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+
         service.onPhoneAttached(new UserPhoneAttachedEvent(user.getId()));
 
-        assertThat(user.getDeclaredPhoneHash()).isNull();
+        verify(firebaseContact).setDeclaredPhone(UID, null);
+    }
+
+    @Test
+    void declare_firebaseRefuses_auditAndSaveHappenBeforeClaimWrite() {
+        org.mockito.Mockito.doThrow(new RuntimeException("firebase"))
+                .when(firebaseContact).setDeclaredPhone(UID, PHONE);
+
+        assertThatThrownBy(() -> service.declare(UID, PHONE)).hasMessage("firebase");
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(userRepository, auditService, firebaseContact);
+        order.verify(userRepository).saveAndFlush(user);
+        order.verify(auditService).log(anyString(), any(), eq("USER_PHONE_DECLARED"), any(), any());
+        order.verify(firebaseContact).setDeclaredPhone(UID, PHONE);
     }
 }
