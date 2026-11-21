@@ -426,6 +426,20 @@ class RecipientInvitationServiceTest {
         verify(repository, never()).findByInviteeUserIdIsNullAndStatusAndTargetHashIn(any(), any());
     }
 
+    @Test
+    void incoming_catchUp_trustedNumberContested_claimsNothing() {
+        // Le vrai PhoneLookupService refuse un numéro disputé : ici le contrat est « vide => rien de réclamé ».
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(invitee, contact)).thenReturn(Optional.empty());
+        RecipientInvitationEntity orphan = pendingFor(null);
+
+        service.incoming("uid-invitee");
+
+        assertThat(orphan.getInviteeUserId()).isNull();
+        verify(repository, never()).save(any());
+    }
+
     // ── accept ──────────────────────────────────────────────────────────────
 
     @Test

@@ -246,10 +246,12 @@ public class AdminUserController {
     }
 
     /** Valide à la main le numéro déclaré du compte (« Vérifié par Yadony ») ; jamais le numéro Firebase officiel. */
-    @PreAuthorize("hasAuthority('USER_PHONE_VERIFY')")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_PHONE_VERIFY')")
     @PostMapping("/{userId}/declared-phone/verify")
-    public AdminUserDetailResponse verifyDeclaredPhone(@PathVariable UUID userId, Authentication authentication) {
-        return detail(declaredPhoneService.verify(userId, adminId(authentication)));
+    public AdminUserDetailResponse verifyDeclaredPhone(@PathVariable UUID userId,
+            @RequestBody @Valid com.yadony.api.admin.dto.VerifyDeclaredPhoneRequest request,
+            Authentication authentication) {
+        return detail(declaredPhoneService.verify(userId, adminId(authentication), request.declaredPhone()));
     }
 
     // Lot B — Coupure de messagerie. SUPPORT ne détient plus USER_SUSPEND, USER_BAN ni

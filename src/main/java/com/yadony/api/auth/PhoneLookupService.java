@@ -51,18 +51,26 @@ public class PhoneLookupService {
     }
 
     /**
-     * Numéro déclaré sans SMS que Yadony a validé, quand il est de confiance (niveau YADONY_VERIFIED ET
-     * empreinte concordant avec le claim courant, cf. {@link DeclaredPhoneResolver}). Vide pour un simple
-     * numéro déclaré, un niveau périmé ou un compte qui a un numéro vérifié par SMS (alors seul celui-là
-     * compte). Sert aux lecteurs qui prennent « le téléphone de l'invité » : SMS d'abord, ce numéro ensuite.
+     * Numéro déclaré sans SMS que Yadony a validé, quand il est de confiance : niveau YADONY_VERIFIED ET
+     * empreinte concordant avec le claim courant (cf. {@link DeclaredPhoneResolver}), ET ce compte est
+     * l'unique résultat de {@link #findByPhone} avec la confiance YADONY. Vide dès qu'un propriétaire
+     * vérifié par SMS existe ailleurs, que plusieurs comptes validés se disputent le numéro
+     * ({@link PhoneMatch.Ambiguous}) ou qu'un compte a un numéro vérifié par SMS (alors seul celui-là
+     * compte). Même règle que le chemin aller : aucun rattachement automatique sur un numéro contesté.
      */
     public Optional<String> trustedDeclaredPhone(UserEntity user, FirebaseContactService.Contact contact) {
         if (user == null) {
             return Optional.empty();
         }
         DeclaredPhoneResolver.Resolved resolved = resolver.resolve(user, contact);
-        return resolved.level() == DeclaredPhoneLevel.YADONY_VERIFIED
-                ? Optional.of(resolved.number()) : Optional.empty();
+        if (resolved.level() != DeclaredPhoneLevel.YADONY_VERIFIED) {
+            return Optional.empty();
+        }
+        boolean sole = findByPhone(resolved.number()) instanceof PhoneMatch.Found found
+                && found.trust() == PhoneMatch.Trust.YADONY
+                && found.user() != null && found.user().getId() != null
+                && found.user().getId().equals(user.getId());
+        return sole ? Optional.of(resolved.number()) : Optional.empty();
     }
 
     public PhoneMatch findByPhone(String e164) {

@@ -26,15 +26,17 @@ class AdminDeclaredPhoneServiceTest {
     private final UserRepository users = mock(UserRepository.class);
     private final FirebaseContactService firebase = mock(FirebaseContactService.class);
     private final AuditService audit = mock(AuditService.class);
+    private final com.yadony.api.auth.PhoneLookupService lookup = mock(com.yadony.api.auth.PhoneLookupService.class);
 
     @Test
     void verify_unknownUser_404() {
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.empty());
-        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher("k"), audit);
+        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher("k"), audit, lookup);
 
-        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID()))
-                .isInstanceOf(YadonyBusinessException.class);
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), "+2250707070707"))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("user-not-found"));
         verify(audit, never()).log(any(), any(), any(), any(), any());
     }
 
@@ -45,10 +47,10 @@ class AdminDeclaredPhoneServiceTest {
         user.setDeclaredPhoneHash("h");
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.of(user));
-        when(firebase.getContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, "+2250707070707"));
-        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher(""), audit);
+        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, "+2250707070707"));
+        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher(""), audit, lookup);
 
-        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID()))
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), "+2250707070707"))
                 .isInstanceOf(YadonyBusinessException.class)
                 .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("declared-phone-missing"));
         verify(users, never()).saveAndFlush(any());

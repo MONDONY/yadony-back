@@ -37,12 +37,50 @@ class PhoneLookupServiceTest {
         service = new PhoneLookupService(firebaseContact, userRepository, hasher, new DeclaredPhoneResolver(hasher));
     }
 
-    // ── trustedDeclaredPhone : seul un numéro « Vérifié par Yadony » concordant est de confiance ──
+    // ── trustedDeclaredPhone : seul un numéro « Vérifié par Yadony » concordant ET non contesté est de confiance ──
 
     @Test
-    void trustedDeclaredPhone_yadonyVerifiedAndHashMatches_returnsTheNumber() {
-        assertThat(service.trustedDeclaredPhone(yadonyVerified("u"),
-                new FirebaseContactService.Contact(null, null, PHONE))).contains(PHONE);
+    void trustedDeclaredPhone_yadonyVerifiedAndSoleClaimant_returnsTheNumber() {
+        UserEntity u = yadonyVerified("u");
+        ownerNotFound();
+        candidates(u);
+        claims(Map.of("u", PHONE));
+
+        assertThat(service.trustedDeclaredPhone(u, new FirebaseContactService.Contact(null, null, PHONE)))
+                .contains(PHONE);
+    }
+
+    @Test
+    void trustedDeclaredPhone_smsOwnerElsewhere_isEmpty() {
+        UserEntity u = yadonyVerified("u");
+        UserEntity smsOwner = user("uid-sms");
+        ownerIs("uid-sms");
+        when(userRepository.findByFirebaseUid("uid-sms")).thenReturn(java.util.Optional.of(smsOwner));
+
+        assertThat(service.trustedDeclaredPhone(u, new FirebaseContactService.Contact(null, null, PHONE))).isEmpty();
+    }
+
+    @Test
+    void trustedDeclaredPhone_twoYadonyAccountsOnSameNumber_isEmpty() {
+        UserEntity u = yadonyVerified("u");
+        UserEntity other = yadonyVerified("o");
+        ownerNotFound();
+        candidates(u, other);
+        claims(Map.of("u", PHONE, "o", PHONE));
+
+        assertThat(service.trustedDeclaredPhone(u, new FirebaseContactService.Contact(null, null, PHONE))).isEmpty();
+    }
+
+    @Test
+    void trustedDeclaredPhone_yadonyAccountWinsOverPlainDeclarant_returnsTheNumber() {
+        UserEntity u = yadonyVerified("u");
+        UserEntity plain = declaredUser("p");
+        ownerNotFound();
+        candidates(u, plain);
+        claims(Map.of("u", PHONE, "p", PHONE));
+
+        assertThat(service.trustedDeclaredPhone(u, new FirebaseContactService.Contact(null, null, PHONE)))
+                .contains(PHONE);
     }
 
     @Test

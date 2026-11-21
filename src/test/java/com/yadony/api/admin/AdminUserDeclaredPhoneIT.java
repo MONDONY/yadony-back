@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -33,6 +34,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -75,14 +77,14 @@ class AdminUserDeclaredPhoneIT {
         user.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
         user = userRepository.save(user);
         when(firebaseContact.isAvailable()).thenReturn(true);
-        when(firebaseContact.getContact(uid)).thenReturn(new FirebaseContactService.Contact(null, null, phone));
+        claim(new FirebaseContactService.Contact(null, null, phone));
         when(platformSettings.smsBlockedCallingCode(anyString())).thenAnswer(inv ->
                 ((String) inv.getArgument(0)).startsWith("+225") ? Optional.of("225") : Optional.empty());
     }
 
     @Test
     void verify_adminWithAuthority_setsYadonyVerifiedAndAudits() throws Exception {
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")))
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.declaredPhone").value(phone))
                 .andExpect(jsonPath("$.declaredPhoneLevel").value("YADONY_VERIFIED"));
@@ -98,7 +100,7 @@ class AdminUserDeclaredPhoneIT {
 
     @Test
     void verify_withoutAuthority_403() throws Exception {
-        mockMvc.perform(post(url()).with(admin("USER_VIEW"))).andExpect(status().isForbidden());
+        mockMvc.perform(verifyShowing(phone, admin("USER_VIEW"))).andExpect(status().isForbidden());
 
         assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
                 .isEqualTo(DeclaredPhoneLevel.DECLARED);
@@ -106,9 +108,9 @@ class AdminUserDeclaredPhoneIT {
 
     @Test
     void verify_noDeclaredPhone_409() throws Exception {
-        when(firebaseContact.getContact(uid)).thenReturn(FirebaseContactService.Contact.EMPTY);
+        claim(FirebaseContactService.Contact.EMPTY);
 
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")))
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("declared-phone-missing"));
     }
@@ -119,17 +121,16 @@ class AdminUserDeclaredPhoneIT {
         user.setDeclaredPhoneLevel(null);
         userRepository.save(user);
 
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")))
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("declared-phone-missing"));
     }
 
     @Test
     void verify_hashMismatchWithClaim_409() throws Exception {
-        when(firebaseContact.getContact(uid))
-                .thenReturn(new FirebaseContactService.Contact(null, null, "+2250101010101"));
+        claim(new FirebaseContactService.Contact(null, null, "+2250101010101"));
 
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")))
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("declared-phone-missing"));
         assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
@@ -138,10 +139,9 @@ class AdminUserDeclaredPhoneIT {
 
     @Test
     void verify_accountHasSmsPhone_409() throws Exception {
-        when(firebaseContact.getContact(uid))
-                .thenReturn(new FirebaseContactService.Contact("+2250102030405", null, phone));
+        claim(new FirebaseContactService.Contact("+2250102030405", null, phone));
 
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")))
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("phone-already-set"));
     }
@@ -149,18 +149,19 @@ class AdminUserDeclaredPhoneIT {
     @Test
     void verify_unknownUser_404() throws Exception {
         mockMvc.perform(post("/admin/users/" + UUID.randomUUID() + "/declared-phone/verify")
-                        .with(admin("USER_PHONE_VERIFY")))
+                        .with(admin("USER_PHONE_VERIFY")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"declaredPhone\":\"" + phone + "\"}"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void verify_idempotent_keepsOriginalVerifiedAtAndBy() throws Exception {
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY"))).andExpect(status().isOk());
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY"))).andExpect(status().isOk());
         UserEntity first = userRepository.findById(user.getId()).orElseThrow();
         LocalDateTime at = first.getDeclaredPhoneVerifiedAt();
         UUID otherAdmin = UUID.randomUUID();
 
-        mockMvc.perform(post(url()).with(admin(otherAdmin, "USER_PHONE_VERIFY"))).andExpect(status().isOk())
+        mockMvc.perform(verifyShowing(phone, admin(otherAdmin, "USER_PHONE_VERIFY"))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.declaredPhoneLevel").value("YADONY_VERIFIED"));
 
         UserEntity second = userRepository.findById(user.getId()).orElseThrow();
@@ -170,7 +171,7 @@ class AdminUserDeclaredPhoneIT {
 
     @Test
     void verify_thenUserRedeclares_backToDeclared() throws Exception {
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY"))).andExpect(status().isOk());
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY"))).andExpect(status().isOk());
 
         declaredPhoneService.declare(uid, "+2250101010101");
 
@@ -182,11 +183,10 @@ class AdminUserDeclaredPhoneIT {
 
     @Test
     void verify_doesNotWriteFirebasePhoneNumber() throws Exception {
-        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY"))).andExpect(status().isOk());
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY"))).andExpect(status().isOk());
 
         verify(firebaseContact, never()).updatePhone(anyString(), anyString());
         verify(firebaseContact, never()).setDeclaredPhone(anyString(), anyString());
-        assertThat(firebaseContact.getContact(uid).phoneNumber()).isNull();
     }
 
     @Test
@@ -201,20 +201,109 @@ class AdminUserDeclaredPhoneIT {
         userRepository.save(user);
         mockMvc.perform(get("/admin/users/" + user.getId()).with(admin("USER_VIEW")))
                 .andExpect(jsonPath("$.declaredPhoneLevel").value("YADONY_VERIFIED"));
-        when(firebaseContact.getContact(uid))
-                .thenReturn(new FirebaseContactService.Contact(null, null, "+2250101010101"));
+        claim(new FirebaseContactService.Contact(null, null, "+2250101010101"));
         mockMvc.perform(get("/admin/users/" + user.getId()).with(admin("USER_VIEW")))
                 .andExpect(jsonPath("$.declaredPhoneLevel").value("DECLARED"));
     }
 
     @Test
     void detail_noDeclaredPhone_fieldsAbsent() throws Exception {
-        when(firebaseContact.getContact(uid)).thenReturn(FirebaseContactService.Contact.EMPTY);
+        claim(FirebaseContactService.Contact.EMPTY);
 
         mockMvc.perform(get("/admin/users/" + user.getId()).with(admin("USER_VIEW")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.declaredPhone").doesNotExist())
                 .andExpect(jsonPath("$.declaredPhoneLevel").doesNotExist());
+    }
+
+    @Test
+    void verify_numberChangedSincePageLoad_409() throws Exception {
+        // L'admin a vu et appelé « phone » ; entre-temps le compte a redéclaré un autre numéro.
+        String other = "+2250101010101";
+        user.setDeclaredPhoneHash(hasher.hash(other));
+        user.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
+        userRepository.save(user);
+        claim(new FirebaseContactService.Contact(null, null, other));
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-changed"));
+
+        UserEntity saved = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(saved.getDeclaredPhoneLevel()).isEqualTo(DeclaredPhoneLevel.DECLARED);
+        assertThat(saved.getDeclaredPhoneVerifiedBy()).isNull();
+    }
+
+    @Test
+    void verify_bodyDiffersFromClaimEvenWhenHashMatchesNothing_409() throws Exception {
+        mockMvc.perform(verifyShowing("+2250101010101", admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-changed"));
+    }
+
+    @Test
+    void verify_missingBody_isRejected() throws Exception {
+        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY"))).andExpect(status().is4xxClientError());
+        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")).contentType(MediaType.APPLICATION_JSON)
+                .content("{}")).andExpect(status().isUnprocessableEntity());
+        mockMvc.perform(post(url()).with(admin("USER_PHONE_VERIFY")).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"declaredPhone\":\"0707\"}")).andExpect(status().isUnprocessableEntity());
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+    }
+
+    @Test
+    void verify_authorityWithoutAdminRole_403() throws Exception {
+        AdminPrincipal principal = new AdminPrincipal(ADMIN_ID, "a@yadony.test", AdminRole.ADMIN, false, "uid-a");
+        RequestPostProcessor noRole = authentication(new UsernamePasswordAuthenticationToken(principal, null,
+                List.of(new SimpleGrantedAuthority("USER_PHONE_VERIFY"))));
+
+        mockMvc.perform(verifyShowing(phone, noRole)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void verify_numberOwnedBySmsOnAnotherAccount_409() throws Exception {
+        UserEntity smsOwner = user("sms-" + UUID.randomUUID());
+        when(firebaseContact.findPhoneOwner(phone))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.found(smsOwner.getFirebaseUid()));
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-conflict"));
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+    }
+
+    @Test
+    void verify_numberAlreadyYadonyVerifiedOnAnotherAccount_409() throws Exception {
+        UserEntity other = user("other-" + UUID.randomUUID());
+        other.setDeclaredPhoneHash(hasher.hash(phone));
+        other.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
+        userRepository.save(other);
+        when(firebaseContact.findPhoneOwner(phone)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        when(firebaseContact.getContacts(any())).thenAnswer(inv -> {
+            java.util.Map<String, FirebaseContactService.Contact> out = new java.util.HashMap<>();
+            ((java.util.Collection<String>) inv.getArgument(0)).forEach(u ->
+                    out.put(u, new FirebaseContactService.Contact(null, null, phone)));
+            return out;
+        });
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-conflict"));
+    }
+
+    /** Corps = le numéro que l'admin a sous les yeux. */
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder verifyShowing(
+            String shown, RequestPostProcessor auth) {
+        return post(url()).with(auth).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"declaredPhone\":\"" + shown + "\"}");
+    }
+
+    /** Lecture en cache ET lecture fraîche (le service valide sur la lecture fraîche). */
+    private void claim(FirebaseContactService.Contact contact) {
+        when(firebaseContact.getContact(uid)).thenReturn(contact);
+        when(firebaseContact.getFreshContact(uid)).thenReturn(contact);
     }
 
     private String url() {
