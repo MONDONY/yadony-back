@@ -56,7 +56,8 @@ public class UsernameLookupService {
      */
     Optional<UserEntity> resolveVisible(UserEntity caller, String raw) {
         String normalized = UsernamePolicy.normalize(raw);
-        if (UsernamePolicy.violation(normalized).isPresent()) {
+        // Seul le format compte : les mots réservés empêchent de créer un identifiant, pas d'en retrouver un existant.
+        if (UsernamePolicy.violation(normalized).filter(v -> v == UsernamePolicy.Violation.INVALID_FORMAT).isPresent()) {
             return Optional.empty();
         }
         return userRepository.findByUsernameIgnoreCase(normalized.toLowerCase(Locale.ROOT))
@@ -77,6 +78,7 @@ public class UsernameLookupService {
         if (first == null || first.isBlank()) {
             return "?";
         }
-        return first.strip().substring(0, 1).toUpperCase(Locale.ROOT);
+        String stripped = first.strip();
+        return String.valueOf(Character.toChars(stripped.codePointAt(0))).toUpperCase(Locale.ROOT);
     }
 }

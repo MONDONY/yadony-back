@@ -72,6 +72,25 @@ class UsernameLookupServiceTest {
     }
 
     @Test
+    void existingAccountWithReservedWordIsFound() {
+        UserEntity support = user("Awa", "support.awa");
+        when(userRepository.findByUsernameIgnoreCase("support.awa")).thenReturn(Optional.of(support));
+
+        assertThat(service.lookup(UID, "support.awa")).isEqualTo(new UsernameLookupResponse("support.awa", "A"));
+    }
+
+    @Test
+    void initialHandlesAccentsAndNonBmpFirstNames() {
+        UserEntity accent = user("élodie", "elodie.k");
+        UserEntity emoji = user("\uD83D\uDE00 Fun", "fun.k");
+        when(userRepository.findByUsernameIgnoreCase("elodie.k")).thenReturn(Optional.of(accent));
+        when(userRepository.findByUsernameIgnoreCase("fun.k")).thenReturn(Optional.of(emoji));
+
+        assertThat(service.lookup(UID, "elodie.k").initial()).isEqualTo("\u00C9");
+        assertThat(service.lookup(UID, "fun.k").initial()).isEqualTo("\uD83D\uDE00");
+    }
+
+    @Test
     void unknownIsNotFound() {
         when(userRepository.findByUsernameIgnoreCase("inconnu")).thenReturn(Optional.empty());
 
