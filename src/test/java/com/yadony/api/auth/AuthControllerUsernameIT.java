@@ -47,6 +47,8 @@ class AuthControllerUsernameIT {
     @MockitoBean FirebaseAuth firebaseAuth;
     @MockitoBean FirebaseContactService firebaseContact;
 
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean UserRepository spiedUsers;
+
     UserEntity me;
     UserEntity other;
 
@@ -155,5 +157,26 @@ class AuthControllerUsernameIT {
                 other.getId()));
         mvc.perform(get("/auth/me/username/availability").param("value", "old.name").with(a))
                 .andExpect(jsonPath("$.reason").value("RECENTLY_RELEASED"));
+    }
+
+    /**
+     * Course réelle : la pré-vérification passe (simulée) alors qu'un autre compte détient déjà le
+     * nom ; c'est la contrainte d'unicité de la base qui refuse l'écriture. Sous H2 la contrainte
+     * est celle de la colonne (sensible à la casse, d'où le nom saisi en minuscules) ; l'index
+     * insensible à la casse est couvert par UsernameMigrationIT sur PostgreSQL.
+     */
+    @Test
+    void put_courseSurContrainteUnique_409TakenSansReservationNiAudit() throws Exception {
+        org.mockito.Mockito.doReturn(false).when(spiedUsers).existsByUsernameIgnoreCase("moussa.k");
+
+        putUsername("Moussa.K").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("username-taken")));
+
+        assertThat(userRepository.findById(me.getId()).orElseThrow().getUsername()).isEqualTo("awa.old");
+        assertThat(releasedRepository.count()).isZero();
+        Integer audits = jdbc.queryForObject(
+                "SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = 'USERNAME_CHANGED'",
+                Integer.class, me.getId());
+        assertThat(audits).isZero();
     }
 }

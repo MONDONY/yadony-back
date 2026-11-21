@@ -9,6 +9,8 @@ import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.dto.UserResponse;
+import com.yadony.api.auth.dto.ChangeUsernameRequest;
+import com.yadony.api.auth.dto.UsernameAvailabilityResponse;
 import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.google.firebase.auth.FirebaseToken;
@@ -110,14 +112,14 @@ public class AuthController {
 
     /** Disponibilité d'un identifiant pour l'appelant (limitée en débit par Nginx sur /auth/me). */
     @GetMapping("/me/username/availability")
-    public ResponseEntity<com.yadony.api.auth.dto.UsernameAvailabilityResponse> checkUsername(
+    public ResponseEntity<UsernameAvailabilityResponse> checkUsername(
             @RequestParam("value") String value) {
         return ResponseEntity.ok(usernameService.check(requireFirebaseUid(), value));
     }
 
     @PutMapping("/me/username")
     public ResponseEntity<UserResponse> changeUsername(
-            @Valid @RequestBody com.yadony.api.auth.dto.ChangeUsernameRequest request) {
+            @Valid @RequestBody ChangeUsernameRequest request) {
         return ResponseEntity.ok(usernameService.change(requireFirebaseUid(), request.username()));
     }
 

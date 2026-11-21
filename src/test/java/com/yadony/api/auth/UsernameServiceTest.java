@@ -59,7 +59,7 @@ class UsernameServiceTest {
         me.setFirebaseUid(UID);
         me.setUsername("Awa.Old");
         when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(me));
-                response = org.mockito.Mockito.mock(UserResponse.class);
+        response = org.mockito.Mockito.mock(UserResponse.class);
         when(authService.toResponse(me)).thenReturn(response);
     }
 
@@ -210,7 +210,7 @@ class UsernameServiceTest {
     @Test
     void utilisateurInconnu_404() {
         when(userRepository.findByFirebaseUid("x")).thenReturn(Optional.empty());
-                assertThat(thrown(() -> service.check("x", "awa")).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(thrown(() -> service.check("x", "awa")).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(thrown(() -> service.change("x", "awa.new")).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }
