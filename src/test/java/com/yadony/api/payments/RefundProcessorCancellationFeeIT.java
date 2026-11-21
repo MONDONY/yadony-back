@@ -91,7 +91,7 @@ import static org.mockito.Mockito.timeout;
  * jamais le statut REFUNDED au flush.
  */
 @SpringBootTest
-@ActiveProfiles("e2e")
+@ActiveProfiles({"e2e", "cancellation-fee"})
 @RecordApplicationEvents
 @DisplayName("Remboursement moins la retenue d'annulation (PostgreSQL, Stripe simulé)")
 class RefundProcessorCancellationFeeIT {

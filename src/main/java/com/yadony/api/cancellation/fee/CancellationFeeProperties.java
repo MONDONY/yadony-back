@@ -75,11 +75,12 @@ public record CancellationFeeProperties(boolean enabled, Instant effectiveFrom, 
      * ({@link #parseEffectiveFrom}), jamais par le convertisseur de Spring (qui lit des chiffres seuls comme des
      * millisecondes depuis 1970, sans erreur).
      *
-     * @param allowPastEffectiveFrom RÉSERVÉ AUX PROFILS DE TEST ({@code application-test.yml}, {@code application-e2e.yml}) :
-     *                               autorise une date d'effet antérieure à {@link #EARLIEST_EFFECTIVE_FROM}, pour que les
-     *                               colis des tests soient tous « nouveaux ». Faux par défaut ; jamais dans
-     *                               {@code application*.yml} de {@code src/main} ni dans les workflows (vérifié par
-     *                               {@code CancellationFeePropertiesTest}).
+     * @param allowPastEffectiveFrom RÉSERVÉ AU PROFIL DE TEST DE LA FONCTION ({@code application-cancellation-fee.yml}
+     *                               de {@code src/test}, activé par les seuls tests des frais) : autorise une date d'effet
+     *                               antérieure à {@link #EARLIEST_EFFECTIVE_FROM}, pour que les colis des tests soient
+     *                               tous « nouveaux ». Faux par défaut ; jamais dans les profils de test partagés, dans
+     *                               {@code src/main}, les workflows ni les fichiers d'environnement des conteneurs
+     *                               (vérifié par {@code CancellationFeePropertiesTest}).
      */
     @ConstructorBinding
     public CancellationFeeProperties(boolean enabled, String effectiveFrom, BigDecimal capEur, List<Tier> tiers,

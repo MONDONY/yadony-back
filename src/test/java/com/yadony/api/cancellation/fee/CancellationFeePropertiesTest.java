@@ -190,17 +190,38 @@ class CancellationFeePropertiesTest {
 
     @Test
     void pastAllowance_onlyInTheTestProfiles_neverInApplicationFilesNorWorkflows() throws Exception {
+        // Seul le profil des tests de la fonction l'autorise (et les allume) ; la suite entière tourne éteinte.
+        assertThat(java.nio.file.Files.readString(java.nio.file.Path.of(
+                "src/test/resources/application-cancellation-fee.yml")))
+                .contains("allow-past-effective-from: true").contains("enabled: true");
+        java.util.List<java.nio.file.Path> forbidden = new java.util.ArrayList<>(java.util.List.of(
+                java.nio.file.Path.of("src/test/resources/application-test.yml"),
+                java.nio.file.Path.of("src/test/resources/application-e2e.yml"),
+                // Ce qui alimente l'environnement des conteneurs déployés.
+                java.nio.file.Path.of("docker-compose.prod.yml"), java.nio.file.Path.of("docker-compose.staging.yml"),
+                java.nio.file.Path.of("docker-compose.dev.yml"), java.nio.file.Path.of(".env.example"),
+                java.nio.file.Path.of(".env.prod.template"), java.nio.file.Path.of(".env.staging.template")));
+        for (String root : new String[] {"src/main", ".github/workflows"}) {
+            try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(java.nio.file.Path.of(root))) {
+                files.filter(java.nio.file.Files::isRegularFile).forEach(forbidden::add);
+            }
+        }
+        assertThat(forbidden).as("src/main et les workflows parcourus").hasSizeGreaterThan(100);
+        for (java.nio.file.Path file : forbidden) {
+            String content = new String(java.nio.file.Files.readAllBytes(file), java.nio.charset.StandardCharsets.UTF_8)
+                    .toLowerCase(java.util.Locale.ROOT);
+            // Formes de la liaison souple de Spring : clé yaml, variable d'environnement.
+            assertThat(content).as(file.toString()).doesNotContain("allow-past-effective-from")
+                    .doesNotContain("allow_past_effective_from");
+        }
+    }
+
+    @Test
+    void sharedTestProfiles_leaveTheFeatureOff_likeProduction() throws Exception {
         for (String file : new String[] {"src/test/resources/application-test.yml",
                 "src/test/resources/application-e2e.yml"}) {
-            assertThat(java.nio.file.Files.readString(java.nio.file.Path.of(file))).as(file)
-                    .contains("allow-past-effective-from: true");
-        }
-        for (String file : new String[] {"src/main/resources/application.yml", "src/main/resources/application-prod.yml",
-                "src/main/resources/application-staging.yml", "src/main/resources/application-dev.yml",
-                ".github/workflows/deploy-prod.yml", ".github/workflows/deploy-staging.yml"}) {
             String content = java.nio.file.Files.readString(java.nio.file.Path.of(file));
-            assertThat(content).as(file).doesNotContain("allow-past-effective-from")
-                    .doesNotContain("ALLOW_PAST_EFFECTIVE_FROM");
+            assertThat(content).as(file).doesNotContain("cancellation-fee:").doesNotContain("effective-from:");
         }
     }
 

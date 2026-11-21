@@ -91,7 +91,7 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest(properties = {"yadony.pawapay.poll-cron=-", "yadony.pawapay.deadline-cron=-",
         "yadony.pawapay.balance-cron=-"})
-@ActiveProfiles("e2e")
+@ActiveProfiles({"e2e", "cancellation-fee"})
 @DisplayName("Frais d'annulation, rail mobile money (PostgreSQL, pawaPay simulé)")
 class CancellationFeeMobileMoneyIT {
 

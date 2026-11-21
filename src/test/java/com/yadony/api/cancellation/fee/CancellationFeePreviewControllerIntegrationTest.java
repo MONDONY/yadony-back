@@ -50,7 +50,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * de test) : ce que l'expéditeur perdrait s'il annulait maintenant, jamais visible d'un autre que lui.
  */
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles({"test", "cancellation-fee"})
 @AutoConfigureMockMvc
 class CancellationFeePreviewControllerIntegrationTest {
 

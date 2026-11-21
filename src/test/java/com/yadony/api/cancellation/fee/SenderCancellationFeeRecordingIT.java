@@ -57,7 +57,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * avec cette transaction si l'annulation est annulée. Seules les trois fautes de l'expéditeur la créent.
  */
 @SpringBootTest
-@ActiveProfiles("e2e")
+@ActiveProfiles({"e2e", "cancellation-fee"})
 @DisplayName("Retenue d'annulation de l'expéditeur : enregistrement (PostgreSQL)")
 class SenderCancellationFeeRecordingIT {
 
