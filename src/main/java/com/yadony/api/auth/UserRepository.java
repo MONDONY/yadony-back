@@ -39,6 +39,9 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     /** Comptes ayant déclaré (sans SMS) le numéro dont voici l'empreinte, voir {@link DeclaredPhoneHasher}. */
     List<UserEntity> findAllByDeclaredPhoneHash(String declaredPhoneHash);
 
+    /** Variante plafonnée de la recherche par numéro : au-delà de quelques comptes, le numéro est de toute façon ambigu. */
+    List<UserEntity> findTop10ByDeclaredPhoneHash(String declaredPhoneHash);
+
     /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
     List<UserEntity> findAllByFcmToken(String fcmToken);
 

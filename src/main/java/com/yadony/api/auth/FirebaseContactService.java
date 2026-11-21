@@ -320,6 +320,46 @@ public class FirebaseContactService {
         }
     }
 
+    /**
+     * Résultat strict de la recherche du propriétaire d'un numéro vérifié : contrairement à
+     * {@link #findUidByPhone}, une panne Firebase ({@code ERROR}) n'est pas confondue avec
+     * « aucun propriétaire » ({@code NOT_FOUND}).
+     */
+    public record PhoneOwnerLookup(Outcome outcome, String uid) {
+        public enum Outcome { FOUND, NOT_FOUND, ERROR }
+
+        public static PhoneOwnerLookup found(String uid) {
+            return new PhoneOwnerLookup(Outcome.FOUND, uid);
+        }
+
+        public static PhoneOwnerLookup notFound() {
+            return new PhoneOwnerLookup(Outcome.NOT_FOUND, null);
+        }
+
+        public static PhoneOwnerLookup error() {
+            return new PhoneOwnerLookup(Outcome.ERROR, null);
+        }
+    }
+
+    /** Propriétaire vérifié par SMS de ce numéro, en trois issues ; Firebase absent = ERROR. */
+    public PhoneOwnerLookup findPhoneOwner(String phoneNumber) {
+        if (unavailable()) {
+            return PhoneOwnerLookup.error();
+        }
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            return PhoneOwnerLookup.notFound();
+        }
+        try {
+            return PhoneOwnerLookup.found(firebaseAuth.getUserByPhoneNumber(phoneNumber).getUid());
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() == AuthErrorCode.USER_NOT_FOUND) {
+                return PhoneOwnerLookup.notFound();
+            }
+            log.warn("Firebase getUserByPhoneNumber a échoué : {}", e.getAuthErrorCode());
+            return PhoneOwnerLookup.error();
+        }
+    }
+
     /** UID Firebase possédant ce numéro (lookup exact), ou vide si aucun. */
     public Optional<String> findUidByPhone(String phoneNumber) {
         if (unavailable() || phoneNumber == null || phoneNumber.isBlank()) {

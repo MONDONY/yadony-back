@@ -99,7 +99,7 @@ class ReceptionLinkerTest {
     }
 
     private void recipientFound(UUID id) {
-        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Found(user(id, "uid-r", "Fatou")));
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Found(user(id, "uid-r", "Fatou"), PhoneMatch.Trust.SMS));
     }
 
     // ── linkIfPossible ──────────────────────────────────────────────────────
@@ -173,6 +173,28 @@ class ReceptionLinkerTest {
     }
 
     @Test
+    void linkIfPossible_declaredNumber_doesNotLink() {
+        when(phoneLookup.findByPhone("+221771234567"))
+                .thenReturn(new PhoneMatch.Found(user(recipientId, "uid-r", "Fatou"), PhoneMatch.Trust.DECLARED));
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void linkIfPossible_yadonyVerifiedNumber_links() {
+        when(phoneLookup.findByPhone("+221771234567"))
+                .thenReturn(new PhoneMatch.Found(user(recipientId, "uid-r", "Fatou"), PhoneMatch.Trust.YADONY));
+        assertThat(linker.linkIfPossible(bidId)).isPresent();
+    }
+
+    @Test
+    void linkIfPossible_smsOwnerWithoutLocalUser_doesNothing() {
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.None());
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
     void linkIfPossible_ambiguous_doesNotLink() {
         when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Ambiguous());
         assertThat(linker.linkIfPossible(bidId)).isEmpty();
@@ -198,7 +220,7 @@ class ReceptionLinkerTest {
     private UserEntity testerSenderFound() {
         UserEntity me = user(senderId, "uid-s", "Awa");
         me.setRecetteTester(true);
-        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Found(me));
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Found(me, PhoneMatch.Trust.SMS));
         return me;
     }
 

@@ -136,6 +136,18 @@ class UserRepositoryAdminSearchIT {
         assertThat(others.getContent()).extracting(UserEntity::getId).containsExactly(moussa.getId());
     }
 
+    @Test
+    @DisplayName("Plusieurs UID Firebase séparés par des virgules → tous les comptes, ANY(string_to_array) exécuté")
+    void commaSeparatedFirebaseUids_matchesEachAccount() {
+        Page<UserEntity> page = userRepository.findAdminFiltered(
+                null, null, null, null, "%zzz%", awa.getFirebaseUid() + "," + moussa.getFirebaseUid(),
+                null, null, null, null, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(UserEntity::getId)
+                .containsExactlyInAnyOrder(awa.getId(), moussa.getId());
+        assertThat(page.getTotalElements()).isEqualTo(2);
+    }
+
     private Page<UserEntity> search(String term) {
         UUID asId = asUuid(term);
         return userRepository.findAdminFiltered(

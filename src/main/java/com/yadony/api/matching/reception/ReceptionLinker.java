@@ -104,8 +104,10 @@ public class ReceptionLinker {
         if (e164.isEmpty()) {
             return Optional.empty();
         }
-        // Numéro ambigu (déclaré par plusieurs comptes) ou inconnu : aucun rattachement.
+        // Seuls un numéro vérifié par SMS ou validé par Yadony rattachent un colis : numéro
+        // simplement déclaré, ambigu ou inconnu, aucun rattachement.
         Optional<UserEntity> recipient = phoneLookup.findByPhone(e164.get()) instanceof PhoneMatch.Found found
+                && found.trust() != PhoneMatch.Trust.DECLARED
                 ? Optional.of(found.user())
                 : Optional.empty();
         if (recipient.isEmpty()) {

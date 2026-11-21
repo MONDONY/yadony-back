@@ -70,9 +70,9 @@ class RecipientInvitationControllerIntegrationTest {
         userRepository.findByFirebaseUid(INVITEE_UID).ifPresent(userRepository::delete);
         inviter = persistUser(INVITER_UID, "Awa", "Diallo");
         invitee = persistUser(INVITEE_UID, "Fatou", "Sow");
-        when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
+        when(firebaseContact.findPhoneOwner(anyString())).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
         when(firebaseContact.findUidByEmail(anyString())).thenReturn(Optional.empty());
-        when(firebaseContact.findUidByPhone(INVITEE_PHONE)).thenReturn(Optional.of(INVITEE_UID));
+        when(firebaseContact.findPhoneOwner(INVITEE_PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.found(INVITEE_UID));
         when(firebaseContact.findUidByEmail(INVITEE_EMAIL)).thenReturn(Optional.of(INVITEE_UID));
         when(firebaseContact.getContact(anyString())).thenReturn(FirebaseContactService.Contact.EMPTY);
         when(firebaseContact.getContact(INVITEE_UID))
@@ -119,7 +119,7 @@ class RecipientInvitationControllerIntegrationTest {
         mockMvc.perform(invite("{\"email\":\"Inconnu@Example.com\"}"))
                 .andExpect(status().isAccepted()).andExpect(content().json(SENT_BODY, true));
         // Soi-même
-        when(firebaseContact.findUidByPhone("+33600000001")).thenReturn(Optional.of(INVITER_UID));
+        when(firebaseContact.findPhoneOwner("+33600000001")).thenReturn(FirebaseContactService.PhoneOwnerLookup.found(INVITER_UID));
         mockMvc.perform(invite("{\"phone\":\"+33600000001\"}"))
                 .andExpect(status().isAccepted()).andExpect(content().json(SENT_BODY, true));
 

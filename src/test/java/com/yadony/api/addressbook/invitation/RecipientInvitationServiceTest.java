@@ -104,7 +104,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_existingAccount_createsPendingWithInviteeAndPublishesEvent() {
-        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee, PhoneMatch.Trust.SMS));
 
         InvitationSentResponse response = service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null));
 
@@ -136,7 +136,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_self_createsNothingButLooksUp() {
-        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(inviter));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(inviter, PhoneMatch.Trust.SMS));
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
                 .isEqualTo(InvitationSentResponse.SENT);
@@ -145,7 +145,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_duplicate_createsNothingButLooksUp() {
-        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee, PhoneMatch.Trust.SMS));
         when(repository.existsByInviterUserIdAndTargetHashAndStatusIn(eq(inviter.getId()),
                 eq(InvitationTargets.hash(PHONE)), anyCollection())).thenReturn(true);
 
@@ -156,7 +156,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_blocked_createsNothing() {
-        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee, PhoneMatch.Trust.SMS));
         when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
@@ -187,6 +187,31 @@ class RecipientInvitationServiceTest {
         verify(repository).saveAndFlush(saved.capture());
         assertThat(saved.getValue().getInviteeUserId()).isNull();
         verify(eventPublisher, never()).publishEvent(any(RecipientInvitationCreatedEvent.class));
+    }
+
+    @Test
+    void invitation_declaredNumber_returnsNeutralSentWithoutInvitee() {
+        when(phoneLookup.findByPhone(PHONE))
+                .thenReturn(new PhoneMatch.Found(invitee, PhoneMatch.Trust.DECLARED));
+
+        assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
+                .isEqualTo(InvitationSentResponse.SENT);
+        ArgumentCaptor<RecipientInvitationEntity> saved = ArgumentCaptor.forClass(RecipientInvitationEntity.class);
+        verify(repository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getInviteeUserId()).isNull();
+        verify(eventPublisher, never()).publishEvent(any(RecipientInvitationCreatedEvent.class));
+    }
+
+    @Test
+    void invitation_yadonyVerifiedNumber_resolvesInvitee() {
+        when(phoneLookup.findByPhone(PHONE))
+                .thenReturn(new PhoneMatch.Found(invitee, PhoneMatch.Trust.YADONY));
+
+        service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null));
+
+        ArgumentCaptor<RecipientInvitationEntity> saved = ArgumentCaptor.forClass(RecipientInvitationEntity.class);
+        verify(repository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getInviteeUserId()).isEqualTo(invitee.getId());
     }
 
     @Test

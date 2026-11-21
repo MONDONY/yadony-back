@@ -87,6 +87,8 @@ public class E2EMockConfig {
                 .thenReturn(java.util.Optional.empty());
         Mockito.lenient().when(mock.findUidByPhone(Mockito.any()))
                 .thenReturn(java.util.Optional.empty());
+        Mockito.lenient().when(mock.findPhoneOwner(Mockito.any()))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
         return mock;
     }
 

@@ -7,7 +7,10 @@ package com.yadony.api.auth;
  */
 public sealed interface PhoneMatch {
 
-    record Found(UserEntity user) implements PhoneMatch {
+    /** D'où vient la confiance : SMS vérifié, validé par Yadony, ou simple déclaration. */
+    enum Trust { SMS, YADONY, DECLARED }
+
+    record Found(UserEntity user, Trust trust) implements PhoneMatch {
     }
 
     record Ambiguous() implements PhoneMatch {

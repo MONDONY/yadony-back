@@ -143,9 +143,12 @@ public class RecipientInvitationService {
         return InvitationSentResponse.SENT;
     }
 
-    /** Un numéro ambigu ou inconnu donne le même résultat vide : rien ne fuit, aucun compte n'est choisi. */
+    /**
+     * Seul un numéro vérifié par SMS ou validé par Yadony désigne un invité. Un numéro simplement
+     * déclaré, ambigu ou inconnu donne le même résultat vide : rien ne fuit, aucun compte n'est choisi.
+     */
     private static Optional<String> uidOf(PhoneMatch match) {
-        return match instanceof PhoneMatch.Found found
+        return match instanceof PhoneMatch.Found found && found.trust() != PhoneMatch.Trust.DECLARED
                 ? Optional.of(found.user().getFirebaseUid())
                 : Optional.empty();
     }

@@ -2,7 +2,6 @@ package com.yadony.api.admin;
 
 import com.yadony.api.admin.dto.AdminPackageRequestDetailResponse;
 import com.yadony.api.admin.dto.AdminPackageRequestListItemResponse;
-import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.PhoneLookupService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -65,7 +64,6 @@ public class AdminPackageRequestQueryService {
     private final NegotiationThreadRepository threadRepository;
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
-    private final FirebaseContactService firebaseContactService;
     private final PhoneLookupService phoneLookup;
     private final PackageRequestPhotoService photoService;
     private final StorageService storageService;
@@ -75,7 +73,6 @@ public class AdminPackageRequestQueryService {
                                            NegotiationThreadRepository threadRepository,
                                            ReportRepository reportRepository,
                                            UserRepository userRepository,
-                                           FirebaseContactService firebaseContactService,
                                            PackageRequestPhotoService photoService,
                                            StorageService storageService,
                                            PackageRequestModerationService moderationService,
@@ -85,7 +82,6 @@ public class AdminPackageRequestQueryService {
         this.threadRepository = threadRepository;
         this.reportRepository = reportRepository;
         this.userRepository = userRepository;
-        this.firebaseContactService = firebaseContactService;
         this.photoService = photoService;
         this.storageService = storageService;
         this.moderationService = moderationService;
