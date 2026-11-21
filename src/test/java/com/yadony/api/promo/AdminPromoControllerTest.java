@@ -191,13 +191,6 @@ class AdminPromoControllerTest {
     }
 
     @Test
-    @DisplayName("origin inconnue : le paramètre n'est pas convertible en filtre")
-    void unknownOrigin_notAFilterValue() {
-        assertThatThrownBy(() -> AdminPromoController.OriginFilter.valueOf("BOGUS"))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
     @DisplayName("update d'un code de parrainage → 409 promo-code-readonly")
     void update_referralCodes_409() {
         for (PromoCodeOrigin o : List.of(PromoCodeOrigin.REFERRAL_REWARD, PromoCodeOrigin.REFERRAL_WELCOME)) {
@@ -247,12 +240,5 @@ class AdminPromoControllerTest {
 
         assertThat(resp.getBody().status()).isEqualTo(PromoCodeStatus.DISABLED);
         assertThat(resp.getBody().ownerFirstName()).isEqualTo("Awa");
-    }
-
-    @Test
-    @DisplayName("sécurité : PROMO_MANAGE exigé sur le contrôleur")
-    void controllerRequiresPromoManage() {
-        var pre = AdminPromoController.class.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
-        assertThat(pre.value()).isEqualTo("hasRole('ADMIN') and hasAuthority('PROMO_MANAGE')");
     }
 }

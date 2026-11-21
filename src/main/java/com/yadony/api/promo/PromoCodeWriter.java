@@ -19,6 +19,14 @@ public class PromoCodeWriter {
         this.promoCodeRepository = promoCodeRepository;
     }
 
+    /**
+     * Compatibilité des verrous : la transaction englobante du rachat tient un verrou sur la ligne
+     * {@code users} du filleul ({@code UserRepository.lockForUpdate}, un UPDATE hors colonne clé =
+     * FOR NO KEY UPDATE). La clé étrangère {@code owner_user_id} prend ici un FOR KEY SHARE sur
+     * cette même ligne : les deux sont compatibles. Remplacer ce verrou par un SELECT ... FOR UPDATE
+     * ferait attendre cette insertion sa propre transaction englobante, sans interblocage détecté
+     * (verrouillé par ReferralRedeemWelcomeCodePostgresIT).
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public PromoCodeEntity insertNow(PromoCodeEntity promo) {
         return promoCodeRepository.saveAndFlush(promo);

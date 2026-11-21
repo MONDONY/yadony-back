@@ -1151,7 +1151,8 @@ public final class NotificationTexts {
     /**
      * Bienvenue du filleul parrainé : son code promo de bienvenue (-5 % sur le premier envoi).
      * Sans prénom de parrain connu, le texte ne le nomme pas. Texte produit plus long que le cap
-     * du corps push : le corps est raccourci à l'écran et reste complet dans {@code fullBody}.
+     * du corps push. La catégorie PAIEMENTS n'est pas raccourcie : le corps complet est enregistré
+     * et envoyé tel quel (seul un avertissement est journalisé par {@code NotificationCapsPolicy}).
      */
     public static NotificationText referralWelcome(Messages m, String referrerName, String code) {
         String body = referrerName == null || referrerName.isBlank()
