@@ -77,6 +77,7 @@ class ReturnCodeAttemptsPersistenceTest {
     @MockitoBean RematchService rematchService;
     @MockitoBean StorageService storageService;
     @MockitoBean DeliveryNoShowProcedureService deliveryNoShowProcedure;
+    @MockitoBean com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder feeRecorder;
 
     @BeforeEach
     void verrouSansH2() {

@@ -1,6 +1,8 @@
 package com.yadony.api.cancellation;
 
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
+import com.yadony.api.cancellation.fee.CancellationFeeReason;
+import com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -25,6 +27,9 @@ class SenderNoShowBidCancelListenerTest {
 
     @Mock
     BidRepository bidRepository;
+
+    @Mock
+    SenderCancellationFeeRecorder feeRecorder;
 
     @InjectMocks
     SenderNoShowBidCancelListener listener;
@@ -52,6 +57,8 @@ class SenderNoShowBidCancelListenerTest {
         // FLUTTER-QQ : le motif ferme le contact et la conversation sans lire l'annulation.
         assertThat(b.getRejectionReason()).isEqualTo(BidEntity.REJECTION_SENDER_NO_SHOW);
         verify(bidRepository).save(b);
+        // Retenue enregistrée dans la même transaction que l'annulation du colis.
+        verify(feeRecorder).record(BID_ID, CancellationFeeReason.SENDER_NO_SHOW);
     }
 
     @Test
@@ -59,7 +66,7 @@ class SenderNoShowBidCancelListenerTest {
         listener.onCancellationConfirmed(
                 event(CancellationReason.SENDER_CANCEL_AFTER_HANDOVER));
 
-        verifyNoInteractions(bidRepository);
+        verifyNoInteractions(bidRepository, feeRecorder);
     }
 
     @Test
@@ -71,5 +78,6 @@ class SenderNoShowBidCancelListenerTest {
 
         assertThat(b.getStatus()).isEqualTo(BidStatus.NO_SHOW);
         verify(bidRepository, never()).save(any());
+        verifyNoInteractions(feeRecorder);
     }
 }

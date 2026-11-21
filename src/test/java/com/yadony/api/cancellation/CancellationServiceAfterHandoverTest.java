@@ -9,6 +9,8 @@ import static org.mockito.Mockito.when;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
+import com.yadony.api.cancellation.fee.CancellationFeeReason;
+import com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
@@ -47,6 +49,7 @@ class CancellationServiceAfterHandoverTest {
     @Mock private RematchService rematchService;
     @Mock private com.yadony.api.common.StorageService storageService;
     @Mock private DeliveryNoShowProcedureService deliveryNoShowProcedure;
+    @Mock private SenderCancellationFeeRecorder feeRecorder;
 
     private CancellationService service;
 
@@ -64,7 +67,8 @@ class CancellationServiceAfterHandoverTest {
                 announcementRepository, userRepository, auditService, eventPublisher,
                 new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24),
                 rematchService, storageService, deliveryNoShowProcedure,
-                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                feeRecorder);
     }
 
     private UserEntity user(UUID id) {
@@ -199,6 +203,37 @@ class CancellationServiceAfterHandoverTest {
         assertThat(rCap.getValue().senderId()).isEqualTo(SENDER_ID);
         assertThat(rCap.getValue().returnDeadline())
                 .isEqualTo(bidCap.getValue().getReturnDeadline().toLocalDate());
+    }
+
+    @Test
+    void afterHandoverBySender_recordsDue() {
+        stubFullFlow(SENDER_ID, BidStatus.HANDED_OVER, OffsetDateTime.now().plusHours(5));
+
+        service.cancelAfterHandover(FIREBASE, BID_ID);
+
+        verify(feeRecorder).record(BID_ID, CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER);
+    }
+
+    @Test
+    void afterHandoverByTraveler_noFee() {
+        stubFullFlow(TRAVELER_ID, BidStatus.HANDED_OVER, OffsetDateTime.now().plusHours(5));
+
+        service.cancelAfterHandover(FIREBASE, BID_ID);
+
+        org.mockito.Mockito.verifyNoInteractions(feeRecorder);
+    }
+
+    @Test
+    void afterHandover_refused_noFee() {
+        when(userRepository.findByFirebaseUid(FIREBASE)).thenReturn(Optional.of(user(SENDER_ID)));
+        when(bidRepository.findByIdForUpdate(BID_ID)).thenReturn(Optional.of(bid(BidStatus.HANDED_OVER)));
+        // Trajet parti : verrou D3, aucune annulation donc aucune retenue.
+        when(announcementRepository.findById(ANN_ID)).thenReturn(Optional.of(ann(OffsetDateTime.now().minusHours(1))));
+
+        assertThatThrownBy(() -> service.cancelAfterHandover(FIREBASE, BID_ID))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        org.mockito.Mockito.verifyNoInteractions(feeRecorder);
     }
 
     @Test

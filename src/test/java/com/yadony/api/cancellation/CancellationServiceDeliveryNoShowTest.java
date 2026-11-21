@@ -59,7 +59,8 @@ class CancellationServiceDeliveryNoShowTest {
         service = new CancellationService(cancellationRepository, rematchSuggestionRepository,
                 bidRepository, announcementRepository, userRepository, auditService, eventPublisher, props,
                 rematchService, storageService, deliveryNoShowProcedure,
-                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                org.mockito.Mockito.mock(com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder.class));
         OffsetDateTime now = OffsetDateTime.now();
         lenient().when(deliveryNoShowProcedure.checkReportPreconditions(any(), any(), anyBoolean()))
                 .thenReturn(new DeliveryNoShowProcedureService.ReportPreconditions("CALL", now, now.plusDays(7)));
