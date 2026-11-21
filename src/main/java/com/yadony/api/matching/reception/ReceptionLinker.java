@@ -1,6 +1,8 @@
 package com.yadony.api.matching.reception;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
+import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -45,6 +47,7 @@ public class ReceptionLinker {
     private final UserRepository userRepository;
     private final BidRecipientLinkRepository linkRepository;
     private final FirebaseContactService firebaseContact;
+    private final PhoneLookupService phoneLookup;
     private final BlockVisibility blockVisibility;
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
@@ -58,7 +61,9 @@ public class ReceptionLinker {
                            BlockVisibility blockVisibility,
                            NotificationDispatcher notificationDispatcher,
                            AuditService auditService,
-                           RecipientTrust recipientTrust) {
+                           RecipientTrust recipientTrust,
+                           PhoneLookupService phoneLookup) {
+        this.phoneLookup = phoneLookup;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -99,8 +104,10 @@ public class ReceptionLinker {
         if (e164.isEmpty()) {
             return Optional.empty();
         }
-        Optional<UserEntity> recipient = firebaseContact.findUidByPhone(e164.get())
-                .flatMap(userRepository::findByFirebaseUid);
+        // Numéro ambigu (déclaré par plusieurs comptes) ou inconnu : aucun rattachement.
+        Optional<UserEntity> recipient = phoneLookup.findByPhone(e164.get()) instanceof PhoneMatch.Found found
+                ? Optional.of(found.user())
+                : Optional.empty();
         if (recipient.isEmpty()) {
             return Optional.empty();
         }

@@ -7,6 +7,8 @@ import com.yadony.api.addressbook.invitation.dto.SentInvitationDto;
 import com.yadony.api.addressbook.recipient.RecipientEntity;
 import com.yadony.api.addressbook.recipient.RecipientRepository;
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
+import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -60,6 +62,7 @@ public class RecipientInvitationService {
     private final RecipientRepository recipientRepository;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
+    private final PhoneLookupService phoneLookup;
     private final BlockVisibility blockVisibility;
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
@@ -72,7 +75,9 @@ public class RecipientInvitationService {
                                       BlockVisibility blockVisibility,
                                       NotificationDispatcher notificationDispatcher,
                                       AuditService auditService,
-                                      ApplicationEventPublisher eventPublisher) {
+                                      ApplicationEventPublisher eventPublisher,
+                                      PhoneLookupService phoneLookup) {
+        this.phoneLookup = phoneLookup;
         this.repository = repository;
         this.recipientRepository = recipientRepository;
         this.userRepository = userRepository;
@@ -102,7 +107,7 @@ public class RecipientInvitationService {
         // Recherche faite dans tous les cas, avant tout court-circuit : la durée de la
         // réponse ne doit pas dépendre de l'existence d'un compte ni d'un doublon.
         Optional<String> foundUid = target.channel() == InvitationChannel.PHONE
-                ? firebaseContact.findUidByPhone(target.value())
+                ? uidOf(phoneLookup.findByPhone(target.value()))
                 : firebaseContact.findUidByEmail(target.value());
 
         if (foundUid.filter(uid -> uid.equals(inviter.getFirebaseUid())).isPresent()) {
@@ -136,6 +141,13 @@ public class RecipientInvitationService {
                     invitation.getId(), inviter.getId(), inviteeId));
         }
         return InvitationSentResponse.SENT;
+    }
+
+    /** Un numéro ambigu ou inconnu donne le même résultat vide : rien ne fuit, aucun compte n'est choisi. */
+    private static Optional<String> uidOf(PhoneMatch match) {
+        return match instanceof PhoneMatch.Found found
+                ? Optional.of(found.user().getFirebaseUid())
+                : Optional.empty();
     }
 
     /** Invitations envoyées et non retirées ; une invitation non acceptée reste « PENDING ». */

@@ -11,6 +11,7 @@ import com.yadony.api.admin.dto.ProGrantRequest;
 import com.yadony.api.admin.dto.RestoreRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.PhoneLookupService;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -37,6 +38,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -48,6 +50,7 @@ public class AdminUserController {
     private final UserService userService;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
+    private final PhoneLookupService phoneLookup;
     private final UserDeletionImpactService deletionImpactService;
     private final AdminUserDeletionService deletionService;
     private final ProSubscriptionService proSubscriptionService;
@@ -79,7 +82,9 @@ public class AdminUserController {
                                AdminUserDeletionService deletionService,
                                ProSubscriptionService proSubscriptionService,
                                ProSubscriptionRepository proSubscriptionRepository,
-                               PayoutHoldService payoutHoldService) {
+                               PayoutHoldService payoutHoldService,
+                               PhoneLookupService phoneLookup) {
+        this.phoneLookup = phoneLookup;
         this.payoutHoldService = payoutHoldService;
         this.userService = userService;
         this.userRepository = userRepository;
@@ -144,7 +149,10 @@ public class AdminUserController {
         }
         // Les numéros sont stockés en E.164 côté Firebase, donc préfixés de « + ».
         if (normalizedQuery.startsWith("+")) {
-            return firebaseContact.findUidByPhone(normalizedQuery).orElse(null);
+            // Plusieurs comptes déclarant le même numéro : tous remontent (UID séparés par des virgules).
+            List<String> uids = phoneLookup.findAllByPhone(normalizedQuery).stream()
+                    .map(UserEntity::getFirebaseUid).toList();
+            return uids.isEmpty() ? null : String.join(",", uids);
         }
         return null;
     }

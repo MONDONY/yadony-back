@@ -6,6 +6,8 @@ import com.yadony.api.addressbook.invitation.dto.InvitationSentResponse;
 import com.yadony.api.addressbook.recipient.RecipientEntity;
 import com.yadony.api.addressbook.recipient.RecipientRepository;
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
+import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -48,6 +50,7 @@ class RecipientInvitationServiceTest {
     @Mock RecipientRepository recipientRepository;
     @Mock UserRepository userRepository;
     @Mock FirebaseContactService firebaseContact;
+    @Mock PhoneLookupService phoneLookup;
     @Mock BlockVisibility blockVisibility;
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
@@ -62,7 +65,7 @@ class RecipientInvitationServiceTest {
     @BeforeEach
     void setUp() {
         service = new RecipientInvitationService(repository, recipientRepository, userRepository, firebaseContact,
-                blockVisibility, notificationDispatcher, auditService, eventPublisher);
+                blockVisibility, notificationDispatcher, auditService, eventPublisher, phoneLookup);
         lenient().when(userRepository.findByFirebaseUid("uid-inviter")).thenReturn(Optional.of(inviter));
         lenient().when(userRepository.findByFirebaseUid("uid-invitee")).thenReturn(Optional.of(invitee));
         lenient().when(userRepository.findById(inviter.getId())).thenReturn(Optional.of(inviter));
@@ -101,7 +104,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_existingAccount_createsPendingWithInviteeAndPublishesEvent() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.of("uid-invitee"));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee));
 
         InvitationSentResponse response = service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null));
 
@@ -133,7 +136,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_self_createsNothingButLooksUp() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.of("uid-inviter"));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(inviter));
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
                 .isEqualTo(InvitationSentResponse.SENT);
@@ -142,7 +145,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_duplicate_createsNothingButLooksUp() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.of("uid-invitee"));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee));
         when(repository.existsByInviterUserIdAndTargetHashAndStatusIn(eq(inviter.getId()),
                 eq(InvitationTargets.hash(PHONE)), anyCollection())).thenReturn(true);
 
@@ -153,7 +156,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_blocked_createsNothing() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.of("uid-invitee"));
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Found(invitee));
         when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
@@ -173,8 +176,22 @@ class RecipientInvitationServiceTest {
     }
 
     @Test
+    void invitation_ambiguous_returnsNeutralSent() {
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.Ambiguous());
+
+        InvitationSentResponse response = service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null));
+
+        // Même issue qu'un numéro inconnu : invitation en attente sans invité, aucun push.
+        assertThat(response).isEqualTo(InvitationSentResponse.SENT);
+        ArgumentCaptor<RecipientInvitationEntity> saved = ArgumentCaptor.forClass(RecipientInvitationEntity.class);
+        verify(repository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getInviteeUserId()).isNull();
+        verify(eventPublisher, never()).publishEvent(any(RecipientInvitationCreatedEvent.class));
+    }
+
+    @Test
     void send_raceOnUniqueIndex_stillAnswersSent() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.None());
         org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
@@ -248,7 +265,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_storesTrimmedName_andIgnoresBlankName() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.None());
         var captor = org.mockito.ArgumentCaptor.forClass(RecipientInvitationEntity.class);
 
         service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null, "  Adama  "));

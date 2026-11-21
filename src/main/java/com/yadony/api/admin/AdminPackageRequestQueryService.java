@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import com.yadony.api.admin.dto.AdminPackageRequestDetailResponse;
 import com.yadony.api.admin.dto.AdminPackageRequestListItemResponse;
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.MatchingTextUtil;
@@ -65,6 +66,7 @@ public class AdminPackageRequestQueryService {
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContactService;
+    private final PhoneLookupService phoneLookup;
     private final PackageRequestPhotoService photoService;
     private final StorageService storageService;
     private final PackageRequestModerationService moderationService;
@@ -76,7 +78,9 @@ public class AdminPackageRequestQueryService {
                                            FirebaseContactService firebaseContactService,
                                            PackageRequestPhotoService photoService,
                                            StorageService storageService,
-                                           PackageRequestModerationService moderationService) {
+                                           PackageRequestModerationService moderationService,
+                                           PhoneLookupService phoneLookup) {
+        this.phoneLookup = phoneLookup;
         this.requestRepository = requestRepository;
         this.threadRepository = threadRepository;
         this.reportRepository = reportRepository;
@@ -200,9 +204,10 @@ public class AdminPackageRequestQueryService {
                                                        boolean reportedOnly,
                                                        LocalDateTime from, LocalDateTime to,
                                                        AdminTransportModeFilter modeFilter) {
-        String phoneUid = query != null && query.startsWith("+")
-                ? firebaseContactService.findUidByPhone(query).orElse(null)
-                : null;
+        // Un numéro déclaré par plusieurs comptes les remonte tous : l'admin voit les doublons.
+        List<String> phoneUids = query != null && query.startsWith("+")
+                ? phoneLookup.findAllByPhone(query).stream().map(UserEntity::getFirebaseUid).toList()
+                : List.of();
         return (root, cq, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             if (status != null) {
@@ -239,8 +244,8 @@ public class AdminPackageRequestQueryService {
                             cb.like(cb.lower(cb.concat(cb.concat(cb.coalesce(u.get("firstName"), ""), " "),
                                     cb.coalesce(u.get("lastName"), ""))), like),
                             cb.like(cb.lower(u.get("username")), like));
-                    senders.select(u.get("id")).where(phoneUid != null
-                            ? cb.or(byName, cb.equal(u.get("firebaseUid"), phoneUid))
+                    senders.select(u.get("id")).where(!phoneUids.isEmpty()
+                            ? cb.or(byName, u.get("firebaseUid").in(phoneUids))
                             : byName);
                     predicates.add(cb.or(
                             cb.like(cb.lower(root.get("departureCity")), like),

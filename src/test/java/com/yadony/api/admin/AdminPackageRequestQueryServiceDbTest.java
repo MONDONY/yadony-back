@@ -62,6 +62,7 @@ class AdminPackageRequestQueryServiceDbTest {
     @Autowired TestEntityManager em;
 
     @MockitoBean FirebaseContactService firebaseContactService;
+    @MockitoBean com.yadony.api.auth.PhoneLookupService phoneLookup;
     @MockitoBean PackageRequestPhotoService photoService;
     @MockitoBean StorageService storageService;
     @MockitoBean PackageRequestService packageRequestService;
@@ -74,7 +75,7 @@ class AdminPackageRequestQueryServiceDbTest {
     void setUp() {
         awa = user("Awa", "Ndiaye", "uid-awa");
         moussa = user("Moussa", "Diop", "uid-moussa");
-        when(firebaseContactService.findUidByPhone(any())).thenReturn(Optional.empty());
+        when(phoneLookup.findAllByPhone(any())).thenReturn(List.of());
         when(photoService.activePhotos(any())).thenReturn(List.of());
     }
 
@@ -158,9 +159,19 @@ class AdminPackageRequestQueryServiceDbTest {
     void list_rechercheParTelephone_resolueParFirebase() {
         PackageRequestEntity dakar = request(awa.getId(), "Paris", "Dakar", PackageRequestStatus.OPEN);
         request(moussa.getId(), "Lyon", "Abidjan", PackageRequestStatus.OPEN);
-        when(firebaseContactService.findUidByPhone("+33612345678")).thenReturn(Optional.of("uid-awa"));
+        when(phoneLookup.findAllByPhone("+33612345678")).thenReturn(List.of(awa));
 
         assertThat(ids(service.list(null, "+33612345678", false, null, null, 0, 20))).containsExactly(dakar.getId());
+    }
+
+    @Test
+    void list_rechercheParTelephone_ambigu_listeLesDeuxComptes() {
+        PackageRequestEntity dakar = request(awa.getId(), "Paris", "Dakar", PackageRequestStatus.OPEN);
+        PackageRequestEntity abidjan = request(moussa.getId(), "Lyon", "Abidjan", PackageRequestStatus.OPEN);
+        when(phoneLookup.findAllByPhone("+224621234567")).thenReturn(List.of(awa, moussa));
+
+        assertThat(ids(service.list(null, "+224621234567", false, null, null, 0, 20)))
+                .containsExactlyInAnyOrder(dakar.getId(), abidjan.getId());
     }
 
     @Test
