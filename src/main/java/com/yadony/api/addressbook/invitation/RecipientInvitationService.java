@@ -48,8 +48,11 @@ import java.util.stream.Stream;
  * <p>Exception voulue par le propriétaire : le canal {@code username} répond 404 pour un
  * identifiant inconnu (ou masqué par un blocage) et 422 pour soi-même, car l'identifiant est
  * public par nature. L'énumération est bornée par la limite de recherche ({@link LookupRateLimiter},
- * 30 par heure et par utilisateur, seau partagé avec l'aperçu et compté avant la résolution, 429
- * {@code recipient-lookup-quota} au-delà). Le quota quotidien d'invitations (20) ne compte que les
+ * 30 par heure et par utilisateur, un seul seau partagé entre l'aperçu et l'envoi, compté avant la
+ * résolution mais après le contrôle du format, 429 {@code recipient-lookup-quota} au-delà). La
+ * disponibilité d'un identifiant ({@code GET /auth/me/username/availability}) a son propre seau, 120 par
+ * heure et par utilisateur ; la zone Nginx générale par IP (600 req/min) s'ajoute aux deux mais ne suffit
+ * pas à borner l'énumération. Le quota quotidien d'invitations (20) ne compte que les
  * invitations créées : un identifiant inconnu ne le consomme pas.
  */
 @Service
@@ -160,8 +163,8 @@ public class RecipientInvitationService {
      * explicite et soi-même un 422. Un doublon vivant (en attente ou accepté) ne crée rien.
      */
     private InvitationSentResponse sendByUsername(UserEntity inviter, Target target, String label) {
-        // Même seau que l'aperçu (30 par heure), compté avant la résolution, inconnus compris.
-        usernameLookup.acquireLookupQuota(inviter.getId());
+        // Même point d'entrée que l'aperçu : format, puis seau de 30 par heure, avant la résolution.
+        usernameLookup.beginLookup(inviter.getId(), target.value());
         UserEntity invitee = usernameLookup.resolveVisible(inviter, target.value())
                 .orElseThrow(UsernameLookupService::notFound);
         if (invitee.getId().equals(inviter.getId())) {
@@ -188,8 +191,10 @@ public class RecipientInvitationService {
 
     /**
      * Invitations envoyées en attente ou acceptées ; un refus n'y figure plus (l'inviteur en est prévenu par notification).
-     * Pour le canal identifiant, le libellé est l'identifiant COURANT de l'invité (il peut en changer),
-     * sauf si un blocage masque le compte : le libellé stocké est alors conservé.
+     * Pour le canal identifiant, le libellé est l'identifiant COURANT de l'invité (il peut en changer) seulement
+     * une fois l'invitation acceptée (et sans blocage entre les deux) ; tant qu'elle est en attente, le libellé
+     * stocké est conservé, pour qu'un inviteur jamais accepté ne découvre pas le nouvel identifiant après un
+     * renommage.
      */
     @Transactional(readOnly = true)
     public List<SentInvitationDto> sent(String firebaseUid) {
@@ -197,7 +202,8 @@ public class RecipientInvitationService {
         List<RecipientInvitationEntity> invitations = repository
                 .findByInviterUserIdAndStatusInOrderByCreatedAtDesc(inviter.getId(), LIVE);
         Set<UUID> byUsernameIds = invitations.stream()
-                .filter(i -> i.getChannel() == InvitationChannel.USERNAME && i.getInviteeUserId() != null)
+                .filter(i -> i.getChannel() == InvitationChannel.USERNAME && i.getInviteeUserId() != null
+                        && i.getStatus() == InvitationStatus.ACCEPTED)
                 .map(RecipientInvitationEntity::getInviteeUserId)
                 // Un compte masqué par un blocage (dans un sens ou l'autre) n'est pas relu : on garde le
                 // libellé stocké, pour qu'un renommage ne permette pas de le suivre.
@@ -215,7 +221,7 @@ public class RecipientInvitationService {
     }
 
     private static String displayedTarget(RecipientInvitationEntity invitation, Map<UUID, String> currentUsernames) {
-        if (invitation.getChannel() != InvitationChannel.USERNAME) {
+        if (invitation.getChannel() != InvitationChannel.USERNAME || invitation.getStatus() != InvitationStatus.ACCEPTED) {
             return invitation.getMaskedTarget();
         }
         String current = currentUsernames.get(invitation.getInviteeUserId());
@@ -305,7 +311,7 @@ public class RecipientInvitationService {
     /**
      * Refuse et prévient l'inviteur, une seule fois (un second refus lève {@code requirePending}). Une
      * invitation envoyée à un numéro ou un e-mail dont le titulaire refuse l'en informe aussi : c'est voulu
-     * par le propriétaire du produit. Le message ne cite que la cible masquée.
+     * par le propriétaire du produit. Le message ne cite que la cible stockée à l'envoi (masquée, ou l'identifiant d'alors), jamais l'identifiant courant de l'invité.
      */
     @Transactional
     public IncomingInvitationDto decline(UUID invitationId, String firebaseUid) {
@@ -318,20 +324,11 @@ public class RecipientInvitationService {
                 Map.of("inviterUserId", invitation.getInviterUserId().toString()));
 
         var text = NotificationTexts.recipientInvitationDeclined(
-                notificationDispatcher.messagesFor(invitation.getInviterUserId()), declinedTarget(invitation, me));
+                notificationDispatcher.messagesFor(invitation.getInviterUserId()), invitation.getMaskedTarget());
         notificationDispatcher.notifyUser(invitation.getInviterUserId(), text.title(), text.body(),
                 Map.of("type", RecipientInvitationNotifications.DECLINED,
                         "invitationId", invitation.getId().toString()));
         return toIncoming(invitation);
-    }
-
-    /** Pseudo actuel de l'invité s'il n'est pas masqué par un blocage, sinon le libellé masqué stocké. */
-    private String declinedTarget(RecipientInvitationEntity invitation, UserEntity invitee) {
-        if (invitation.getChannel() == InvitationChannel.USERNAME && invitee.getUsername() != null
-                && !blockVisibility.isHidden(invitation.getInviterUserId(), invitee.getId())) {
-            return "@" + invitee.getUsername();
-        }
-        return invitation.getMaskedTarget();
     }
 
     /**

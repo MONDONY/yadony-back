@@ -25,6 +25,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -268,14 +270,14 @@ class RecipientInvitationServiceTest {
                 .isInstanceOf(YadonyBusinessException.class);
 
         var order = inOrder(usernameLookup);
-        order.verify(usernameLookup).acquireLookupQuota(inviter.getId());
+        order.verify(usernameLookup).beginLookup(inviter.getId(), "inconnu");
         order.verify(usernameLookup).resolveVisible(inviter, "inconnu");
     }
 
     @Test
     void send_username_lookupQuotaExhausted_429_withoutResolving() {
         doThrow(YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota",
-                "problem.recipient-lookup-quota")).when(usernameLookup).acquireLookupQuota(inviter.getId());
+                "problem.recipient-lookup-quota")).when(usernameLookup).beginLookup(inviter.getId(), "fatou.sow");
 
         assertThatThrownBy(() -> service.send("uid-inviter", byUsername("fatou.sow")))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
@@ -364,10 +366,11 @@ class RecipientInvitationServiceTest {
     }
 
     @Test
-    void sent_usernameInvitation_showsInviteeCurrentUsername() {
+    void sent_acceptedUsernameInvitation_showsInviteeCurrentUsername() {
         invitee.setUsername("fatou.renamed");
         RecipientInvitationEntity byName = withId(new RecipientInvitationEntity(inviter.getId(), invitee.getId(),
                 InvitationChannel.USERNAME, InvitationTargets.hash("u:" + invitee.getId()), "@fatou.sow"));
+        byName.respond(InvitationStatus.ACCEPTED, OffsetDateTime.now(ZoneOffset.UTC));
         when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
                 .thenReturn(List.of(byName, pendingFor(null)));
         when(userRepository.findAllById(anyCollection())).thenReturn(List.of(invitee));
@@ -380,10 +383,25 @@ class RecipientInvitationServiceTest {
     }
 
     @Test
-    void sent_usernameInvitation_blockedInvitee_keepsStoredLabelNotNewHandle() {
+    void sent_pendingUsernameInvitation_renamedInvitee_keepsStoredLabel() {
         invitee.setUsername("fatou.renamed");
         RecipientInvitationEntity byName = withId(new RecipientInvitationEntity(inviter.getId(), invitee.getId(),
                 InvitationChannel.USERNAME, InvitationTargets.hash("u:" + invitee.getId()), "@fatou.sow"));
+        when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
+                .thenReturn(List.of(byName));
+
+        var sent = service.sent("uid-inviter");
+
+        assertThat(sent.get(0).maskedTarget()).isEqualTo("@fatou.sow");
+        verify(userRepository, never()).findAllById(any());
+    }
+
+    @Test
+    void sent_acceptedUsernameInvitation_blockedInvitee_keepsStoredLabelNotNewHandle() {
+        invitee.setUsername("fatou.renamed");
+        RecipientInvitationEntity byName = withId(new RecipientInvitationEntity(inviter.getId(), invitee.getId(),
+                InvitationChannel.USERNAME, InvitationTargets.hash("u:" + invitee.getId()), "@fatou.sow"));
+        byName.respond(InvitationStatus.ACCEPTED, OffsetDateTime.now(ZoneOffset.UTC));
         when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
                 .thenReturn(List.of(byName));
         when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
@@ -698,26 +716,10 @@ class RecipientInvitationServiceTest {
     }
 
     @Test
-    void decline_usernameInvitation_showsInviteesCurrentUsername() {
+    void decline_usernameInvitation_renamedInvitee_usesStoredLabelNotCurrentUsername() {
         invitee.setUsername("fatou.neuf");
         RecipientInvitationEntity invitation = usernameInvitation();
         when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
-
-        service.decline(invitation.getId(), "uid-invitee");
-
-        verify(notificationDispatcher).notifyUser(eq(inviter.getId()), any(),
-                eq("@fatou.neuf n'a pas accepté votre invitation."), any());
-    }
-
-    @Test
-    void decline_usernameInvitation_hiddenByBlock_usesStoredLabel() {
-        invitee.setUsername("fatou.neuf");
-        RecipientInvitationEntity invitation = usernameInvitation();
-        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
-        // L'invité ne voit pas de blocage de son côté, mais l'inviteur n'a plus le droit de le suivre.
-        // Nécessaire : sans ce stub, Mockito strict rejette l'appel isHidden(invitee, inviter) de incomingInvitation.
-        lenient().when(blockVisibility.isHidden(invitee.getId(), inviter.getId())).thenReturn(false);
-        when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
 
         service.decline(invitation.getId(), "uid-invitee");
 

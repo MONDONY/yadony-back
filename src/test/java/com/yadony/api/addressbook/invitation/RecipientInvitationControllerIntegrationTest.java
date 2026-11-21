@@ -9,6 +9,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.RecipientTrust;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,14 +65,7 @@ class RecipientInvitationControllerIntegrationTest {
 
     @BeforeEach
     void seed() {
-        invitationRepository.deleteAll();
-        recipientRepository.deleteAll();
-        // Suppression physique : un compte supprimé en douceur garderait son identifiant (unique).
-        jdbc.update("DELETE FROM user_blocks WHERE blocker_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
-                INVITER_UID, INVITEE_UID);
-        jdbc.update("DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
-                INVITER_UID, INVITEE_UID);
-        jdbc.update("DELETE FROM users WHERE firebase_uid IN (?, ?)", INVITER_UID, INVITEE_UID);
+        purge();
         inviter = persistUser(INVITER_UID, "Awa", "Diallo");
         invitee = persistUser(INVITEE_UID, "Fatou", "Sow");
         when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
@@ -81,6 +75,20 @@ class RecipientInvitationControllerIntegrationTest {
         when(firebaseContact.getContact(anyString())).thenReturn(FirebaseContactService.Contact.EMPTY);
         when(firebaseContact.getContact(INVITEE_UID))
                 .thenReturn(new FirebaseContactService.Contact(INVITEE_PHONE, INVITEE_EMAIL));
+    }
+
+    @AfterEach
+    void purge() {
+        invitationRepository.deleteAll();
+        recipientRepository.deleteAll();
+        // Suppression physique, par compte et par identifiant (préfixe « inv. » réservé à cette classe) : un
+        // compte supprimé en douceur garderait son identifiant (unique) et la base de test est partagée.
+        String ids = "SELECT id FROM users WHERE firebase_uid IN (?, ?) OR lower(username) LIKE 'inv.%'";
+        jdbc.update("DELETE FROM user_blocks WHERE blocker_id IN (" + ids + ") OR blocked_id IN (" + ids + ")",
+                INVITER_UID, INVITEE_UID, INVITER_UID, INVITEE_UID);
+        jdbc.update("DELETE FROM user_roles WHERE user_id IN (" + ids + ")", INVITER_UID, INVITEE_UID);
+        jdbc.update("DELETE FROM users WHERE firebase_uid IN (?, ?) OR lower(username) LIKE 'inv.%'",
+                INVITER_UID, INVITEE_UID);
     }
 
     private UserEntity persistUser(String uid, String first, String last) {
@@ -204,16 +212,16 @@ class RecipientInvitationControllerIntegrationTest {
 
     @Test
     void sendByUsername_found_202_onePendingRowWithInvitee() throws Exception {
-        giveUsername(invitee, "fatou.sow");
+        giveUsername(invitee, "inv.fatou");
 
-        mockMvc.perform(invite("{\"username\":\"Fatou.Sow\"}"))
+        mockMvc.perform(invite("{\"username\":\"Inv.Fatou\"}"))
                 .andExpect(status().isAccepted()).andExpect(content().json(SENT_BODY, true));
 
         RecipientInvitationEntity row = onlyInvitation();
         assertThat(row.getChannel()).isEqualTo(InvitationChannel.USERNAME);
         assertThat(row.getStatus()).isEqualTo(InvitationStatus.PENDING);
         assertThat(row.getInviteeUserId()).isEqualTo(invitee.getId());
-        assertThat(row.getMaskedTarget()).isEqualTo("@fatou.sow");
+        assertThat(row.getMaskedTarget()).isEqualTo("@inv.fatou");
     }
 
     @Test
@@ -227,18 +235,18 @@ class RecipientInvitationControllerIntegrationTest {
 
     @Test
     void sendByUsername_twice_secondCreatesNothing() throws Exception {
-        giveUsername(invitee, "fatou.sow");
-        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());
-        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}"))
+        giveUsername(invitee, "inv.fatou");
+        mockMvc.perform(invite("{\"username\":\"inv.fatou\"}")).andExpect(status().isAccepted());
+        mockMvc.perform(invite("{\"username\":\"inv.fatou\"}"))
                 .andExpect(status().isAccepted()).andExpect(content().json(SENT_BODY, true));
         assertThat(invitationRepository.findAll()).hasSize(1);
     }
 
     @Test
     void sendByUsername_severalFieldsOrNone_422() throws Exception {
-        giveUsername(invitee, "fatou.sow");
-        for (String body : List.of("{\"username\":\"fatou.sow\",\"phone\":\"" + INVITEE_PHONE + "\"}",
-                "{\"username\":\"fatou.sow\",\"email\":\"" + INVITEE_EMAIL + "\"}", "{\"username\":\" \"}")) {
+        giveUsername(invitee, "inv.fatou");
+        for (String body : List.of("{\"username\":\"inv.fatou\",\"phone\":\"" + INVITEE_PHONE + "\"}",
+                "{\"username\":\"inv.fatou\",\"email\":\"" + INVITEE_EMAIL + "\"}", "{\"username\":\" \"}")) {
             mockMvc.perform(invite(body)).andExpect(status().isUnprocessableEntity())
                     .andExpect(jsonPath("$.code").value("recipient-invitation-invalid-target"));
         }
@@ -247,11 +255,11 @@ class RecipientInvitationControllerIntegrationTest {
 
     @Test
     void sendByUsername_inviteeBlockedInviter_404() throws Exception {
-        giveUsername(invitee, "fatou.sow");
+        giveUsername(invitee, "inv.fatou");
         jdbc.update("INSERT INTO user_blocks (id, blocker_id, blocked_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
                 UUID.randomUUID(), invitee.getId(), inviter.getId());
         try {
-            mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isNotFound());
+            mockMvc.perform(invite("{\"username\":\"inv.fatou\"}")).andExpect(status().isNotFound());
             assertThat(invitationRepository.findAll()).isEmpty();
         } finally {
             jdbc.update("DELETE FROM user_blocks WHERE blocker_id = ?", invitee.getId());
@@ -260,8 +268,8 @@ class RecipientInvitationControllerIntegrationTest {
 
     @Test
     void sendByUsername_self_422() throws Exception {
-        giveUsername(inviter, "awa.diallo");
-        mockMvc.perform(invite("{\"username\":\"awa.diallo\"}"))
+        giveUsername(inviter, "inv.awa");
+        mockMvc.perform(invite("{\"username\":\"inv.awa\"}"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("recipient-invitation-self"));
         assertThat(invitationRepository.findAll()).isEmpty();
@@ -269,14 +277,14 @@ class RecipientInvitationControllerIntegrationTest {
 
     @Test
     void sendByUsername_quotaOf20_returns429_andUnknownDoesNotConsumeIt() throws Exception {
-        giveUsername(invitee, "fatou.sow");
+        giveUsername(invitee, "inv.fatou");
         for (int i = 0; i < RecipientInvitationService.DAILY_QUOTA - 1; i++) {
             mockMvc.perform(invite("{\"phone\":\"+2217000000" + String.format("%02d", i) + "\"}"))
                     .andExpect(status().isAccepted());
         }
         mockMvc.perform(invite("{\"username\":\"inconnu.total\"}")).andExpect(status().isNotFound());
-        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());
-        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isTooManyRequests())
+        mockMvc.perform(invite("{\"username\":\"inv.fatou\"}")).andExpect(status().isAccepted());
+        mockMvc.perform(invite("{\"username\":\"inv.fatou\"}")).andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("recipient-invitation-quota"));
     }
 
@@ -297,15 +305,29 @@ class RecipientInvitationControllerIntegrationTest {
     }
 
     @Test
-    void sent_usernameInvitation_showsCurrentUsernameAfterRename() throws Exception {
-        giveUsername(invitee, "fatou.sow");
-        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());
-        giveUsername(invitee, "fatou.nouveau");
+    void sent_pendingUsernameInvitation_keepsStoredLabelAfterRename() throws Exception {
+        giveUsername(invitee, "inv.fatou");
+        mockMvc.perform(invite("{\"username\":\"inv.fatou\"}")).andExpect(status().isAccepted());
+        giveUsername(invitee, "inv.fatou.neuf");
 
         mockMvc.perform(get("/recipient-invitations/sent").with(authentication(as(INVITER_UID))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].channel").value("USERNAME"))
-                .andExpect(jsonPath("$[0].maskedTarget").value("@fatou.nouveau"));
+                .andExpect(jsonPath("$[0].maskedTarget").value("@inv.fatou"));
+    }
+
+    @Test
+    void sent_acceptedUsernameInvitation_showsCurrentUsernameAfterRename() throws Exception {
+        giveUsername(invitee, "inv.fatou");
+        mockMvc.perform(invite("{\"username\":\"inv.fatou\"}")).andExpect(status().isAccepted());
+        UUID id = onlyInvitation().getId();
+        mockMvc.perform(post("/recipient-invitations/{id}/accept", id).with(authentication(as(INVITEE_UID))))
+                .andExpect(status().isOk());
+        giveUsername(invitee, "inv.fatou.neuf");
+
+        mockMvc.perform(get("/recipient-invitations/sent").with(authentication(as(INVITER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].maskedTarget").value("@inv.fatou.neuf"));
     }
 
     // ── Côté invité : rattrapage, accept, 409, revoke ───────────────────────
