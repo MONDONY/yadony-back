@@ -369,7 +369,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     /**
      * Recherche admin. Le terme libre {@code queryLike} ne balaie plus que les noms :
      * téléphone et email ont quitté la base pour Firebase. Une recherche sur l'un des
-     * deux est résolue en amont en UID Firebase, passé ici via {@code queryFirebaseUid} (plusieurs UID séparés par des virgules si le numéro désigne plusieurs comptes)
+     * deux est résolue en amont en UID Firebase, passé ici via {@code queryFirebaseUid} (plusieurs UID séparés par des virgules si le numéro désigne plusieurs comptes ; {@code POSITION} plutôt qu'une fonction de tableau, pour rester portable entre H2 et PostgreSQL)
      * et apparié exactement.
      *
      * <p>Le terme brut {@code queryRaw} est aussi comparé exactement à l'UID Firebase
@@ -391,7 +391,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
                  OR u.first_name ILIKE :queryLike
                  OR u.last_name  ILIKE :queryLike
                  OR (CAST(:queryFirebaseUid AS VARCHAR) IS NOT NULL
-                     AND u.firebase_uid = ANY(string_to_array(:queryFirebaseUid, ',')))
+                     AND POSITION(',' || u.firebase_uid || ',' IN ',' || CAST(:queryFirebaseUid AS VARCHAR) || ',') > 0)
                  OR (CAST(:queryRaw AS VARCHAR) IS NOT NULL
                      AND u.firebase_uid = :queryRaw)
                  OR (CAST(:queryId AS UUID) IS NOT NULL
@@ -412,7 +412,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
                  OR u.first_name ILIKE :queryLike
                  OR u.last_name  ILIKE :queryLike
                  OR (CAST(:queryFirebaseUid AS VARCHAR) IS NOT NULL
-                     AND u.firebase_uid = ANY(string_to_array(:queryFirebaseUid, ',')))
+                     AND POSITION(',' || u.firebase_uid || ',' IN ',' || CAST(:queryFirebaseUid AS VARCHAR) || ',') > 0)
                  OR (CAST(:queryRaw AS VARCHAR) IS NOT NULL
                      AND u.firebase_uid = :queryRaw)
                  OR (CAST(:queryId AS UUID) IS NOT NULL
