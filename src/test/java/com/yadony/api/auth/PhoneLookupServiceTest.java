@@ -37,6 +37,37 @@ class PhoneLookupServiceTest {
         service = new PhoneLookupService(firebaseContact, userRepository, hasher, new DeclaredPhoneResolver(hasher));
     }
 
+    // ── trustedDeclaredPhone : seul un numéro « Vérifié par Yadony » concordant est de confiance ──
+
+    @Test
+    void trustedDeclaredPhone_yadonyVerifiedAndHashMatches_returnsTheNumber() {
+        assertThat(service.trustedDeclaredPhone(yadonyVerified("u"),
+                new FirebaseContactService.Contact(null, null, PHONE))).contains(PHONE);
+    }
+
+    @Test
+    void trustedDeclaredPhone_plainDeclared_isEmpty() {
+        assertThat(service.trustedDeclaredPhone(declaredUser("u"),
+                new FirebaseContactService.Contact(null, null, PHONE))).isEmpty();
+    }
+
+    @Test
+    void trustedDeclaredPhone_claimChangedSinceValidation_isEmpty() {
+        assertThat(service.trustedDeclaredPhone(yadonyVerified("u"),
+                new FirebaseContactService.Contact(null, null, "+224629999999"))).isEmpty();
+    }
+
+    @Test
+    void trustedDeclaredPhone_smsPhoneExists_isEmpty() {
+        assertThat(service.trustedDeclaredPhone(yadonyVerified("u"),
+                new FirebaseContactService.Contact("+224621111111", null, PHONE))).isEmpty();
+    }
+
+    @Test
+    void trustedDeclaredPhone_noContact_isEmpty() {
+        assertThat(service.trustedDeclaredPhone(yadonyVerified("u"), null)).isEmpty();
+    }
+
     private static UserEntity user(String uid) {
         UserEntity u = new UserEntity();
         ReflectionTestUtils.setField(u, "id", UUID.randomUUID());

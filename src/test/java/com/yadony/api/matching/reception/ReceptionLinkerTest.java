@@ -362,6 +362,41 @@ class ReceptionLinkerTest {
     // ── catchUp ─────────────────────────────────────────────────────────────
 
     @Test
+    void catchUp_yadonyTrustedDeclaredPhone_linksBids() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, "+221771234567");
+        when(firebaseContact.getContact("uid-r")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(me, contact)).thenReturn(Optional.of("+221771234567"));
+        bid.setRecipientPhone("00221 77-123-45-67");
+        when(linkRepository.findCatchUpCandidates(recipientId, BidStatus.IN_FLIGHT, "%7"))
+                .thenReturn(List.of(bid));
+
+        assertThat(linker.catchUp(me)).isEqualTo(1);
+    }
+
+    @Test
+    void catchUp_plainDeclaredPhone_linksNothing() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, "+221771234567");
+        when(firebaseContact.getContact("uid-r")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(me, contact)).thenReturn(Optional.empty());
+
+        assertThat(linker.catchUp(me)).isZero();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void catchUp_smsPhone_neverConsultsTheDeclaredNumber() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        when(firebaseContact.getContact("uid-r"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+
+        linker.catchUp(me);
+
+        verify(phoneLookup, never()).trustedDeclaredPhone(any(), any());
+    }
+
+    @Test
     void catchUp_linksMatchingBidsWithoutPush() {
         UserEntity me = user(recipientId, "uid-r", "Fatou");
         when(firebaseContact.getContact("uid-r"))

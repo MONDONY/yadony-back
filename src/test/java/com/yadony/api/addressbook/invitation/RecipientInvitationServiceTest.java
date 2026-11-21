@@ -355,6 +355,77 @@ class RecipientInvitationServiceTest {
         verify(repository, never()).findByInviteeUserIdIsNullAndStatusAndTargetHashIn(any(), any());
     }
 
+    // ── numéro « Vérifié par Yadony » (déclaré sans SMS, validé par un administrateur) ──
+
+    @Test
+    void accept_yadonyTrustedDeclaredPhone_succeeds() {
+        RecipientInvitationEntity invitation = pendingFor(invitee.getId());
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(invitee, contact)).thenReturn(Optional.of(PHONE));
+
+        IncomingInvitationDto dto = service.accept(invitation.getId(), "uid-invitee");
+
+        assertThat(dto.status()).isEqualTo("ACCEPTED");
+        ArgumentCaptor<RecipientEntity> entry = ArgumentCaptor.forClass(RecipientEntity.class);
+        verify(recipientRepository).save(entry.capture());
+        assertThat(entry.getValue().getPhoneE164()).isEqualTo(PHONE);
+    }
+
+    @Test
+    void accept_plainDeclaredPhone_stillReturns409() {
+        RecipientInvitationEntity invitation = pendingFor(invitee.getId());
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(invitee, contact)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.accept(invitation.getId(), "uid-invitee"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("recipient-invitation-phone-required"));
+        assertThat(invitation.getStatus()).isEqualTo(InvitationStatus.PENDING);
+    }
+
+    @Test
+    void accept_smsPhone_neverConsultsTheDeclaredNumber() {
+        RecipientInvitationEntity invitation = pendingFor(invitee.getId());
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(new FirebaseContactService.Contact(PHONE, null));
+
+        service.accept(invitation.getId(), "uid-invitee");
+
+        verify(phoneLookup, never()).trustedDeclaredPhone(any(), any());
+    }
+
+    @Test
+    void incoming_catchUp_yadonyTrustedDeclaredPhone_claimsTheInvitation() {
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(invitee, contact)).thenReturn(Optional.of(PHONE));
+        RecipientInvitationEntity orphan = pendingFor(null);
+        when(repository.findByInviteeUserIdIsNullAndStatusAndTargetHashIn(eq(InvitationStatus.PENDING),
+                eq(Set.of(InvitationTargets.hash(PHONE))))).thenReturn(List.of(orphan));
+        when(repository.findByInviteeUserIdAndStatusInOrderByCreatedAtDesc(eq(invitee.getId()), anyCollection()))
+                .thenAnswer(inv -> List.of(orphan));
+        when(userRepository.findAllById(any())).thenReturn(List.of(inviter));
+
+        service.incoming("uid-invitee");
+
+        assertThat(orphan.getInviteeUserId()).isEqualTo(invitee.getId());
+    }
+
+    @Test
+    void incoming_catchUp_plainDeclaredPhone_claimsNothing() {
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+        when(firebaseContact.getContact("uid-invitee")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(invitee, contact)).thenReturn(Optional.empty());
+
+        service.incoming("uid-invitee");
+
+        verify(repository, never()).findByInviteeUserIdIsNullAndStatusAndTargetHashIn(any(), any());
+    }
+
     // ── accept ──────────────────────────────────────────────────────────────
 
     @Test

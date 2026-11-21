@@ -166,7 +166,10 @@ public class ReceptionLinker {
     }
 
     private int catchUp(UserEntity user, boolean notify) {
-        String phone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
+        FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
+        // SMS d'abord ; sinon le numéro déclaré que Yadony a validé (jamais un simple déclaré).
+        String phone = contact.phoneNumber() != null && !contact.phoneNumber().isBlank()
+                ? contact.phoneNumber() : phoneLookup.trustedDeclaredPhone(user, contact).orElse(null);
         String key = ReceptionPhones.digitsKey(phone);
         if (key.isEmpty()) {
             return 0;

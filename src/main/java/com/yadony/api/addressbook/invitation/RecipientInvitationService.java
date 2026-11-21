@@ -191,11 +191,17 @@ public class RecipientInvitationService {
                 .toList();
     }
 
+    /** Téléphone de l'invité : celui vérifié par SMS, sinon le numéro déclaré que Yadony a validé (jamais un simple déclaré). */
+    private String inviteePhone(UserEntity me, FirebaseContactService.Contact contact) {
+        String sms = contact.phoneNumber();
+        return sms != null && !sms.isBlank() ? sms : phoneLookup.trustedDeclaredPhone(me, contact).orElse(null);
+    }
+
     /** Pose {@code invitee_user_id} sur les invitations sans compte dont l'empreinte est la sienne. */
     private void catchUp(UserEntity me) {
         FirebaseContactService.Contact contact = firebaseContact.getContact(me.getFirebaseUid());
         Set<String> hashes = Stream.concat(
-                        InvitationTargets.phone(contact.phoneNumber()).stream(),
+                        InvitationTargets.phone(inviteePhone(me, contact)).stream(),
                         InvitationTargets.email(contact.email()).stream())
                 .map(InvitationTargets::hash)
                 .collect(Collectors.toCollection(HashSet::new));
@@ -225,7 +231,7 @@ public class RecipientInvitationService {
             return toIncoming(invitation);
         }
         requirePending(invitation);
-        String phone = InvitationTargets.phone(firebaseContact.getContact(me.getFirebaseUid()).phoneNumber())
+        String phone = InvitationTargets.phone(inviteePhone(me, firebaseContact.getContact(me.getFirebaseUid())))
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-invitation-phone-required", "problem.recipient-invitation-phone-required"));
 
         RecipientEntity entry = upsertAddressBookEntry(invitation, me, phone);
