@@ -243,7 +243,7 @@ class CancellationFeeRatePortAdapterTest {
     @Test
     void capEur_isTheConfiguredCap() {
         CancellationFeeRatePortAdapter configured = new CancellationFeeRatePortAdapter(fees, auditService,
-                new CancellationFeeProperties(new BigDecimal("25"), null), entityManager, events);
+                new CancellationFeeProperties(false, null, new BigDecimal("25"), null), entityManager, events);
 
         assertThat(configured.capEur()).isEqualByComparingTo("25");
     }

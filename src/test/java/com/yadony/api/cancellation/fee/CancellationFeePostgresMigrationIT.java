@@ -57,6 +57,6 @@ class CancellationFeePostgresMigrationIT {
 
         assertThat(defs).hasSize(1);
         assertThat(defs.get(0)).contains("UNIQUE").contains("deleted_at IS NULL");
-        assertThat(repository.findByStatus(CancellationFeeStatus.DUE)).isEmpty();
+        assertThat(repository.findByBidId(java.util.UUID.randomUUID())).isEmpty();
     }
 }

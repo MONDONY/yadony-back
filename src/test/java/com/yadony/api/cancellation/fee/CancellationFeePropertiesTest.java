@@ -56,15 +56,6 @@ class CancellationFeePropertiesTest {
     }
 
     @Test
-    void scaleOnlyConstructor_isOff() {
-        CancellationFeeProperties props = new CancellationFeeProperties(new BigDecimal("25"), TIERS);
-
-        assertThat(props.enabled()).isFalse();
-        assertThat(props.effectiveFrom()).isNull();
-        assertThat(props.capEur()).isEqualByComparingTo("25");
-    }
-
-    @Test
     void applicationYaml_defaultsAreOff_andOverridableByEnvironment() throws Exception {
         assertThat(bindApplicationYaml(Map.of()).enabled()).isFalse();
         assertThat(bindApplicationYaml(Map.of()).effectiveFrom()).isNull();

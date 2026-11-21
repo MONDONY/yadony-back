@@ -149,7 +149,7 @@ class CancellationFeeAdminServiceTest {
                 .containsEntry("cancellationFeeId", FEE_ID.toString())
                 .containsEntry("adminReason", REASON)
                 .containsEntry("previousReason", "TOO_MANY_FAILED_PAYOUTS");
-        verify(events).publishEvent(new CancellationFeePayoutRetryRequestedEvent(FEE_ID, ADMIN_ID));
+        verify(events).publishEvent(new CancellationFeePayoutRetryRequestedEvent(FEE_ID));
     }
 
     @ParameterizedTest

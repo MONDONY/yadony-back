@@ -32,7 +32,7 @@ class CancellationFeePayoutListenerTest {
     @Test
     void retainedFee_isPaidOut() {
         when(port.findPayableByBid(BID_ID)).thenReturn(Optional.of(new PayableCancellationFee(FEE_ID, BID_ID,
-                UUID.randomUUID(), new BigDecimal("26.84"), "EUR", PayableCancellationFee.Status.RETAINED)));
+                UUID.randomUUID(), new BigDecimal("26.84"), "EUR", null)));
 
         listener().onFeeRetained(new CancellationFeeRetainedEvent(BID_ID));
 
@@ -51,7 +51,7 @@ class CancellationFeePayoutListenerTest {
     @Test
     void adminRetryRequested_resumesThePayout() {
         listener().onPayoutRetryRequested(
-                new com.yadony.api.cancellation.events.CancellationFeePayoutRetryRequestedEvent(FEE_ID, UUID.randomUUID()));
+                new com.yadony.api.cancellation.events.CancellationFeePayoutRetryRequestedEvent(FEE_ID));
 
         verify(payoutService).resumeAfterAdminRetry(FEE_ID);
         verifyNoInteractions(port);

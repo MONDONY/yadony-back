@@ -121,11 +121,6 @@ public record CancellationFeeProperties(boolean enabled, Instant effectiveFrom, 
         return effectiveFrom;
     }
 
-    /** Barème seul, interrupteur éteint : calculs et tests qui ne dépendent pas de l'activation. */
-    public CancellationFeeProperties(BigDecimal capEur, List<Tier> tiers) {
-        this(false, null, capEur, tiers);
-    }
-
     private static void validate(List<Tier> tiers) {
         Set<Integer> seen = new HashSet<>();
         for (Tier tier : tiers) {

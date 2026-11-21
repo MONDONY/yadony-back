@@ -112,7 +112,7 @@ public class CancellationFeeAdminService {
         payload.put("adminReason", reason);
         payload.put("previousReason", String.valueOf(fee.getPayoutPendingReason()));
         auditService.log("BID", fee.getBidId(), AUDIT_FEE_PAYOUT_RETRY_REQUESTED, adminId, payload);
-        events.publishEvent(new CancellationFeePayoutRetryRequestedEvent(feeId, adminId));
+        events.publishEvent(new CancellationFeePayoutRetryRequestedEvent(feeId));
     }
 
     /** État courant de la retenue {@code feeId} (404 si absente). */

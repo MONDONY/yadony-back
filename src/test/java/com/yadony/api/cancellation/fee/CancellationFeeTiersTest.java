@@ -22,7 +22,7 @@ import org.springframework.core.io.ClassPathResource;
 class CancellationFeeTiersTest {
 
     private static final Instant NOW = Instant.parse("2026-11-21T10:00:00Z");
-    private static final CancellationFeeProperties PROPS = new CancellationFeeProperties(
+    private static final CancellationFeeProperties PROPS = new CancellationFeeProperties(false, null,
             new BigDecimal("30"),
             List.of(
                     new CancellationFeeProperties.Tier(5, new BigDecimal("0")),
@@ -197,7 +197,7 @@ class CancellationFeeTiersTest {
     @Test
     void nextIncrease_followsTheConfiguredScale_andSkipsEqualRates() {
         // Barème autre que celui de production : 7 j gratuits, puis 15 % jusqu'à 2 j, 15 % encore jusqu'à 1 j, 50 %.
-        CancellationFeeProperties custom = new CancellationFeeProperties(new BigDecimal("30"), List.of(
+        CancellationFeeProperties custom = new CancellationFeeProperties(false, null, new BigDecimal("30"), List.of(
                 new CancellationFeeProperties.Tier(7, BigDecimal.ZERO),
                 new CancellationFeeProperties.Tier(2, new BigDecimal("0.15")),
                 new CancellationFeeProperties.Tier(1, new BigDecimal("0.15")),

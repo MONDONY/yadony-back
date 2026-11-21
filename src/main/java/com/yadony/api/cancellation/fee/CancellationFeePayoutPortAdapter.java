@@ -164,16 +164,11 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
     }
 
     private static Optional<PayableCancellationFee> payable(CancellationFeeEntity fee) {
-        PayableCancellationFee.Status status = switch (fee.getStatus()) {
-            case RETAINED -> PayableCancellationFee.Status.RETAINED;
-            case PAYOUT_PENDING -> PayableCancellationFee.Status.PAYOUT_PENDING;
-            default -> null;
-        };
-        if (status == null) {
+        if (fee.getStatus() != CancellationFeeStatus.RETAINED && fee.getStatus() != CancellationFeeStatus.PAYOUT_PENDING) {
             return Optional.empty();
         }
         return Optional.of(new PayableCancellationFee(fee.getId(), fee.getBidId(), fee.getTravelerId(),
-                fee.getTravelerNet(), fee.getCurrency(), status,
+                fee.getTravelerNet(), fee.getCurrency(),
                 fee.getPayoutRearmedAt() == null ? null : fee.getPayoutRearmedAt().toInstant(ZoneOffset.UTC)));
     }
 }

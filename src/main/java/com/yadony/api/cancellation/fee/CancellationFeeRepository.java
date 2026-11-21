@@ -15,8 +15,6 @@ public interface CancellationFeeRepository extends JpaRepository<CancellationFee
 
     Optional<CancellationFeeEntity> findByBidId(UUID bidId);
 
-    List<CancellationFeeEntity> findByStatus(CancellationFeeStatus status);
-
     /** Ligne verrouillée : deux règlements concurrents de la même retenue se sérialisent. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT f FROM CancellationFeeEntity f WHERE f.bidId = :bidId")

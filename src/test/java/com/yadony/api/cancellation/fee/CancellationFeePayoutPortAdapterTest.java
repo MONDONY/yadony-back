@@ -53,15 +53,15 @@ class CancellationFeePayoutPortAdapterTest {
         when(fees.findActiveById(FEE_ID)).thenReturn(Optional.of(fee(CancellationFeeStatus.RETAINED, "26.84")));
 
         assertThat(adapter().findPayable(FEE_ID)).contains(new PayableCancellationFee(FEE_ID, BID_ID, TRAVELER_ID,
-                new BigDecimal("26.84"), "EUR", PayableCancellationFee.Status.RETAINED));
+                new BigDecimal("26.84"), "EUR", null));
     }
 
     @Test
     void findPayable_pendingRow() {
         when(fees.findActiveById(FEE_ID)).thenReturn(Optional.of(fee(CancellationFeeStatus.PAYOUT_PENDING, "26.84")));
 
-        assertThat(adapter().findPayable(FEE_ID)).hasValueSatisfying(
-                f -> assertThat(f.status()).isEqualTo(PayableCancellationFee.Status.PAYOUT_PENDING));
+        assertThat(adapter().findPayable(FEE_ID)).contains(new PayableCancellationFee(FEE_ID, BID_ID, TRAVELER_ID,
+                new BigDecimal("26.84"), "EUR", null));
     }
 
     @ParameterizedTest

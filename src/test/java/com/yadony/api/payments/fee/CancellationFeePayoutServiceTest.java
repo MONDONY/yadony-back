@@ -111,7 +111,7 @@ class CancellationFeePayoutServiceTest {
         traveler.setStripeAccountId("acct_1");
         traveler.setStripeAccountStatus(StripeAccountStatus.ONBOARDING_COMPLETE);
 
-        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("26.84", "EUR", PayableCancellationFee.Status.RETAINED)));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("26.84", "EUR")));
         when(payments.findForBid(BID_ID)).thenReturn(Optional.of(payment));
         when(users.findById(TRAVELER_ID)).thenReturn(Optional.of(traveler));
         when(holdPolicy.statusOf(TRAVELER_ID)).thenReturn(PayoutHoldStatus.NONE);
@@ -272,7 +272,7 @@ class CancellationFeePayoutServiceTest {
 
     @Test
     void travelerNetZero_marksPaidOutWithoutTransfer() {
-        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("0.00", "EUR", PayableCancellationFee.Status.RETAINED)));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("0.00", "EUR")));
 
         assertThat(service.payOut(FEE_ID)).isTrue();
 
@@ -284,7 +284,7 @@ class CancellationFeePayoutServiceTest {
 
     @Test
     void negativeNet_staysPendingWithoutTransfer() {
-        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("-1.00", "EUR", PayableCancellationFee.Status.RETAINED)));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("-1.00", "EUR")));
 
         assertThat(service.payOut(FEE_ID)).isFalse();
 
@@ -303,7 +303,7 @@ class CancellationFeePayoutServiceTest {
         verify(port).markPayoutPending(eq(FEE_ID), startsWith("STRIPE_ERROR"));
 
         when(port.findPayable(FEE_ID)).thenReturn(
-                Optional.of(fee("26.84", "EUR", PayableCancellationFee.Status.PAYOUT_PENDING)));
+                Optional.of(fee("26.84", "EUR")));
         assertThat(service.payOut(FEE_ID)).isTrue();
 
         assertThat(options.getAllValues()).extracting(RequestOptions::getIdempotencyKey).containsExactly(KEY, KEY);
@@ -413,7 +413,7 @@ class CancellationFeePayoutServiceTest {
         payment.setRail(PaymentRail.PAWAPAY);
         payment.setCurrency("XOF");
         payment.setRefundedAmount(new BigDecimal("45922"));
-        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("17323", "XOF", PayableCancellationFee.Status.RETAINED)));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("17323", "XOF")));
         PawapayOperationEntity refund = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND,
                 PAYMENT_ID, null, new BigDecimal("45922"), "XOF", "ORANGE_SEN", "SN", "221771234567");
         refund.setStatus(PawapayOperationStatus.COMPLETED);
@@ -459,7 +459,7 @@ class CancellationFeePayoutServiceTest {
     @Test
     void xofFee_transferredInWholeFrancs() {
         payment.setCurrency("XOF");
-        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("17540", "XOF", PayableCancellationFee.Status.RETAINED)));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("17540", "XOF")));
         ArgumentCaptor<TransferCreateParams> params = ArgumentCaptor.forClass(TransferCreateParams.class);
         transfers.when(() -> Transfer.create(params.capture(), any(RequestOptions.class))).thenReturn(transfer("tr_1"));
 
@@ -471,7 +471,7 @@ class CancellationFeePayoutServiceTest {
 
     @Test
     void unsupportedCurrency_staysPending() {
-        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("10.00", "JPY", PayableCancellationFee.Status.RETAINED)));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("10.00", "JPY")));
 
         assertThat(service.payOut(FEE_ID)).isFalse();
 
@@ -548,8 +548,8 @@ class CancellationFeePayoutServiceTest {
         transfers.when(() -> Transfer.list(any(TransferListParams.class))).thenReturn(collection());
     }
 
-    private static PayableCancellationFee fee(String net, String currency, PayableCancellationFee.Status status) {
-        return new PayableCancellationFee(FEE_ID, BID_ID, TRAVELER_ID, new BigDecimal(net), currency, status);
+    private static PayableCancellationFee fee(String net, String currency) {
+        return new PayableCancellationFee(FEE_ID, BID_ID, TRAVELER_ID, new BigDecimal(net), currency, null);
     }
 
     /** Objets Stripe réels : un mock créé pendant un stub statique laisserait ce stub inachevé. */

@@ -8,5 +8,5 @@ import java.util.UUID;
  * ({@code payout_rearmed_at}) dans la transaction du geste, le paquet {@code payments} tente aussitôt le versement
  * après le commit, par le chemin habituel et ses gardes.
  */
-public record CancellationFeePayoutRetryRequestedEvent(UUID feeId, UUID adminId) {
+public record CancellationFeePayoutRetryRequestedEvent(UUID feeId) {
 }

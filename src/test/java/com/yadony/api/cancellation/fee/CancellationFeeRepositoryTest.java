@@ -8,7 +8,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,16 +62,5 @@ class CancellationFeeRepositoryTest {
 
         assertThatThrownBy(() -> repository.saveAndFlush(fee(bidId, CancellationFeeStatus.RETAINED)))
                 .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void findByStatus_neRetourneQueLesLignesDuStatut() {
-        repository.saveAndFlush(fee(UUID.randomUUID(), CancellationFeeStatus.PAYOUT_PENDING));
-        repository.saveAndFlush(fee(UUID.randomUUID(), CancellationFeeStatus.PAID_OUT));
-
-        List<CancellationFeeEntity> pending = repository.findByStatus(CancellationFeeStatus.PAYOUT_PENDING);
-
-        assertThat(pending).hasSize(1);
-        assertThat(pending.get(0).getStatus()).isEqualTo(CancellationFeeStatus.PAYOUT_PENDING);
     }
 }

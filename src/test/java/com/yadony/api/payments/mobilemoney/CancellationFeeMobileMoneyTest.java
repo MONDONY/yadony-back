@@ -700,7 +700,7 @@ class CancellationFeeMobileMoneyTest {
         void rearmedByAnAdmin_onlyLaterFailuresCount() {
             Instant rearmed = Instant.parse("2026-11-21T10:00:00Z");
             when(port.findPayable(feeId)).thenReturn(Optional.of(new PayableCancellationFee(feeId, bidId, travelerId,
-                    new BigDecimal("17323"), "XOF", PayableCancellationFee.Status.PAYOUT_PENDING, rearmed)));
+                    new BigDecimal("17323"), "XOF", rearmed)));
             when(operations.countFailedForCancellationFee(feeId, null)).thenReturn(5L);
             when(operations.countFailedForCancellationFee(feeId, rearmed)).thenReturn(0L);
 
@@ -797,8 +797,7 @@ class CancellationFeeMobileMoneyTest {
         }
 
         private PayableCancellationFee fee(String net) {
-            return new PayableCancellationFee(feeId, bidId, travelerId, new BigDecimal(net), "XOF",
-                    PayableCancellationFee.Status.RETAINED);
+            return new PayableCancellationFee(feeId, bidId, travelerId, new BigDecimal(net), "XOF", null);
         }
 
         private PawapayOperationEntity paymentOperation(PawapayOperationKind kind, PawapayOperationStatus status,
