@@ -46,6 +46,18 @@ class CancellationFeeTiersTest {
         assertThat(rate(tripAt(NOW.plusSeconds(30L * 24 * 3600)))).isEqualByComparingTo("0");
     }
 
+    /** Temps restant comparé exactement au seuil : ni arrondi à l'heure, ni à la minute. */
+    @Test
+    void rate_subHourBoundaries_areExact() {
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(5)).plus(Duration.ofMinutes(30))))).isEqualByComparingTo("0");
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(5)).plusSeconds(1)))).isEqualByComparingTo("0");
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(5)).minusSeconds(1)))).isEqualByComparingTo("0.10");
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(3)).minusSeconds(1)))).isEqualByComparingTo("0.20");
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(3)).plus(Duration.ofMinutes(30))))).isEqualByComparingTo("0.10");
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(1)).minusSeconds(1)))).isEqualByComparingTo("0.30");
+        assertThat(rate(tripAt(NOW.plus(Duration.ofDays(1)).plus(Duration.ofMinutes(30))))).isEqualByComparingTo("0.20");
+    }
+
     @Test
     void rate_exactly5Days_is10Percent() {
         assertThat(rate(tripAt(NOW.plusSeconds(120 * 3600)))).isEqualByComparingTo("0.10");
@@ -88,8 +100,20 @@ class CancellationFeeTiersTest {
         trip.setDepartureDate(LocalDate.of(2026, 11, 27)); // 134 h
         assertThat(rate(trip)).isEqualByComparingTo("0");
 
+        // 26/11 00:00 UTC vu le 21/11 à 00:00 : 5 jours tout juste, 10 % ; une seconde plus tôt, plus de 5 jours.
+        assertThat(CancellationFeeTiers.rateFor(trip(LocalDate.of(2026, 11, 26)), Instant.parse("2026-11-21T00:00:00Z"),
+                PROPS)).isEqualByComparingTo("0.10");
+        assertThat(CancellationFeeTiers.rateFor(trip(LocalDate.of(2026, 11, 26)), Instant.parse("2026-11-20T23:59:59Z"),
+                PROPS)).isEqualByComparingTo("0");
+
         trip.setDepartureDate(LocalDate.of(2026, 11, 21)); // 00:00 UTC, déjà passé
         assertThat(rate(trip)).isEqualByComparingTo("0.30");
+    }
+
+    private static AnnouncementEntity trip(LocalDate departureDate) {
+        AnnouncementEntity trip = new AnnouncementEntity();
+        trip.setDepartureDate(departureDate);
+        return trip;
     }
 
     @Test
@@ -113,19 +137,38 @@ class CancellationFeeTiersTest {
 
     @Test
     void nextIncrease_freeWindow_isTheLastInstantAtZero() {
-        // Plus de 5 jours : le palier gratuit exige strictement plus de 120 h entières, il tient jusqu'à J-121 h inclus.
-        Instant boundary = DEPARTURE.minus(Duration.ofHours(121));
+        // Plus de 5 jours : le palier gratuit exige strictement plus de 5 jours, il tient jusqu'à la dernière seconde
+        // avant J-5 (inclus). À 5 jours tout juste, 10 %.
+        Instant boundary = DEPARTURE.minus(Duration.ofDays(5)).minusSeconds(1);
 
         assertThat(nextAt(NOW)).isEqualTo(boundary);
         assertThat(nextAt(boundary)).isEqualTo(boundary);
         assertThat(rateAt(boundary)).isEqualByComparingTo("0");
         assertThat(rateAt(boundary.plusSeconds(1))).isEqualByComparingTo("0.10");
+        // Plus d'une heure d'écart avec l'ancienne mesure en heures entières : 5 jours et 30 minutes restent gratuits.
+        assertThat(rateAt(DEPARTURE.minus(Duration.ofDays(5)).minus(Duration.ofMinutes(30))))
+                .isEqualByComparingTo("0");
+    }
+
+    /** L'aperçu montre le taux et sa prochaine hausse : le règlement à cet instant applique le même taux, pas après. */
+    @Test
+    void nextIncrease_isAlwaysTheLastInstantOfTheCurrentRate() {
+        for (Instant now = DEPARTURE.minus(Duration.ofDays(7)); now.isBefore(DEPARTURE);
+             now = now.plus(Duration.ofMinutes(17))) {
+            Instant next = nextAt(now);
+            if (next == null) {
+                assertThat(rateAt(now)).isEqualByComparingTo("0.30");
+                continue;
+            }
+            assertThat(rateAt(next)).as("taux à la hausse annoncée depuis %s", now).isEqualByComparingTo(rateAt(now));
+            assertThat(rateAt(next.plusSeconds(1))).as("taux juste après depuis %s", now).isGreaterThan(rateAt(now));
+        }
     }
 
     @Test
     void nextIncrease_tenPercentWindow_endsAtThreeDays() {
         Instant boundary = DEPARTURE.minus(Duration.ofHours(72));
-        Instant justInTenPercent = DEPARTURE.minus(Duration.ofHours(121)).plusSeconds(1);
+        Instant justInTenPercent = DEPARTURE.minus(Duration.ofDays(5));
 
         assertThat(nextAt(justInTenPercent)).isEqualTo(boundary);
         assertThat(nextAt(boundary)).isEqualTo(boundary);
@@ -162,7 +205,7 @@ class CancellationFeeTiersTest {
         AnnouncementEntity trip = tripAt(DEPARTURE);
 
         assertThat(CancellationFeeTiers.nextIncreaseAt(trip, NOW, custom))
-                .isEqualTo(DEPARTURE.minus(Duration.ofHours(7 * 24 + 1)));
+                .isEqualTo(DEPARTURE.minus(Duration.ofDays(7)).minusSeconds(1));
         // 15 % puis encore 15 % : la prochaine HAUSSE est le passage à 50 %, à J-1.
         assertThat(CancellationFeeTiers.nextIncreaseAt(trip, DEPARTURE.minus(Duration.ofHours(100)), custom))
                 .isEqualTo(DEPARTURE.minus(Duration.ofHours(24)));

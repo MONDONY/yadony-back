@@ -30,11 +30,11 @@ import org.springframework.boot.context.properties.bind.ConstructorBinding;
  * @param capEur        plafond du frais par annulation, en euros (30 par défaut), jamais négatif.
  * @param tiers         paliers, lus du plus lointain au plus proche du départ (triés ici par
  *                      {@code minDaysBefore} décroissant, chaque seuil unique et positif, chaque taux dans [0, 1]). Le
- *                      temps restant est mesuré en heures entières avant le départ ; un palier s'applique quand il reste
- *                      <b>au moins</b> {@code minDaysBefore * 24} heures, sauf le palier le plus lointain (fenêtre
- *                      gratuite) qui exige <b>strictement plus</b> : avec {@code 5 -> 0, 3 -> 0.10, 1 -> 0.20, 0 -> 0.30},
- *                      plus de 5 jours = 0 %, de 3 à 5 jours inclus = 10 %, de 1 à moins de 3 jours = 20 %, moins de
- *                      24 h ou après le départ = 30 %.
+ *                      temps restant avant le départ est comparé exactement au seuil (sans arrondi à l'heure) ; un palier
+ *                      s'applique quand il reste <b>au moins</b> {@code minDaysBefore} jours, sauf le palier le plus
+ *                      lointain (fenêtre gratuite) qui exige <b>strictement plus</b> : avec
+ *                      {@code 5 -> 0, 3 -> 0.10, 1 -> 0.20, 0 -> 0.30}, plus de 5 jours = 0 %, de 3 à 5 jours inclus
+ *                      = 10 %, de 1 jour inclus à moins de 3 jours = 20 %, moins d'un jour ou après le départ = 30 %.
  */
 @ConfigurationProperties(prefix = "yadony.cancellation-fee")
 public record CancellationFeeProperties(boolean enabled, Instant effectiveFrom, BigDecimal capEur, List<Tier> tiers) {

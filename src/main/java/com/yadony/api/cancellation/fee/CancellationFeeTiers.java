@@ -24,9 +24,9 @@ public final class CancellationFeeTiers {
     /**
      * Instant de la prochaine HAUSSE du taux, lu dans le barème (jamais en dur) : le taux actuel vaut jusqu'à cet instant
      * INCLUS, une annulation après lui coûte le palier plus cher suivant. Un palier suivant au même taux (ou plus bas) est
-     * sauté. {@code null} au palier le plus cher (aucune hausse à venir). Même mesure en heures entières que
-     * {@link #rateFor} : la fenêtre gratuite ({@code 5 -> 0}, strictement plus de 120 h) tient jusqu'à J-121 h, les
-     * autres paliers jusqu'à J-{@code minDaysBefore * 24} h.
+     * sauté. {@code null} au palier le plus cher (aucune hausse à venir). Même mesure exacte que {@link #rateFor} : un
+     * palier « au moins N jours » tient jusqu'au départ moins N jours tout juste ; la fenêtre gratuite ({@code 5 -> 0},
+     * strictement plus de 5 jours) jusqu'à la dernière seconde avant le départ moins 5 jours.
      */
     public static Instant nextIncreaseAt(AnnouncementEntity trip, Instant now, CancellationFeeProperties props) {
         List<CancellationFeeProperties.Tier> tiers = props.tiers();
@@ -41,12 +41,16 @@ public final class CancellationFeeTiers {
         return null;
     }
 
-    /** Palier applicable : le premier, du plus lointain au plus proche, dont le seuil est atteint ; sinon le dernier. */
+    /**
+     * Palier applicable : le premier, du plus lointain au plus proche, dont le seuil est atteint ; sinon le dernier. Temps
+     * restant comparé EXACTEMENT au seuil, sans arrondi à l'heure : à 5 jours et 30 minutes du départ, il reste plus de
+     * 5 jours (fenêtre gratuite) ; à 3 jours moins une seconde, moins de 3 jours.
+     */
     private static int tierIndex(AnnouncementEntity trip, Instant now, List<CancellationFeeProperties.Tier> tiers) {
-        long hours = Duration.between(now, departureInstant(trip)).toHours();
+        Duration remaining = Duration.between(now, departureInstant(trip));
         for (int i = 0; i < tiers.size(); i++) {
-            long thresholdHours = tiers.get(i).minDaysBefore() * 24L;
-            boolean applies = i == 0 ? hours > thresholdHours : hours >= thresholdHours;
+            int comparison = remaining.compareTo(Duration.ofDays(tiers.get(i).minDaysBefore()));
+            boolean applies = i == 0 ? comparison > 0 : comparison >= 0;
             if (applies) {
                 return i;
             }
@@ -55,12 +59,12 @@ public final class CancellationFeeTiers {
     }
 
     /**
-     * Dernier instant (inclus) où le palier {@code i} s'applique : il reste exactement son seuil en heures entières, une
-     * heure de plus pour le palier le plus lointain, qui exige strictement plus que son seuil.
+     * Dernier instant (inclus) où le palier {@code i} s'applique : il reste exactement son seuil ; pour le palier le plus
+     * lointain, qui exige strictement plus que son seuil, la dernière seconde avant.
      */
     private static Instant lastInstantOf(Instant departure, List<CancellationFeeProperties.Tier> tiers, int i) {
-        long hours = tiers.get(i).minDaysBefore() * 24L + (i == 0 ? 1 : 0);
-        return departure.minus(Duration.ofHours(hours));
+        Instant threshold = departure.minus(Duration.ofDays(tiers.get(i).minDaysBefore()));
+        return i == 0 ? threshold.minusSeconds(1) : threshold;
     }
 
     private static Instant departureInstant(AnnouncementEntity trip) {

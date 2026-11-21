@@ -166,7 +166,7 @@ class CancellationFeePreviewServiceTest {
         assertThat(preview.rate()).isEqualByComparingTo("0");
         assertThat(preview.fee()).isEqualByComparingTo("0");
         assertThat(preview.refundAmount()).isEqualByComparingTo("100.00");
-        assertThat(preview.nextTierAt()).isEqualTo(NOW.plus(Duration.ofDays(9)).minus(Duration.ofHours(121)));
+        assertThat(preview.nextTierAt()).isEqualTo(NOW.plus(Duration.ofDays(9)).minus(Duration.ofDays(5)).minusSeconds(1));
     }
 
     @Test

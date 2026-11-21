@@ -139,7 +139,8 @@ class CancellationFeeEligibilityTest {
 
         assertThat(assessed).isPresent();
         assertThat(assessed.get().rate()).isEqualByComparingTo("0");
-        assertThat(assessed.get().nextIncreaseAt()).isEqualTo(NOW.plus(Duration.ofDays(9)).minus(Duration.ofHours(121)));
+        assertThat(assessed.get().nextIncreaseAt())
+                .isEqualTo(NOW.plus(Duration.ofDays(9)).minus(Duration.ofDays(5)).minusSeconds(1));
     }
 
     // --- report du trajet en attente de la réponse de l'expéditeur ---
