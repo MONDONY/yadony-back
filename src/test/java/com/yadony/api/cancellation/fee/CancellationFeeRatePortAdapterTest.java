@@ -11,6 +11,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
+import com.yadony.api.cancellation.events.SenderCancellationFeeRetainedEvent;
 
 import java.math.BigDecimal;
 import java.util.Map;
@@ -32,6 +35,7 @@ import static org.mockito.Mockito.when;
 class CancellationFeeRatePortAdapterTest {
 
     private static final UUID BID_ID = UUID.randomUUID();
+    private static final UUID FEE_ID = UUID.randomUUID();
     private static final CancellationFeeBreakdown BREAKDOWN = new CancellationFeeBreakdown(
             new BigDecimal("30.00"), new BigDecimal("1.75"), new BigDecimal("1.41"),
             new BigDecimal("26.84"), new BigDecimal("70.00"));
@@ -39,6 +43,7 @@ class CancellationFeeRatePortAdapterTest {
     @Mock CancellationFeeRepository fees;
     @Mock AuditService auditService;
     @Mock EntityManager entityManager;
+    @Mock ApplicationEventPublisher events;
     @InjectMocks CancellationFeeRatePortAdapter adapter;
 
     @Test
@@ -147,6 +152,57 @@ class CancellationFeeRatePortAdapterTest {
     }
 
     @Test
+    void markRetained_publishesTheSenderNotice_withTheRetainedAndRefundedAmounts() {
+        CancellationFeeEntity due = fee(CancellationFeeStatus.DUE);
+        due.setReason(CancellationFeeReason.SENDER_NO_SHOW);
+        ReflectionTestUtils.setField(due, "id", FEE_ID);
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(due));
+
+        adapter.markRetained(BID_ID, BREAKDOWN, "EUR");
+
+        ArgumentCaptor<SenderCancellationFeeRetainedEvent> event =
+                ArgumentCaptor.forClass(SenderCancellationFeeRetainedEvent.class);
+        verify(events).publishEvent(event.capture());
+        assertThat(event.getValue().feeId()).isEqualTo(FEE_ID);
+        assertThat(event.getValue().bidId()).isEqualTo(BID_ID);
+        assertThat(event.getValue().senderId()).isEqualTo(due.getSenderId());
+        assertThat(event.getValue().reason()).isEqualTo(CancellationFeeReason.SENDER_NO_SHOW);
+        assertThat(event.getValue().retainedAmount()).isEqualByComparingTo("30.00");
+        assertThat(event.getValue().refundedAmount()).isEqualByComparingTo("70.00");
+        assertThat(event.getValue().currency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void markRetained_twice_publishesTheSenderNoticeOnce() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.DUE);
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
+
+        adapter.markRetained(BID_ID, BREAKDOWN, "EUR");
+        adapter.markRetained(BID_ID, BREAKDOWN, "EUR");
+
+        verify(events, times(1)).publishEvent(any(SenderCancellationFeeRetainedEvent.class));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = CancellationFeeStatus.class, names = "DUE", mode = EnumSource.Mode.EXCLUDE)
+    void markRetained_notDue_noSenderNotice(CancellationFeeStatus status) {
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(fee(status)));
+
+        adapter.markRetained(BID_ID, BREAKDOWN, "EUR");
+
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void markNotApplicable_neverNotifies() {
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(fee(CancellationFeeStatus.DUE)));
+
+        adapter.markNotApplicable(BID_ID, "ADMIN_FULL_REFUND");
+
+        verifyNoInteractions(events);
+    }
+
+    @Test
     void markRetained_twice_isIdempotent() {
         CancellationFeeEntity row = fee(CancellationFeeStatus.DUE);
         when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
@@ -187,7 +243,7 @@ class CancellationFeeRatePortAdapterTest {
     @Test
     void capEur_isTheConfiguredCap() {
         CancellationFeeRatePortAdapter configured = new CancellationFeeRatePortAdapter(fees, auditService,
-                new CancellationFeeProperties(new BigDecimal("25"), null), entityManager);
+                new CancellationFeeProperties(new BigDecimal("25"), null), entityManager, events);
 
         assertThat(configured.capEur()).isEqualByComparingTo("25");
     }

@@ -1,8 +1,10 @@
 package com.yadony.api.cancellation.fee;
 
+import com.yadony.api.cancellation.events.CancellationFeePaidOutEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.fee.CancellationFeePayoutPort;
 import com.yadony.api.payments.fee.PayableCancellationFee;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,10 +34,13 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
 
     private final CancellationFeeRepository fees;
     private final AuditService auditService;
+    private final ApplicationEventPublisher events;
 
-    public CancellationFeePayoutPortAdapter(CancellationFeeRepository fees, AuditService auditService) {
+    public CancellationFeePayoutPortAdapter(CancellationFeeRepository fees, AuditService auditService,
+                                            ApplicationEventPublisher events) {
         this.fees = fees;
         this.auditService = auditService;
+        this.events = events;
     }
 
     @Override
@@ -60,7 +65,8 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
     /**
      * Sous le verrou de la ligne : un second appel (rejeu, essai concurrent) trouve la ligne déjà versée et ne
      * change rien, pas même la référence du premier versement. Refuse de marquer « versé » sans référence une
-     * ligne qui porte un net à verser.
+     * ligne qui porte un net à verser. Au passage, publie {@link CancellationFeePaidOutEvent}, écouté après commit
+     * pour prévenir le voyageur.
      */
     @Override
     @Transactional
@@ -92,6 +98,10 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
             payload.put("note", NOTE_NOTHING_TO_TRANSFER);
         }
         auditService.log("BID", fee.getBidId(), AUDIT_FEE_PAID_OUT, null, payload);
+        // Au seul passage vers PAID_OUT : un rejeu (webhook, issue pawaPay, planificateur) trouve la ligne versée plus
+        // haut et ne prévient jamais le voyageur deux fois.
+        events.publishEvent(new CancellationFeePaidOutEvent(fee.getId(), fee.getBidId(), fee.getTravelerId(),
+                fee.getTravelerNet(), fee.getCurrency()));
         return true;
     }
 

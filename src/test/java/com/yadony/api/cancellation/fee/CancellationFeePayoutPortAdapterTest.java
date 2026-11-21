@@ -9,6 +9,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import com.yadony.api.cancellation.events.CancellationFeePaidOutEvent;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -25,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -39,9 +42,10 @@ class CancellationFeePayoutPortAdapterTest {
 
     @Mock CancellationFeeRepository fees;
     @Mock AuditService auditService;
+    @Mock ApplicationEventPublisher events;
 
     private CancellationFeePayoutPortAdapter adapter() {
-        return new CancellationFeePayoutPortAdapter(fees, auditService);
+        return new CancellationFeePayoutPortAdapter(fees, auditService, events);
     }
 
     @Test
@@ -117,6 +121,35 @@ class CancellationFeePayoutPortAdapterTest {
                 .containsEntry("travelerNet", "26.84")
                 .containsEntry("currency", "EUR")
                 .doesNotContainKey("note");
+    }
+
+    @Test
+    void markPaidOut_publishesTheTravelerNotice_once() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.RETAINED, "26.84");
+        when(fees.findByIdForUpdate(FEE_ID)).thenReturn(Optional.of(row));
+
+        adapter().markPaidOut(FEE_ID, "tr_1");
+        adapter().markPaidOut(FEE_ID, "tr_1"); // rejeu : déjà versé, rien de plus
+
+        ArgumentCaptor<CancellationFeePaidOutEvent> event = ArgumentCaptor.forClass(CancellationFeePaidOutEvent.class);
+        verify(events, times(1)).publishEvent(event.capture());
+        assertThat(event.getValue().feeId()).isEqualTo(FEE_ID);
+        assertThat(event.getValue().bidId()).isEqualTo(BID_ID);
+        assertThat(event.getValue().travelerId()).isEqualTo(TRAVELER_ID);
+        assertThat(event.getValue().travelerNet()).isEqualByComparingTo("26.84");
+        assertThat(event.getValue().currency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void markPaidOut_notPayableOrRefused_noTravelerNotice() {
+        CancellationFeeEntity due = fee(CancellationFeeStatus.DUE, "0.00");
+        CancellationFeeEntity owed = fee(CancellationFeeStatus.RETAINED, "26.84");
+        when(fees.findByIdForUpdate(FEE_ID)).thenReturn(Optional.of(due), Optional.of(owed));
+
+        adapter().markPaidOut(FEE_ID, "tr_1");
+        assertThatThrownBy(() -> adapter().markPaidOut(FEE_ID, null)).isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(events);
     }
 
     @Test

@@ -243,6 +243,18 @@ class NotificationTextsTest {
         for (String code : TOPUP_FAILURE_CODES) {
             map.put("walletTopupFailed " + code, NotificationTexts.walletTopupFailed(m, pireRecharge, code));
         }
+        // Frais d'annulation : brut plafonné à 30 € (19 678 F CFA au plus), remboursé au pire cas des montants.
+        String pireFrais = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("19678"), "XOF");
+        String pireRendu = com.yadony.api.payments.wallet.WalletAmountText.format(new BigDecimal("999999"), "XOF");
+        map.put("cancellationFeeRetained", NotificationTexts.cancellationFeeRetained(m, false, pireFrais, pireRendu));
+        map.put("cancellationFeeRetained absence", NotificationTexts.cancellationFeeRetained(m, true, pireFrais,
+                pireRendu));
+        map.put("cancellationFeeRetained cad", NotificationTexts.cancellationFeeRetained(m, false, pireMontant,
+                pireMontant));
+        map.put("cancellationFeeRetained absence cad", NotificationTexts.cancellationFeeRetained(m, true, pireMontant,
+                pireMontant));
+        map.put("cancellationFeePaidOut", NotificationTexts.cancellationFeePaidOut(m, pireFrais));
+        map.put("cancellationFeePaidOut cad", NotificationTexts.cancellationFeePaidOut(m, pireMontant));
         map.put("bankPayoutPaid montant", NotificationTexts.bankPayoutPaid(m, pireMontant));
         map.put("bankPayoutPaid sans-montant", NotificationTexts.bankPayoutPaid(m, ""));
         map.put("bankPayoutFailed", NotificationTexts.bankPayoutFailed(m));

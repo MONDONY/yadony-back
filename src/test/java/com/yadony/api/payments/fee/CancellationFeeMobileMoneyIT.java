@@ -72,6 +72,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.when;
 
 /**
@@ -141,18 +146,23 @@ class CancellationFeeMobileMoneyIT {
     @Autowired com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder recorder;
 
     private UUID travelerId;
+    private UUID senderId;
     private UUID bidId;
     private UUID paymentId;
     private UUID feeId;
     private UUID depositId;
 
+    @Autowired CancellationFeePayoutService payoutService;
+
     @BeforeEach
     void setUp() {
+        when(notificationDispatcher.messagesFor(any())).thenReturn(com.yadony.api.common.i18n.TestMessages.fr());
         when(client.initiateRefund(any())).thenReturn(PawapayInitiationResult.accepted());
         when(client.initiatePayout(any())).thenReturn(PawapayInitiationResult.accepted());
         UserEntity traveler = persistUser(Role.TRAVELER);
         travelerId = traveler.getId();
         UserEntity sender = persistUser(Role.SENDER);
+        senderId = sender.getId();
         bidId = persistCancelledBid(persistTrip(traveler), sender).getId();
         paymentId = persistEscrow();
         depositId = persistCompletedDeposit();
@@ -233,6 +243,19 @@ class CancellationFeeMobileMoneyIT {
         Thread.sleep(300);
         assertThat(paymentAudits("MM_PAYOUT_COMPLETED")).isZero();
         assertThat(openAlerts()).isZero();
+
+        // Notifications : l'expéditeur a appris la retenue au règlement, le voyageur son dédommagement au versement.
+        verify(notificationDispatcher, timeout(10_000)).notifyUser(eq(senderId), eq("Frais d'annulation"),
+                eq("Frais de 19\u00A0678\u00A0F CFA retenus, 45\u00A0922\u00A0F CFA vous sont remboursés."), anyMap());
+        verify(notificationDispatcher, timeout(10_000)).notifyUser(eq(travelerId), eq("Dédommagement reçu"),
+                eq("16\u00A0662\u00A0F CFA vous sont versés en dédommagement de l'annulation."), anyMap());
+        // Rejeu de l'issue du versement et nouveau passage : déjà versé, aucune seconde notification.
+        payoutService.mobileMoneyPayoutCompleted(feeId, payoutId);
+        tx.executeWithoutResult(status -> events.publishEvent(new CancellationFeeRetainedEvent(bidId)));
+        assertThat(scheduler.run()).isZero();
+        verify(notificationDispatcher, after(1_000).times(1)).notifyUser(eq(travelerId), anyString(), anyString(),
+                anyMap());
+        verify(notificationDispatcher, times(1)).notifyUser(eq(senderId), anyString(), anyString(), anyMap());
     }
 
     @Test

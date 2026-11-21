@@ -77,6 +77,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.timeout;
 
 /**
  * Retenue d'annulation réglée au remboursement, sur la vraie pile (PostgreSQL, Flyway jusqu'à V390,
@@ -434,6 +439,30 @@ class RefundProcessorCancellationFeeIT {
         assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class, paymentId))
                 .isNull();
+    }
+
+    @Test
+    @DisplayName("absence confirmée de l'expéditeur : retenue réglée, il est prévenu une fois des deux montants")
+    void noShowFee_retained_senderNotifiedOnceWithBothAmounts() {
+        jdbc.update("UPDATE cancellation_fees SET reason = 'SENDER_NO_SHOW' WHERE bid_id = ?", bidId);
+        UUID senderId = feeRepository.findByBidId(bidId).orElseThrow().getSenderId();
+        when(notificationDispatcher.messagesFor(any())).thenReturn(com.yadony.api.common.i18n.TestMessages.fr());
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+        }
+
+        verify(notificationDispatcher, timeout(10_000)).notifyUser(eq(senderId), eq("Frais d'annulation"),
+                eq("Absence confirmée : 30,00\u00A0€ retenus, 70,00\u00A0€ remboursés."),
+                eq(Map.of("type", "CANCELLATION_FEE_RETAINED", "bidId", bidId.toString(), "currency", "EUR")));
+        // Rejeu du remboursement : claim perdu, rien réglé de nouveau, aucune seconde notification.
+        assertThat(refund()).isFalse();
+        verify(notificationDispatcher, after(1_000).times(1)).notifyUser(eq(senderId), anyString(), anyString(),
+                anyMap());
     }
 
     @Test

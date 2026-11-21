@@ -72,6 +72,11 @@ import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyMap;
 
 /**
  * Versement du dédommagement d'annulation au voyageur sur la vraie pile : remboursement partiel réel
@@ -131,6 +136,7 @@ class CancellationFeePayoutIT {
 
     @BeforeEach
     void setUp() {
+        when(notificationDispatcher.messagesFor(any())).thenReturn(com.yadony.api.common.i18n.TestMessages.fr());
         UserEntity traveler = persistUser(Role.TRAVELER);
         travelerId = traveler.getId();
         UserEntity sender = persistUser(Role.SENDER);
@@ -187,6 +193,12 @@ class CancellationFeePayoutIT {
         assertThat(audits("CANCELLATION_FEE_PAID_OUT")).isEqualTo(1);
         assertThat(audits("CANCELLATION_FEE_PAYOUT_PENDING")).isZero();
         assertThat(openAlerts()).isZero();
+        // Le voyageur est prévenu une seule fois, malgré le rejeu de l'événement et le passage du planificateur.
+        verify(notificationDispatcher, timeout(10_000)).notifyUser(eq(travelerId), eq("Dédommagement reçu"),
+                eq("26,84\u00A0€ vous sont versés en dédommagement de l'annulation."),
+                eq(java.util.Map.of("type", "CANCELLATION_FEE_PAID_OUT", "bidId", bidId.toString(), "currency", "EUR")));
+        verify(notificationDispatcher, after(1_000).times(1)).notifyUser(eq(travelerId), anyString(), anyString(),
+                anyMap());
     }
 
     @Test

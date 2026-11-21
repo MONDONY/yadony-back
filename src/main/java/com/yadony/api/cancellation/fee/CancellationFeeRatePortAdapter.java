@@ -1,9 +1,11 @@
 package com.yadony.api.cancellation.fee;
 
+import com.yadony.api.cancellation.events.SenderCancellationFeeRetainedEvent;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.payments.fee.CancellationFeeBreakdown;
 import com.yadony.api.payments.fee.CancellationFeeRatePort;
 import jakarta.persistence.EntityManager;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,13 +32,16 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
     private final AuditService auditService;
     private final CancellationFeeProperties properties;
     private final EntityManager entityManager;
+    private final ApplicationEventPublisher events;
 
     public CancellationFeeRatePortAdapter(CancellationFeeRepository fees, AuditService auditService,
-                                          CancellationFeeProperties properties, EntityManager entityManager) {
+                                          CancellationFeeProperties properties, EntityManager entityManager,
+                                          ApplicationEventPublisher events) {
         this.fees = fees;
         this.auditService = auditService;
         this.properties = properties;
         this.entityManager = entityManager;
+        this.events = events;
     }
 
     @Override
@@ -102,7 +107,9 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
 
     /**
      * Sous le verrou de la ligne : deux règlements concurrents du même colis se sérialisent, le second
-     * trouve la ligne déjà {@code RETAINED} et ne fait rien (ni écriture, ni second audit).
+     * trouve la ligne déjà {@code RETAINED} et ne fait rien (ni écriture, ni second audit, ni seconde notification).
+     * Au passage, publie {@link SenderCancellationFeeRetainedEvent} (montant retenu et montant rendu), écouté après
+     * commit pour prévenir l'expéditeur.
      */
     @Override
     @Transactional
@@ -127,6 +134,9 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
                             "travelerNet", breakdown.travelerNet().toPlainString(),
                             "senderRefund", breakdown.senderRefund().toPlainString(),
                             "currency", currency));
+                    // Au seul passage DUE -> RETAINED : un rejeu ne prévient jamais l'expéditeur deux fois.
+                    events.publishEvent(new SenderCancellationFeeRetainedEvent(fee.getId(), bidId, fee.getSenderId(),
+                            fee.getReason(), breakdown.grossFee(), breakdown.senderRefund(), currency));
                 });
     }
 }

@@ -66,6 +66,8 @@ public final class NotificationDeeplink {
             case "BID_SUPPLEMENT_PAID", "BID_SUPPLEMENT_DECLINED", "BID_SUPPLEMENT_EXPIRED",
                  "BID_SUPPLEMENT_WITHDRAWN", "BID_SUPPLEMENT_REFUNDED", "BID_SUPPLEMENT_PAID_OUT" ->
                     bidId.map(id -> "bids/" + id);
+            // Frais d'annulation (retenue à l'expéditeur, dédommagement du voyageur) : le colis annulé.
+            case "CANCELLATION_FEE_RETAINED", "CANCELLATION_FEE_PAID_OUT" -> bidId.map(id -> "bids/" + id);
 
             // Modification d'un colis accepté : la demande, son rappel et l'acceptation ouvrent le colis sur
             // l'encart de réponse ou de paiement ; les issues, sur le colis. Une app antérieure qui ignore la
