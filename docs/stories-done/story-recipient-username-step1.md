@@ -49,7 +49,7 @@ Un utilisateur peut modifier son identifiant Yadony (`users.username`), le retro
 ### Entités JPA impliquées
 - `UserEntity` → table `users` — `username` (unique insensible à la casse), `username_changed_at`.
 - `ReleasedUsernameEntity` → table `released_usernames` — `username` (PK), `released_at`, `former_user_id`.
-- `RecipientInvitation` (existante) — canal `USERNAME` ajouté à `InvitationChannel`.
+- `RecipientInvitationEntity` (existante) — canal `USERNAME` ajouté à `InvitationChannel`.
 
 ### Logique métier critique
 - Un changement par tranche de 30 jours, et l'ancien identifiant reste réservé 30 jours (anti-usurpation).
@@ -58,7 +58,7 @@ Un utilisateur peut modifier son identifiant Yadony (`users.username`), le retro
 - Le pseudo courant d'un utilisateur qui a bloqué l'expéditeur reste masqué.
 
 ### Events Spring publiés / écoutés
-- Refus d'invitation : événement publié par le service d'invitations, écouté côté `notifications/` pour envoyer `RECIPIENT_INVITATION_DECLINED` (type FEED_ONLY, comme `ACCEPTED` : fil d'activité sans push).
+- Refus d'invitation : pas d'événement, appel direct du dispatcher, comme l'acceptation. `RecipientInvitationService.decline` écrit l'audit log puis appelle `notificationDispatcher.notifyUser(...)` de façon synchrone pour envoyer `RECIPIENT_INVITATION_DECLINED` (type FEED_ONLY, comme `ACCEPTED` : fil d'activité sans push). Seuls `RecipientInvitationCreatedEvent` et `RecipientInvitationRemovedEvent` existent dans `addressbook/invitation`.
 
 ### Pièges et points d'attention
 - Le quota recherche + envoi vit dans un seau mémoire (`LookupRateLimiter`) : valable pour une seule JVM, à revoir si le back passe en plusieurs instances.
@@ -67,6 +67,9 @@ Un utilisateur peut modifier son identifiant Yadony (`users.username`), le retro
 - Index unique sur `lower(username)` (`ux_users_username_lower`), toutes lignes comprises, soft-deleted incluses. La migration V391 demande un contrôle préalable de doublons (requête en commentaire du fichier).
 - Course sur l'index unique : une violation est convertie en erreur « identifiant pris », pas en 500.
 - Les fiches de l'assistant décrivent le comportement voulu, mais la pastille du profil, la ligne « Identifiant Yadony » et l'onglet « Identifiant » n'existent pas encore dans l'app : elles ne le seront qu'avec la PR app. Les routes des fiches ne citent que `/profile/edit` et `/profile/recipients`, déjà présentes. Les fiches sont lues depuis le jar : effet après déploiement du back.
+
+### Ordre de déploiement
+Les fiches de l'assistant (`identifiant-yadony`, `destinataire`, `ecran-destinataires`) sont lues depuis le jar au démarrage et décrivent une interface de l'app (pastille de profil, ligne « Identifiant Yadony », onglet « Identifiant ») livrée dans la PR app. Le back ne doit pas être déployé en production avant la sortie de la version de l'app qui porte cette interface (le déploiement en production appartient au propriétaire). Ne pas retirer les fiches.
 
 ## Critères d'acceptation couverts
 - [x] Modifier son identifiant une fois tous les 30 jours — `UsernameService`, test `UsernameServiceTest` et `AuthControllerUsernameIT`.
