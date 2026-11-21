@@ -57,9 +57,10 @@ public class CancellationFeeEligibility {
                     + "yadony.cancellation-fee.effective-from (YADONY_CANCELLATION_FEE_EFFECTIVE_FROM). Aucun frais ne "
                     + "sera retenu tant que la date d'effet n'est pas posée.");
         } else if (properties.enabled()) {
-            log.info("Frais d'annulation allumés pour les colis créés à partir de {}", properties.effectiveFrom());
+            // WARN exprès : de l'argent est retenu aux expéditeurs à partir de cet instant, visible dans tout journal.
+            log.warn("Frais d'annulation ALLUMÉS : retenue sur les colis créés à partir de {}", properties.effectiveFrom());
         } else {
-            log.info("Frais d'annulation éteints : aucune nouvelle retenue");
+            log.info("Frais d'annulation ÉTEINTS : aucune nouvelle retenue");
         }
     }
 

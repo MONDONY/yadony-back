@@ -2,6 +2,8 @@ package com.yadony.api.cancellation.fee;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
@@ -94,6 +96,112 @@ class CancellationFeePropertiesTest {
                     assertThat(context).hasNotFailed();
                     assertThat(context.getBean(CancellationFeeProperties.class).effectiveFrom()).isNull();
                 });
+    }
+
+    // ── date d'effet stricte (revue tâche 8, tour 1) : jamais lue comme des millisecondes depuis 1970 ────────
+
+    @ParameterizedTest
+    @ValueSource(strings = {"20261215", "2026-12-15", "not-a-date", "2026-12-15T00:00:00", "1765756800000"})
+    void effectiveFromNotAnIsoInstant_applicationRefusesToStart(String value) {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true", "yadony.cancellation-fee.effective-from=" + value)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("yadony.cancellation-fee.effective-from")
+                            .hasMessageContaining(value)
+                            .hasMessageContaining("2026-12-15T00:00:00Z");
+                });
+    }
+
+    @Test
+    void effectiveFromInvalid_refusedEvenWhenOff() {
+        // Une valeur illisible est une faute de configuration, allumée ou non : on la voit avant le jour où l'on allume.
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=false", "yadony.cancellation-fee.effective-from=20261215")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void effectiveFromUtc_accepted() {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true",
+                        "yadony.cancellation-fee.effective-from=2026-12-15T00:00:00Z")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(CancellationFeeProperties.class).effectiveFrom())
+                            .isEqualTo(Instant.parse("2026-12-15T00:00:00Z"));
+                });
+    }
+
+    @Test
+    void effectiveFromWithOffset_acceptedAsTheSameInstant() {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true",
+                        "yadony.cancellation-fee.effective-from=2026-12-15T00:00:00+01:00")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(CancellationFeeProperties.class).effectiveFrom())
+                            .isEqualTo(Instant.parse("2026-12-14T23:00:00Z"));
+                });
+    }
+
+    @Test
+    void effectiveFromBeforeTheFeatureExisted_enabled_applicationRefusesToStart() {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true",
+                        "yadony.cancellation-fee.effective-from=2020-01-01T00:00:00Z")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .isInstanceOf(IllegalArgumentException.class)
+                            .hasMessageContaining("yadony.cancellation-fee.effective-from")
+                            .hasMessageContaining("2026-11-01T00:00:00Z");
+                });
+        // La borne elle-même est acceptée.
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true",
+                        "yadony.cancellation-fee.effective-from=2026-11-01T00:00:00Z")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    void effectiveFromInThePast_onlyWithTheTestOnlyAllowance() {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true",
+                        "yadony.cancellation-fee.effective-from=2020-01-01T00:00:00Z",
+                        "yadony.cancellation-fee.allow-past-effective-from=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(CancellationFeeProperties.class).effectiveFrom())
+                            .isEqualTo(Instant.parse("2020-01-01T00:00:00Z"));
+                });
+    }
+
+    @Test
+    void effectiveFromInThePast_off_isInert_andStarts() {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=false",
+                        "yadony.cancellation-fee.effective-from=2020-01-01T00:00:00Z")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    void effectiveFromUnset_isOff() {
+        runner.withPropertyValues("yadony.cancellation-fee.enabled=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(CancellationFeeProperties.class).effectiveFrom()).isNull();
+                });
+    }
+
+    @Test
+    void pastAllowance_onlyInTheTestProfiles_neverInApplicationFilesNorWorkflows() throws Exception {
+        for (String file : new String[] {"src/test/resources/application-test.yml",
+                "src/test/resources/application-e2e.yml"}) {
+            assertThat(java.nio.file.Files.readString(java.nio.file.Path.of(file))).as(file)
+                    .contains("allow-past-effective-from: true");
+        }
+        for (String file : new String[] {"src/main/resources/application.yml", "src/main/resources/application-prod.yml",
+                "src/main/resources/application-staging.yml", "src/main/resources/application-dev.yml",
+                ".github/workflows/deploy-prod.yml", ".github/workflows/deploy-staging.yml"}) {
+            String content = java.nio.file.Files.readString(java.nio.file.Path.of(file));
+            assertThat(content).as(file).doesNotContain("allow-past-effective-from")
+                    .doesNotContain("ALLOW_PAST_EFFECTIVE_FROM");
+        }
     }
 
     // ── barème validé au démarrage ──────────────────────────────────────────────────────────────────

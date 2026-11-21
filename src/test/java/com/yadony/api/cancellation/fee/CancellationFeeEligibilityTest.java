@@ -64,6 +64,22 @@ class CancellationFeeEligibilityTest {
     }
 
     @Test
+    void enabledWithEffectiveDate_saysOnAtWarnLevel_withTheInstant(CapturedOutput output) {
+        CancellationFeeEligibility eligibility = eligibility(true, EFFECTIVE_FROM);
+
+        assertThat(eligibility.active()).isTrue();
+        assertThat(output.getAll().lines().anyMatch(line -> line.contains("WARN") && line.contains("ALLUMÉS")
+                && line.contains(EFFECTIVE_FROM.toString()))).as("une ligne WARN qui dit ALLUMÉS et la date").isTrue();
+    }
+
+    @Test
+    void disabled_saysOff(CapturedOutput output) {
+        eligibility(false, null);
+
+        assertThat(output).contains("Frais d'annulation ÉTEINTS");
+    }
+
+    @Test
     void parcelCreatedBeforeActivation_neverPays() {
         CancellationFeeEligibility eligibility = eligibility(true, EFFECTIVE_FROM);
 

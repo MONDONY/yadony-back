@@ -76,6 +76,9 @@ yadony:
   cancellation-fee:
     enabled: true
     effective-from: 2020-01-01T00:00:00Z
+    # RÉSERVÉ AUX TESTS : autorise une date d'effet antérieure au 2026-11-01 (refusée au démarrage partout ailleurs).
+    # Jamais dans src/main/resources ni dans les workflows (vérifié par CancellationFeePropertiesTest).
+    allow-past-effective-from: true
   # Même raison qu'en test : un envoi ne doit pas dépendre de l'heure.
   notifications:
     email:
