@@ -119,7 +119,10 @@ class PaymentListenerTransactionalContractTest {
                 // recrédit du solde), PaymentIntent de commission annulée ; transactions courtes autour
                 // de l'appel Stripe (BidSupplementCashLedger), jamais une transaction englobante.
                 Arguments.of(BidSupplementCashListener.class, "onClosed"),
-                Arguments.of(BidSupplementCashListener.class, "onRefundRequested")
+                Arguments.of(BidSupplementCashListener.class, "onRefundRequested"),
+                // Dédommagement d'annulation versé au voyageur (Transfer Stripe) : lectures et transitions de
+                // la retenue en transactions REQUIRES_NEW courtes autour de l'appel, jamais une englobante.
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutListener.class, "onFeeRetained")
         );
     }
 

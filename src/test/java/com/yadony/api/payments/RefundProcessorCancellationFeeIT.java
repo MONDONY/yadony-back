@@ -31,6 +31,7 @@ import com.yadony.api.matching.BidStatus;
 import com.yadony.api.matching.TransportMode;
 import com.yadony.api.notifications.NotificationDispatcher;
 import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.fee.CancellationFeePayoutService;
 import com.yadony.api.payments.fee.CancellationFeeRetainedEvent;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
@@ -123,6 +124,9 @@ class RefundProcessorCancellationFeeIT {
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
     @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
+    // Le versement au voyageur qui suit le règlement a son propre IT (CancellationFeePayoutIT) : ici, la ligne
+    // doit rester telle que le remboursement la laisse (RETAINED).
+    @MockitoBean CancellationFeePayoutService payoutService;
 
     private String piId;
     private UUID bidId;
