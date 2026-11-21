@@ -39,6 +39,13 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     /** Comptes portant l'empreinte d'un numéro déclaré, plafonnés à 10 (voir {@code PhoneLookupService.MAX_CANDIDATES}) : au-delà de quelques comptes, le numéro est de toute façon ambigu. */
     List<UserEntity> findTop10ByDeclaredPhoneHash(String declaredPhoneHash);
 
+    /**
+     * Un AUTRE compte (non supprimé) porte-t-il cette empreinte au niveau donné ? Sans plafond, contrairement à
+     * {@link #findTop10ByDeclaredPhoneHash} : dix déclarants ne doivent pas masquer un compte validé par Yadony.
+     */
+    boolean existsByDeclaredPhoneHashAndDeclaredPhoneLevelAndIdNot(String declaredPhoneHash,
+                                                                    DeclaredPhoneLevel declaredPhoneLevel, UUID id);
+
     /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
     List<UserEntity> findAllByFcmToken(String fcmToken);
 

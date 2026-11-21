@@ -8,6 +8,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -26,13 +27,12 @@ class AdminDeclaredPhoneServiceTest {
     private final UserRepository users = mock(UserRepository.class);
     private final FirebaseContactService firebase = mock(FirebaseContactService.class);
     private final AuditService audit = mock(AuditService.class);
-    private final com.yadony.api.auth.PhoneLookupService lookup = mock(com.yadony.api.auth.PhoneLookupService.class);
 
     @Test
     void verify_unknownUser_404() {
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.empty());
-        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher("k"), audit, lookup);
+        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher("k"), audit);
 
         assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), "+2250707070707"))
                 .isInstanceOf(YadonyBusinessException.class)
@@ -41,18 +41,110 @@ class AdminDeclaredPhoneServiceTest {
     }
 
     @Test
-    void verify_hasherNotConfigured_declaredPhoneMissing_noWrite() {
+    void verify_hasherNotConfigured_503Unavailable_noWrite() {
         UserEntity user = new UserEntity();
         user.setFirebaseUid("u");
         user.setDeclaredPhoneHash("h");
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
         when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, "+2250707070707"));
-        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher(""), audit, lookup);
+        var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher(""), audit);
 
         assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), "+2250707070707"))
                 .isInstanceOf(YadonyBusinessException.class)
-                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode()).isEqualTo("declared-phone-missing"));
+                .satisfies(e -> {
+                    YadonyBusinessException ex = (YadonyBusinessException) e;
+                    assertThat(ex.getErrorCode()).isEqualTo("declared-phone-unavailable");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                });
         verify(users, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void verify_firebaseNotAvailable_503Unavailable_noWrite() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(false);
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("declared-phone-unavailable"));
+        verify(users, never()).saveAndFlush(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void verify_ownerLookupNull_treatedAsOutage_503() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, PHONE));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(null);
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("declared-phone-unavailable"));
+        verify(users, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void verify_ownerIsThisAccountBySms_phoneAlreadySet_noWrite() {
+        // La lecture fraîche n'a pas vu de numéro SMS, mais Firebase désigne ce compte comme propriétaire
+        // (rattachement SMS entre les deux lectures) : rien à valider, la déclaration va tomber.
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, PHONE));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.found("u"));
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("phone-already-set"));
+        verify(users, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void verify_yadonyConflictReadInDatabase_withoutBatchClaimRead() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, PHONE));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        when(users.existsByDeclaredPhoneHashAndDeclaredPhoneLevelAndIdNot(
+                hasher.hash(PHONE), com.yadony.api.auth.DeclaredPhoneLevel.YADONY_VERIFIED, user.getId()))
+                .thenReturn(true);
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOf(YadonyBusinessException.class)
+                .satisfies(e -> assertThat(((YadonyBusinessException) e).getErrorCode())
+                        .isEqualTo("declared-phone-conflict"));
+        verify(firebase, never()).getContacts(any());
+        verify(users, never()).saveAndFlush(any());
+    }
+
+    private static final String PHONE = "+2250707070707";
+
+    private static UserEntity declaredUser(DeclaredPhoneHasher hasher, String phone) {
+        UserEntity user = new UserEntity();
+        user.setFirebaseUid("u");
+        user.setDeclaredPhoneHash(hasher.hash(phone));
+        user.setDeclaredPhoneLevel(com.yadony.api.auth.DeclaredPhoneLevel.DECLARED);
+        return user;
     }
 }

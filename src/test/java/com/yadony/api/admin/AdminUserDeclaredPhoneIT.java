@@ -77,6 +77,9 @@ class AdminUserDeclaredPhoneIT {
         user.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
         user = userRepository.save(user);
         when(firebaseContact.isAvailable()).thenReturn(true);
+        // Par défaut : aucun propriétaire vérifié par SMS (un mock rendrait null, traité comme une panne).
+        when(firebaseContact.findPhoneOwner(anyString()))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
         claim(new FirebaseContactService.Contact(null, null, phone));
         when(platformSettings.smsBlockedCallingCode(anyString())).thenAnswer(inv ->
                 ((String) inv.getArgument(0)).startsWith("+225") ? Optional.of("225") : Optional.empty());
@@ -291,6 +294,80 @@ class AdminUserDeclaredPhoneIT {
         mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("declared-phone-conflict"));
+    }
+
+    @Test
+    void verify_ownerLookupError_503_noWrite() throws Exception {
+        // Timeout ou quota de getUserByPhoneNumber : impossible de savoir si un propriétaire SMS existe.
+        when(firebaseContact.findPhoneOwner(phone)).thenReturn(FirebaseContactService.PhoneOwnerLookup.error());
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("declared-phone-unavailable"));
+
+        UserEntity saved = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(saved.getDeclaredPhoneLevel()).isEqualTo(DeclaredPhoneLevel.DECLARED);
+        assertThat(saved.getDeclaredPhoneVerifiedBy()).isNull();
+        verify(auditService, never()).log(any(), any(), eq("ADMIN_USER_PHONE_VERIFIED"), any(), any());
+    }
+
+    @Test
+    void verify_firebaseUnavailable_503() throws Exception {
+        when(firebaseContact.isAvailable()).thenReturn(false);
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("declared-phone-unavailable"));
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+    }
+
+    @Test
+    void verify_smsOwnerKeptResidualHash_409() throws Exception {
+        // B a déclaré le numéro puis l'a rattaché par SMS ; l'écouteur qui efface la déclaration a échoué :
+        // B garde l'empreinte, mais Firebase le désigne propriétaire SMS. Il ne doit pas passer pour un déclarant.
+        UserEntity b = user("sms-residual-" + UUID.randomUUID());
+        b.setDeclaredPhoneHash(hasher.hash(phone));
+        b.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
+        userRepository.save(b);
+        when(firebaseContact.findPhoneOwner(phone))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.found(b.getFirebaseUid()));
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-conflict"));
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+    }
+
+    @Test
+    void verify_otherYadonyVerified_batchReadFails_stillConflict() throws Exception {
+        // La lecture groupée des claims échoue (getContacts rend une map vide) : le compte déjà validé
+        // par Yadony ne doit pas disparaître du contrôle. Le conflit se lit en base, sans Firebase.
+        UserEntity other = user("other-down-" + UUID.randomUUID());
+        other.setDeclaredPhoneHash(hasher.hash(phone));
+        other.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
+        userRepository.save(other);
+        when(firebaseContact.getContacts(any())).thenReturn(new java.util.HashMap<>());
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-conflict"));
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+    }
+
+    @Test
+    void verify_otherSimpleDeclarant_doesNotBlock() throws Exception {
+        // Un simple déclarant du même numéro ne bloque pas la validation (aucune unicité sur le déclaré).
+        UserEntity squatter = user("squat-" + UUID.randomUUID());
+        squatter.setDeclaredPhoneHash(hasher.hash(phone));
+        squatter.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
+        userRepository.save(squatter);
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.declaredPhoneLevel").value("YADONY_VERIFIED"));
     }
 
     /** Corps = le numéro que l'admin a sous les yeux. */

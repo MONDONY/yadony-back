@@ -3,7 +3,6 @@ package com.yadony.api.admin;
 import com.yadony.api.auth.DeclaredPhoneHasher;
 import com.yadony.api.auth.DeclaredPhoneLevel;
 import com.yadony.api.auth.FirebaseContactService;
-import com.yadony.api.auth.PhoneLookupService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -30,12 +29,9 @@ public class AdminDeclaredPhoneService {
     private final FirebaseContactService firebaseContact;
     private final DeclaredPhoneHasher hasher;
     private final AuditService auditService;
-    private final PhoneLookupService phoneLookup;
 
     public AdminDeclaredPhoneService(UserRepository userRepository, FirebaseContactService firebaseContact,
-                                     DeclaredPhoneHasher hasher, AuditService auditService,
-                                     PhoneLookupService phoneLookup) {
-        this.phoneLookup = phoneLookup;
+                                     DeclaredPhoneHasher hasher, AuditService auditService) {
         this.userRepository = userRepository;
         this.firebaseContact = firebaseContact;
         this.hasher = hasher;
@@ -43,24 +39,28 @@ public class AdminDeclaredPhoneService {
     }
 
     /**
-     * Valide le numéro déclaré que l'administrateur a sous les yeux ({@code shownPhone}). Lecture Firebase
-     * fraîche (pas le cache de 5 min) : il faut un claim {@code declared_phone} ET une empreinte en base
-     * qui correspond à ce claim (sinon 409 {@code declared-phone-missing}) ; le numéro affiché doit être
+     * Valide le numéro déclaré que l'administrateur a sous les yeux ({@code shownPhone}). Sans clé
+     * d'empreinte ou sans Firebase : 503 {@code declared-phone-unavailable}. Lecture Firebase fraîche
+     * (pas le cache de 5 min) : il faut un claim {@code declared_phone} ET une empreinte en base qui
+     * correspond à ce claim (sinon 409 {@code declared-phone-missing}) ; le numéro affiché doit être
      * encore celui du claim et de l'empreinte (sinon 409 {@code declared-phone-changed} : le compte a
-     * redéclaré entre-temps) ; un numéro déjà vérifié par SMS ou validé sur un autre compte est refusé
-     * (409 {@code declared-phone-conflict}). Un numéro SMS sur ce compte : 409 {@code phone-already-set}.
-     * Idempotent : une seconde validation conserve la date et l'administrateur d'origine.
+     * redéclaré entre-temps). Un numéro SMS sur ce compte : 409 {@code phone-already-set}. Le contrôle
+     * des autres comptes échoue fermé (voir {@link #requireNoOtherOwner}). Idempotent : une seconde
+     * validation conserve la date et l'administrateur d'origine.
      */
     @Transactional
     public UserEntity verify(UUID userId, UUID adminId, String shownPhone) {
         UserEntity user = userRepository.findById(userId).orElseThrow(() ->
                 YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.not-found.user"));
+        if (!hasher.isConfigured() || !firebaseContact.isAvailable()) {
+            throw unavailable();
+        }
         FirebaseContactService.Contact contact = firebaseContact.getFreshContact(user.getFirebaseUid());
         if (contact.phoneNumber() != null && !contact.phoneNumber().isBlank()) {
-            throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "phone-already-set", "problem.phone-already-set");
+            throw phoneAlreadySet();
         }
         String claim = contact.declaredPhone();
-        if (claim == null || claim.isBlank() || !hasher.isConfigured() || user.getDeclaredPhoneHash() == null) {
+        if (claim == null || claim.isBlank() || user.getDeclaredPhoneHash() == null) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT,
                     "declared-phone-missing", "problem.declared-phone-missing");
         }
@@ -89,19 +89,45 @@ public class AdminDeclaredPhoneService {
     }
 
     /**
-     * Refuse si un AUTRE compte détient déjà ce numéro : propriétaire vérifié par SMS (il n'a pas
-     * l'empreinte du déclaré) ou compte déjà validé par Yadony. Un simple déclarant ne bloque pas.
+     * Refuse si un AUTRE compte détient déjà ce numéro. Échec fermé, sans lecture groupée des claims :
+     * <ul>
+     *   <li>propriétaire vérifié par SMS : recherche Firebase directe. Panne ou quota ({@code ERROR}) =
+     *       503 {@code declared-phone-unavailable}, jamais « aucun propriétaire ». Un autre UID = 409
+     *       {@code declared-phone-conflict}, qu'il ait gardé l'empreinte d'une ancienne déclaration ou non.
+     *       Ce compte lui-même = 409 {@code phone-already-set} (rattachement SMS entre les deux lectures) ;</li>
+     *   <li>compte déjà validé par Yadony : lu en base sur l'empreinte, sans plafond ni confirmation par le
+     *       claim (une lecture Firebase en échec ne le fait donc pas disparaître). Un simple déclarant ne
+     *       bloque pas.</li>
+     * </ul>
      */
     private void requireNoOtherOwner(UserEntity user, String claim, String claimHash) {
-        for (UserEntity other : phoneLookup.findAllByPhone(claim)) {
-            if (other.getId() != null && other.getId().equals(user.getId())) {
-                continue;
-            }
-            boolean smsOwner = !claimHash.equals(other.getDeclaredPhoneHash());
-            if (smsOwner || other.getDeclaredPhoneLevel() == DeclaredPhoneLevel.YADONY_VERIFIED) {
-                throw YadonyBusinessException.localized(HttpStatus.CONFLICT,
-                        "declared-phone-conflict", "problem.declared-phone-conflict");
-            }
+        FirebaseContactService.PhoneOwnerLookup owner = firebaseContact.findPhoneOwner(claim);
+        if (owner == null || owner.outcome() == FirebaseContactService.PhoneOwnerLookup.Outcome.ERROR) {
+            throw unavailable();
         }
+        if (owner.outcome() == FirebaseContactService.PhoneOwnerLookup.Outcome.FOUND) {
+            if (owner.uid() != null && owner.uid().equals(user.getFirebaseUid())) {
+                throw phoneAlreadySet();
+            }
+            throw conflict();
+        }
+        if (userRepository.existsByDeclaredPhoneHashAndDeclaredPhoneLevelAndIdNot(
+                claimHash, DeclaredPhoneLevel.YADONY_VERIFIED, user.getId())) {
+            throw conflict();
+        }
+    }
+
+    private static YadonyBusinessException unavailable() {
+        return YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE,
+                "declared-phone-unavailable", "problem.declared-phone-unavailable");
+    }
+
+    private static YadonyBusinessException phoneAlreadySet() {
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT, "phone-already-set", "problem.phone-already-set");
+    }
+
+    private static YadonyBusinessException conflict() {
+        return YadonyBusinessException.localized(HttpStatus.CONFLICT,
+                "declared-phone-conflict", "problem.declared-phone-conflict");
     }
 }
