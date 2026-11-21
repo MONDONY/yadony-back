@@ -243,6 +243,7 @@ class ReferralServiceTest {
             setId(e, UUID.randomUUID());
             return e;
         });
+        stubWelcomeCode("ALI05");
 
         referralService.redeemCode(FIREBASE_UID, CODE);
 
@@ -261,6 +262,113 @@ class ReferralServiceTest {
         assertThat(saved.getRefereeUserId()).isEqualTo(USER_ID);
         assertThat(saved.getStatus()).isEqualTo("SIGNED_UP");
         assertThat(saved.getCodeUsed()).isEqualTo(CODE);
+    }
+
+    private com.yadony.api.promo.PromoCodeEntity stubWelcomeCode(String code) {
+        com.yadony.api.promo.PromoCodeEntity promo = new com.yadony.api.promo.PromoCodeEntity();
+        setId(promo, UUID.randomUUID());
+        promo.setCode(code);
+        when(promoService.createReferralWelcomeCode(any(), any(), any(), any())).thenReturn(promo);
+        return promo;
+    }
+
+    @Test
+    @DisplayName("redeem_createsWelcomeCodeAndLinksInvitation — code 5 % / 6 mois lié à l'invitation")
+    void redeem_createsWelcomeCodeAndLinksInvitation() {
+        UserEntity referee = userWithName(USER_ID, FIREBASE_UID, "Amina", "Diallo");
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
+        when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity(REFERRER_ID, CODE)));
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(false);
+        when(referralInvitationRepository.save(any())).thenAnswer(inv -> {
+            ReferralInvitationEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+        var promo = stubWelcomeCode("AMINA05");
+
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC);
+        referralService.redeemCode(FIREBASE_UID, CODE);
+
+        ArgumentCaptor<java.math.BigDecimal> percent = ArgumentCaptor.forClass(java.math.BigDecimal.class);
+        ArgumentCaptor<LocalDateTime> validTo = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(promoService).createReferralWelcomeCode(eq(USER_ID), eq("Amina"), percent.capture(),
+                validTo.capture());
+        assertThat(percent.getValue()).isEqualByComparingTo("0.05");
+        assertThat(validTo.getValue()).isAfter(before.plusMonths(6).minusMinutes(1))
+                .isBefore(LocalDateTime.now(ZoneOffset.UTC).plusMonths(6).plusMinutes(1));
+
+        ArgumentCaptor<ReferralInvitationEntity> inv = ArgumentCaptor.forClass(ReferralInvitationEntity.class);
+        verify(referralInvitationRepository, atLeastOnce()).save(inv.capture());
+        assertThat(inv.getValue().getWelcomePromoCodeId()).isEqualTo(promo.getId());
+    }
+
+    @Test
+    @DisplayName("redeem_publishesWelcomeEventWithReferrerFirstName")
+    void redeem_publishesWelcomeEventWithReferrerFirstName() {
+        UserEntity referee = userWithName(USER_ID, FIREBASE_UID, "Amina", "Diallo");
+        UserEntity referrer = userWithName(REFERRER_ID, REFERRER_UID, "Jean", "Dupont");
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
+        when(userRepository.findById(REFERRER_ID)).thenReturn(Optional.of(referrer));
+        when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity(REFERRER_ID, CODE)));
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(false);
+        when(referralInvitationRepository.save(any())).thenAnswer(inv -> {
+            ReferralInvitationEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+        stubWelcomeCode("AMINA05");
+
+        referralService.redeemCode(FIREBASE_UID, CODE);
+
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(evt.capture());
+        assertThat(evt.getValue()).isEqualTo(new com.yadony.api.referral.events.ReferralWelcomeCodeCreatedEvent(
+                USER_ID, REFERRER_ID, "Jean", "AMINA05"));
+    }
+
+    @Test
+    @DisplayName("redeem_unknownReferrerName_publishesEventWithNullName")
+    void redeem_unknownReferrerName_publishesEventWithNullName() {
+        UserEntity referee = userWithName(USER_ID, FIREBASE_UID, "Amina", "Diallo");
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
+        when(userRepository.findById(REFERRER_ID)).thenReturn(Optional.empty());
+        when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity(REFERRER_ID, CODE)));
+        when(referralInvitationRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        stubWelcomeCode("AMINA05");
+
+        referralService.redeemCode(FIREBASE_UID, CODE);
+
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(evt.capture());
+        assertThat(((com.yadony.api.referral.events.ReferralWelcomeCodeCreatedEvent) evt.getValue())
+                .referrerFirstName()).isNull();
+    }
+
+    @Test
+    @DisplayName("redeem_rejected_createsNoCode — 404, 409 auto-parrainage, 409 déjà parrainé")
+    void redeem_rejected_createsNoCode() {
+        UserEntity referee = userWithName(USER_ID, FIREBASE_UID, "Ali", "Diallo");
+        when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(referee));
+
+        // 404 : code inconnu
+        when(referralCodeRepository.findByCode("INCONNU")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> referralService.redeemCode(FIREBASE_UID, "INCONNU"))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        // 409 : auto-parrainage
+        when(referralCodeRepository.findByCode("MIEN")).thenReturn(Optional.of(codeEntity(USER_ID, "MIEN")));
+        assertThatThrownBy(() -> referralService.redeemCode(FIREBASE_UID, "MIEN"))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        // 409 : déjà parrainé
+        when(referralCodeRepository.findByCode(CODE)).thenReturn(Optional.of(codeEntity(REFERRER_ID, CODE)));
+        when(referralInvitationRepository.existsByRefereeUserId(USER_ID)).thenReturn(true);
+        assertThatThrownBy(() -> referralService.redeemCode(FIREBASE_UID, CODE))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        verify(promoService, never()).createReferralWelcomeCode(any(), any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any(Object.class));
+        verify(referralInvitationRepository, never()).save(any());
     }
 
     // ── 5. redeemCode_selfReferral_throws409 ─────────────────────────────────

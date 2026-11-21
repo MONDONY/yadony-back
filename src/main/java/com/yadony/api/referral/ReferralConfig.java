@@ -25,6 +25,12 @@ public class ReferralConfig {
     /** Durée de validité du code personnel, en mois, à compter du choix. */
     private int rewardDiscountValidityMonths = 6;
 
+    /** Code de bienvenue du filleul : remise en pourcentage du prix payé (5 = 5 %). */
+    private int welcomeDiscountPercent = 5;
+
+    /** Durée de validité du code de bienvenue, en mois, à compter de la saisie du code. */
+    private int welcomeValidityMonths = 6;
+
     /** Maximum number of invitations a user may send. */
     private int maxInvitationsPerUser = 50;
 
@@ -41,6 +47,12 @@ public class ReferralConfig {
     public void setRewardDiscountValidityMonths(int rewardDiscountValidityMonths) {
         this.rewardDiscountValidityMonths = rewardDiscountValidityMonths;
     }
+
+    public int getWelcomeDiscountPercent() { return welcomeDiscountPercent; }
+    public void setWelcomeDiscountPercent(int welcomeDiscountPercent) { this.welcomeDiscountPercent = welcomeDiscountPercent; }
+
+    public int getWelcomeValidityMonths() { return welcomeValidityMonths; }
+    public void setWelcomeValidityMonths(int welcomeValidityMonths) { this.welcomeValidityMonths = welcomeValidityMonths; }
 
     public int getMaxInvitationsPerUser() { return maxInvitationsPerUser; }
     public void setMaxInvitationsPerUser(int maxInvitationsPerUser) { this.maxInvitationsPerUser = maxInvitationsPerUser; }
