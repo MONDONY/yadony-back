@@ -918,6 +918,42 @@ public class AnnouncementService {
     }
 
     /**
+     * Recolle l'état FRAIS des j'aime sur une page de recherche (éventuellement servie par le
+     * cache {@code announcements-search}, qui garde 5 min le compteur et « aimé par moi » d'avant).
+     * Un seul {@code countsFor} et un seul {@code likedBy} pour tous les trajets de la page, bloc 2
+     * « similaires » compris. La page reçue n'est jamais modifiée : on renvoie des copies.
+     * Visiteur sans compte (ou compte inconnu) : le compteur est relu, {@code likedByMe} reste faux.
+     */
+    public Page<AnnouncementSearchResponse> withFreshLikes(Page<AnnouncementSearchResponse> page,
+                                                           String viewerFirebaseUid) {
+        List<SimilarAnnouncementResponse> similar = page instanceof TripSearchPage<?> trips
+                ? trips.similarAnnouncements()
+                : List.of();
+        List<UUID> ids = new java.util.ArrayList<>(page.getContent().size() + similar.size());
+        page.getContent().forEach(r -> ids.add(r.id()));
+        similar.forEach(s -> ids.add(s.announcement().id()));
+        if (ids.isEmpty()) {
+            return page;
+        }
+        UUID viewerId = (viewerFirebaseUid == null || viewerFirebaseUid.isBlank())
+                ? null
+                : userRepository.findByFirebaseUid(viewerFirebaseUid).map(UserEntity::getId).orElse(null);
+        Map<UUID, Long> counts = tripLikeService.countsFor(ids);
+        Set<UUID> liked = viewerId == null ? Set.of() : tripLikeService.likedBy(viewerId, ids);
+        java.util.function.UnaryOperator<AnnouncementSearchResponse> fresh = r ->
+                r.withLikes(counts.getOrDefault(r.id(), 0L), liked.contains(r.id()));
+        List<AnnouncementSearchResponse> content = page.getContent().stream().map(fresh).toList();
+        if (page instanceof TripSearchPage<?> trips) {
+            return new TripSearchPage<>(content, page.getPageable(), page.getTotalElements(),
+                    trips.bookableElements(),
+                    similar.stream()
+                            .map(s -> new SimilarAnnouncementResponse(fresh.apply(s.announcement()), s.unmet()))
+                            .toList());
+        }
+        return new org.springframework.data.domain.PageImpl<>(content, page.getPageable(), page.getTotalElements());
+    }
+
+    /**
      * Équivalent de {@code pricePerKg} dans la devise du lecteur, au taux courant.
      *
      * <p>Le tri, lui, passe par le pivot SQL {@code pricePerKgEur} ({@link #buildSort}) ;
