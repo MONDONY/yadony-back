@@ -99,6 +99,14 @@ class CancellationFeeMobileMoneyTest {
         return actual != null && actual.compareTo(new BigDecimal(expected)) == 0;
     }
 
+    /** Échecs de la base qui ne doivent jamais tomber dans le repli du calcul (RefundProcessor#mustPropagate). */
+    static java.util.stream.Stream<RuntimeException> databaseFailures() {
+        return java.util.stream.Stream.of(
+                new org.springframework.dao.CannotAcquireLockException("lock wait timeout on cancellation_fees"),
+                new org.springframework.transaction.TransactionTimedOutException("transaction timed out"),
+                new jakarta.persistence.PessimisticLockException("could not obtain the row lock"));
+    }
+
     // ── Remboursement de l'expéditeur (RefundProcessor, rail PAWAPAY) ────────────────────────────────────
 
     @Nested
@@ -245,6 +253,27 @@ class CancellationFeeMobileMoneyTest {
 
             verify(submission).submitRefund(eq(paymentId), eq(deposit), argThat(a -> same(a, "65600")));
             verify(feePort).markNotApplicable(bidId, "FEE_COMPUTATION_FAILED");
+        }
+
+        /**
+         * Base en échec pendant le règlement (attente du verrou de la retenue, lecture, transaction) : jamais le repli
+         * « dépôt rendu en entier ». La transaction du claim est perdue : rien n'est soumis à pawaPay, l'exception
+         * remonte telle quelle et défait le claim (le paiement reste ESCROW, la retenue due).
+         */
+        @org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.MethodSource("com.yadony.api.payments.mobilemoney.CancellationFeeMobileMoneyTest#databaseFailures")
+        void databaseFailureDuringTheSettlement_propagates_nothingSubmitted(RuntimeException failure) {
+            when(feePort.dueRateForUpdate(bidId)).thenThrow(failure);
+
+            assertThatThrownBy(this::refund).isSameAs(failure);
+
+            verify(submission, never()).submitRefund(any(), any(), any());
+            verify(operations, never()).findLive(paymentId, PawapayOperationKind.REFUND);
+            verifyNoInteractions(alerts);
+            verify(feePort, never()).markNotApplicable(any(), any());
+            verify(feePort, never()).markRetained(any(), any(), any());
+            verify(paymentRepository, never()).recordRefundedAmount(any(), any());
+            verify(auditService, never()).log(any(), any(), any(), any(), any());
         }
 
         @Test

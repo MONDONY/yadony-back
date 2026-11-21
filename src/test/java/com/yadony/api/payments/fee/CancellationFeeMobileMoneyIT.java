@@ -346,6 +346,37 @@ class CancellationFeeMobileMoneyIT {
     }
 
     @Test
+    @DisplayName("base en échec pendant le règlement de la retenue : rien soumis à pawaPay, claim défait, retenue due")
+    void databaseFailureDuringTheSettlement_nothingSubmitted_paymentStaysEscrow() {
+        // Vraie erreur de la base (relation introuvable) dans la transaction du claim, au lieu du repli « dépôt entier ».
+        jdbc.execute("ALTER TABLE cancellation_fees RENAME TO cancellation_fees_unreachable");
+        try {
+            assertThatThrownBy(this::refund).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        } finally {
+            jdbc.execute("ALTER TABLE cancellation_fees_unreachable RENAME TO cancellation_fees");
+        }
+
+        verify(client, never()).initiateRefund(any());
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId))
+                .isEqualTo("ESCROW");
+        assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class, paymentId))
+                .isNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pawapay_operations WHERE payment_id = ? AND kind = 'REFUND'",
+                Long.class, paymentId)).isZero();
+        assertThat(status()).isEqualTo(CancellationFeeStatus.DUE);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_alerts WHERE type = ?", Long.class,
+                "FEE_COMPUTE_FAILED_" + paymentId)).isZero();
+
+        // La base revenue, le nouvel essai rembourse le dépôt moins la retenue.
+        assertThat(refund()).isTrue();
+
+        ArgumentCaptor<PawapayRefundRequest> request = ArgumentCaptor.forClass(PawapayRefundRequest.class);
+        verify(client).initiateRefund(request.capture());
+        assertThat(request.getValue().amount()).isEqualByComparingTo("45922");
+        assertThat(status()).isEqualTo(CancellationFeeStatus.RETAINED);
+    }
+
+    @Test
     @DisplayName("partiel refusé, l'admin renonce à la retenue : le remboursement suivant rend le dépôt entier")
     void partialRefundRejected_adminWaivesTheFee_nextRefundReturnsTheWholeDeposit() {
         when(client.initiateRefund(any()))

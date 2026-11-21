@@ -18,13 +18,18 @@ import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.RefundCreateParams;
+import jakarta.persistence.PersistenceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.NoTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -49,7 +54,8 @@ import java.util.UUID;
  *       clé), puis retenue réglée et {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent} ;
  *       partout ailleurs, remboursement intégral inchangé et retenue close {@code NOT_APPLICABLE}. Un
  *       calcul de retenue qui échoue ne bloque jamais l'expéditeur : remboursement intégral, alerte
- *       {@code FEE_COMPUTE_FAILED_<paymentId>}, retenue close ;</li>
+ *       {@code FEE_COMPUTE_FAILED_<paymentId>}, retenue close. Sauf un échec de la BASE pendant ce règlement
+ *       ({@link #mustPropagate}) : il remonte avant tout appel au prestataire, le claim est défait ;</li>
  *   <li>échec Stripe → alerte admin + exception : la transaction REQUIRES_NEW rollback le claim,
  *       le paiement reste remboursable (et la retenue due) ;</li>
  *   <li>RELEASED / REFUNDED / FAILED / CANCELLED → no-op (jamais de refund post-versement).</li>
@@ -65,7 +71,7 @@ import java.util.UUID;
  * changent pas — le dispatch sur le rail est entièrement interne à cette classe. Même retenue d'annulation sur ce
  * rail : remboursement pawaPay PARTIEL du dépôt (payé moins le dédommagement), frais perdus lus dans le barème
  * pawaPay de l'opérateur du dépôt, mêmes règles de repli (calcul en échec, paiement inéligible : dépôt rendu en
- * entier, retenue close).
+ * entier, retenue close ; base en échec : rien n'est soumis, le claim est défait).
  */
 @Component
 public class RefundProcessor {
@@ -228,6 +234,10 @@ public class RefundProcessor {
                     retainedFee = cancellationFees.settle(payment, metadataId(pi, "sender_id"),
                             metadataId(pi, "traveler_id"));
                 } catch (RuntimeException e) {
+                    if (mustPropagate(e)) {
+                        // Base en échec (verrou, lecture, transaction) : AUCUN appel Stripe, le claim est défait.
+                        throw e;
+                    }
                     // Le calcul de la retenue ne bloque JAMAIS le remboursement de l'expéditeur (taux de
                     // change absent, barème invalide…) : remboursement intégral comme avant, alerte et
                     // clôture de la retenue après le succès Stripe.
@@ -287,6 +297,28 @@ public class RefundProcessor {
         log.info("Escrow libéré pour PI {} — {} ({})",
                 payment.getStripePaymentIntentId(), stripeAction, auditAction);
         return true;
+    }
+
+    /**
+     * Échec du règlement de la retenue qui ne doit PAS tomber dans le repli « remboursement intégral » : échec de la base
+     * ({@link DataAccessException}, {@link TransactionException}, {@link PersistenceException} non traduite, par exemple
+     * l'attente du verrou de la retenue dépassée), ou transaction du claim déjà condamnée (marquée rollback-only par
+     * l'échec). Le remboursement intégral partirait chez le prestataire, puis le commit échouerait : le paiement resterait
+     * ESCROW alors que l'argent est sorti. L'exception remonte donc telle quelle, avant tout appel au prestataire : la
+     * transaction {@code REQUIRES_NEW} défait le claim, le paiement reste remboursable et la retenue due, comme un échec
+     * Stripe. Toute autre erreur du calcul (taux de change absent, barème invalide) garde le repli.
+     */
+    static boolean mustPropagate(RuntimeException failure) {
+        return failure instanceof DataAccessException || failure instanceof TransactionException
+                || failure instanceof PersistenceException || transactionRollbackOnly();
+    }
+
+    private static boolean transactionRollbackOnly() {
+        try {
+            return TransactionAspectSupport.currentTransactionStatus().isRollbackOnly();
+        } catch (NoTransactionException e) {
+            return false;
+        }
     }
 
     /**
@@ -509,6 +541,10 @@ public class RefundProcessor {
         try {
             retainedFee = cancellationFees.settleMobileMoney(payment, deposit.getProvider(), deposit.getAmount());
         } catch (RuntimeException e) {
+            if (mustPropagate(e)) {
+                // Base en échec : AUCUNE soumission pawaPay, le claim est défait (même règle que la carte).
+                throw e;
+            }
             log.error("Retenue d'annulation incalculable pour le paiement mobile money {} : remboursement intégral",
                     paymentId, e);
             feeComputationFailure = e;

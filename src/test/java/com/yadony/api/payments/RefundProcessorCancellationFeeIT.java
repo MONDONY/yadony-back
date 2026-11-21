@@ -218,6 +218,53 @@ class RefundProcessorCancellationFeeIT {
     }
 
     @Test
+    @DisplayName("base en échec pendant le règlement de la retenue : aucun remboursement Stripe, claim défait, retenue due")
+    void databaseFailureDuringTheSettlement_noStripeRefund_paymentStaysEscrow() {
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+
+            // Vraie erreur de la base (relation introuvable) dans la transaction du claim, au lieu du repli intégral.
+            withCancellationFeesUnreachable(() ->
+                    assertThatThrownBy(this::refund).isInstanceOf(org.springframework.dao.DataAccessException.class));
+
+            refundStatic.verifyNoInteractions();
+        }
+
+        Map<String, Object> payment = jdbc.queryForMap("SELECT status, refunded_amount FROM payments WHERE id = ?", paymentId);
+        assertThat(payment.get("status")).isEqualTo("ESCROW");
+        assertThat(payment.get("refunded_amount")).isNull();
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus()).isEqualTo(CancellationFeeStatus.DUE);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_alerts WHERE type = ?", Long.class,
+                "FEE_COMPUTE_FAILED_" + paymentId)).isZero();
+        assertThat(audits(paymentId, "PAYMENT_REFUNDED_BID_REJECTED")).isZero();
+
+        // La base revenue, le nouvel essai règle la retenue normalement.
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+
+            assertThat(params.getValue().getAmount()).isEqualTo(7000L);
+        }
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+    }
+
+    /** Table des retenues introuvable le temps de {@code action} : toute lecture échoue dans la base, pour de vrai. */
+    private void withCancellationFeesUnreachable(Runnable action) {
+        jdbc.execute("ALTER TABLE cancellation_fees RENAME TO cancellation_fees_unreachable");
+        try {
+            action.run();
+        } finally {
+            jdbc.execute("ALTER TABLE cancellation_fees_unreachable RENAME TO cancellation_fees");
+        }
+    }
+
+    @Test
     @DisplayName("autorisation non capturée : annulée en entier, retenue close NOT_APPLICABLE et auditée")
     void uncapturedIntent_cancelledWhole_feeClosedNotApplicable() throws Exception {
         try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {

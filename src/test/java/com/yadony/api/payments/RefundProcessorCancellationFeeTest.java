@@ -440,6 +440,41 @@ class RefundProcessorCancellationFeeTest {
         verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("PAYMENT_REFUNDED_BID_REJECTED"), eq(bidId), anyMap());
     }
 
+    /**
+     * Base en échec pendant le règlement (attente du verrou de la retenue, lecture, transaction) : jamais le repli
+     * « remboursement intégral ». La transaction du claim est perdue : aucun appel à Refund.create, l'exception remonte
+     * telle quelle et défait le claim (le paiement reste ESCROW, la retenue due), comme un échec Stripe.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("databaseFailures")
+    void databaseFailureDuringTheSettlement_propagates_noStripeRefund(RuntimeException failure) {
+        escrow("100.00", "4.76", "EUR");
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+        when(feePort.dueRateForUpdate(bidId)).thenThrow(failure);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent captured = intent("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve(PI)).thenReturn(captured);
+
+            assertThatThrownBy(this::refund).isSameAs(failure);
+
+            refundStatic.verifyNoInteractions();
+        }
+        verifyNoInteractions(alerts, adminAlert, auditService, events);
+        verify(feePort, never()).markNotApplicable(any(), any());
+        verify(feePort, never()).markRetained(any(), any(), any());
+        verify(paymentRepository, never()).recordRefundedAmount(any(), any());
+    }
+
+    static java.util.stream.Stream<RuntimeException> databaseFailures() {
+        return java.util.stream.Stream.of(
+                new org.springframework.dao.CannotAcquireLockException("lock wait timeout on cancellation_fees"),
+                new org.springframework.dao.DataAccessResourceFailureException("connection lost"),
+                new org.springframework.transaction.TransactionTimedOutException("transaction timed out"),
+                new jakarta.persistence.PessimisticLockException("could not obtain the row lock"));
+    }
+
     @Test
     void computationFailure_thenStripeFailure_keepsTheStripeFailureBehaviour() {
         escrow("100.00", "4.76", "EUR");
