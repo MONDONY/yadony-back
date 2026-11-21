@@ -112,6 +112,15 @@ public class PawapayOperationEntity {
     @Column(name = "bid_amendment_id", updatable = false)
     private UUID bidAmendmentId;
 
+    /**
+     * Retenue d'annulation dont cette opération verse le dédommagement au voyageur (purpose
+     * {@code CANCELLATION_FEE}, V391, PAYOUT seulement). Jamais avec {@code payment_id} : le paiement du
+     * colis est déjà remboursé, et les écouteurs du paiement principal prendraient ce versement pour celui
+     * du colis livré.
+     */
+    @Column(name = "cancellation_fee_id", updatable = false)
+    private UUID cancellationFeeId;
+
     /** Pour un REFUND : le DEPOSIT d'origine. */
     @Column(name = "related_operation_id")
     private UUID relatedOperationId;
@@ -192,6 +201,20 @@ public class PawapayOperationEntity {
         return op;
     }
 
+    /**
+     * Versement du dédommagement d'annulation {@code cancellationFeeId} au voyageur {@code travelerId} :
+     * purpose {@code CANCELLATION_FEE}, toujours un PAYOUT, jamais de paiement de colis.
+     */
+    public static PawapayOperationEntity forCancellationFee(UUID id, UUID travelerId, UUID cancellationFeeId,
+                                                            BigDecimal amount, String currency, String provider,
+                                                            String country, String msisdn) {
+        PawapayOperationEntity op = new PawapayOperationEntity(id, PawapayOperationKind.PAYOUT,
+                PawapayOperationPurpose.CANCELLATION_FEE, travelerId, null, null, amount, currency, provider, country,
+                msisdn);
+        op.cancellationFeeId = cancellationFeeId;
+        return op;
+    }
+
     @PrePersist
     void onCreate() {
         createdAt = LocalDateTime.now(ZoneOffset.UTC);
@@ -220,6 +243,7 @@ public class PawapayOperationEntity {
     public UUID getUserId() { return userId; }
     public UUID getBidSupplementId() { return bidSupplementId; }
     public UUID getBidAmendmentId() { return bidAmendmentId; }
+    public UUID getCancellationFeeId() { return cancellationFeeId; }
     public boolean isTopupGuard() { return topupGuard; }
     public String getAuthorizationUrl() { return authorizationUrl; }
     public String getProviderTransactionId() { return providerTransactionId; }

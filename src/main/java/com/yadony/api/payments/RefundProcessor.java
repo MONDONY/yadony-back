@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -61,7 +62,10 @@ import java.util.UUID;
  * second chemin, complètement séparé du chemin Stripe ci-dessus (aucune ligne du chemin Stripe
  * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les six listeners
  * appelants existants de {@link #processRefund} (annulations, litiges, rejets d'annonce) ne
- * changent pas — le dispatch sur le rail est entièrement interne à cette classe.
+ * changent pas — le dispatch sur le rail est entièrement interne à cette classe. Même retenue d'annulation sur ce
+ * rail : remboursement pawaPay PARTIEL du dépôt (payé moins le dédommagement), frais perdus lus dans le barème
+ * pawaPay de l'opérateur du dépôt, mêmes règles de repli (calcul en échec, paiement inéligible : dépôt rendu en
+ * entier, retenue close).
  */
 @Component
 public class RefundProcessor {
@@ -87,6 +91,9 @@ public class RefundProcessor {
 
     /** Retenue d'annulation incalculable : expéditeur remboursé en entier, voyageur non dédommagé (19 + 36). */
     static final String FEE_COMPUTE_FAILED_ALERT_PREFIX = "FEE_COMPUTE_FAILED_";
+
+    /** Rail mobile money : remboursement déjà en vol d'un autre montant que celui de la retenue (20 + 36). */
+    static final String FEE_REFUND_MISMATCH_ALERT_PREFIX = "FEE_REFUND_MISMATCH_";
 
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
@@ -303,16 +310,46 @@ public class RefundProcessor {
      * annoncé à tort). Une alerte qui échoue ne remet pas en cause le remboursement déjà émis.
      */
     private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure) {
+        raiseFeeComputationAlert(payment, paymentId, failure, "l'expéditeur a été remboursé en entier");
+    }
+
+    /** @param refundOutcome ce que l'expéditeur a reçu, dit en clair dans l'alerte */
+    private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure,
+                                          String refundOutcome) {
         try {
             alerts.raiseOnce(FEE_COMPUTE_FAILED_ALERT_PREFIX + paymentId,
                     "Retenue d'annulation incalculable pour le paiement " + paymentId + " : "
-                            + failure.getMessage() + " ; l'expéditeur a été remboursé en entier, le voyageur "
+                            + failure.getMessage() + " ; " + refundOutcome + ", le voyageur "
                             + "n'est pas dédommagé, à régler à la main",
                     Map.of("paymentId", paymentId.toString(),
                             "bidId", String.valueOf(payment.getBidId()),
                             "error", String.valueOf(failure.getMessage())));
         } catch (RuntimeException alertFailure) {
             log.error("Alerte {} non levée pour le paiement {}", FEE_COMPUTE_FAILED_ALERT_PREFIX, paymentId,
+                    alertFailure);
+        }
+    }
+
+    /**
+     * Rail mobile money : un remboursement d'une tentative précédente est déjà en vol pour un autre montant que
+     * l'expéditeur moins la retenue. Il fait foi ; la retenue est close et l'écart est à régler à la main. Une alerte
+     * qui échoue ne remet pas en cause le remboursement.
+     */
+    private void raiseRefundMismatchAlert(PaymentEntity payment, UUID paymentId, PawapayOperationEntity refund,
+                                          CancellationFeeBreakdown expected) {
+        try {
+            alerts.raiseOnce(FEE_REFUND_MISMATCH_ALERT_PREFIX + paymentId,
+                    "Retenue d'annulation non réglée pour le paiement " + paymentId + " : un remboursement pawaPay "
+                            + refund.getId() + " de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
+                            + " était déjà en vol, " + expected.senderRefund().toPlainString() + " attendus ; retenue "
+                            + "close, voyageur non dédommagé, à régler à la main",
+                    Map.of("paymentId", paymentId.toString(),
+                            "bidId", String.valueOf(payment.getBidId()),
+                            "operationId", refund.getId().toString(),
+                            "refundAmount", refund.getAmount().toPlainString(),
+                            "expectedRefund", expected.senderRefund().toPlainString()));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", FEE_REFUND_MISMATCH_ALERT_PREFIX, paymentId,
                     alertFailure);
         }
     }
@@ -381,6 +418,14 @@ public class RefundProcessor {
      * remontent en exception : la transaction {@code REQUIRES_NEW} annule alors le claim, le
      * paiement redevient {@code ESCROW} et donc remboursable plus tard.
      *
+     * <p>Retenue d'annulation due par l'expéditeur fautif ({@link CancellationFeeSettlement#settleMobileMoney}) :
+     * le refund porte sur le dépôt moins la retenue, puis {@code refunded_amount}, retenue réglée et
+     * {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent}, comme le rail carte. Un refus pawaPay du
+     * remboursement partiel laisse la retenue due (claim annulé) ; un nouvel essai resoumet le même montant. Pour
+     * rembourser le dépôt entier à la place, la retenue doit d'abord sortir de {@code DUE}
+     * ({@code CancellationFeeRatePort#markNotApplicable} ; aucun geste admin ne le propose encore) :
+     * {@code processRefund} rend alors le dépôt entier, comme sans retenue.
+     *
      * <p>Cette méthode et {@link #refundEscrowedMobileMoney} ne font JAMAIS
      * {@code payment.setStatus(...)} après un claim bulk — {@code enrich(...)} n'utilise pas
      * {@code status}, rien d'autre ne le lit non plus. Un tel setter rendrait l'entité sale et
@@ -395,6 +440,8 @@ public class RefundProcessor {
                 if (cancelled == 0) {
                     yield false;
                 }
+                // Jamais encaissé : rien à retenir, une retenue encore due est close (sans retenue : une lecture).
+                cancellationFees.waiveNotCollected(payment);
                 auditService.log("PAYMENT", paymentId, auditAction, auditActor, enrich(auditPayload, payment));
                 log.info("Paiement mobile money {} annulé avant encaissement ({})", paymentId, auditAction);
                 yield true;
@@ -451,12 +498,40 @@ public class RefundProcessor {
         }
         PawapayOperationEntity deposit = completedDeposit.get();
 
+        // Retenue d'annulation due par l'expéditeur fautif : lue ICI, après le claim, jamais avant (même garantie
+        // que le rail carte : un seul remboursement par paiement, donc un seul règlement). Un calcul qui échoue ne
+        // bloque jamais l'expéditeur : dépôt rendu en entier comme avant, alerte, retenue close.
+        Optional<CancellationFeeBreakdown> retainedFee = Optional.empty();
+        RuntimeException feeComputationFailure = null;
+        try {
+            retainedFee = cancellationFees.settleMobileMoney(payment, deposit.getProvider(), deposit.getAmount());
+        } catch (RuntimeException e) {
+            log.error("Retenue d'annulation incalculable pour le paiement mobile money {} : remboursement intégral",
+                    paymentId, e);
+            feeComputationFailure = e;
+        }
+
+        // Un refund déjà vivant (tentative précédente soumise puis annulée : réseau muet, commit raté) est repris
+        // tel quel, jamais resoumis : son montant fait foi. La retenue n'est réglée que s'il est exactement celui de
+        // l'expéditeur moins la retenue ; sinon elle est close avec une alerte, rien n'est rendu deux fois.
+        Optional<PawapayOperationEntity> liveRefund = pawapayOperations.findLive(paymentId, PawapayOperationKind.REFUND);
+        CancellationFeeBreakdown unmatchedFee = null;
+        if (liveRefund.isPresent() && retainedFee.isPresent()
+                && retainedFee.get().senderRefund().compareTo(liveRefund.get().getAmount()) != 0) {
+            unmatchedFee = retainedFee.get();
+            retainedFee = Optional.empty();
+        }
+        // Remboursement PARTIEL (pawaPay v2 l'accepte : amount + currency) : le dépôt moins la retenue. Sans retenue,
+        // le dépôt entier, exactement comme avant.
+        BigDecimal refundAmount = retainedFee.map(CancellationFeeBreakdown::senderRefund).orElse(deposit.getAmount());
+
         // Ce contrôle SUBMIT_REJECTED ne peut jamais se déclencher pour un refund RÉCUPÉRÉ via
         // findLive — LIVE_OR_DONE (l'ensemble filtré par findLive) exclut structurellement
         // SUBMIT_REJECTED (rangé dans DEAD). Il n'est atteignable que pour un refund tout juste
-        // soumis par submitRefund ci-dessous.
-        PawapayOperationEntity refund = pawapayOperations.findLive(paymentId, PawapayOperationKind.REFUND)
-                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, deposit.getAmount()));
+        // soumis par submitRefund ci-dessous. Un refus annule le claim : la retenue reste due, rien
+        // n'est réglé ni clos, et un nouvel essai resoumet le même remboursement partiel.
+        PawapayOperationEntity refund = liveRefund
+                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, refundAmount));
         if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             alerts.raiseOnce(REJECTED_ALERT_PREFIX + paymentId,
                     "pawaPay a refusé le remboursement du paiement " + paymentId + " : " + refund.getFailureCode(),
@@ -465,11 +540,32 @@ public class RefundProcessor {
             throw new IllegalStateException("pawaPay refund rejected: " + refund.getFailureCode());
         }
 
+        // Après l'acceptation pawaPay, dans la transaction du claim. Un échec ici annule le claim alors que le
+        // remboursement est parti : le paiement redevient ESCROW, la retenue reste due, et un nouvel essai reprend
+        // ce remboursement vivant (branche ci-dessus) puis règle la retenue.
+        Map<String, Object> enriched = enrich(auditPayload, payment);
+        enriched.put("refundOperationId", refund.getId().toString());
+        if (retainedFee.isPresent()) {
+            CancellationFeeBreakdown fee = retainedFee.get();
+            paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
+            cancellationFees.retain(payment, fee);
+            enriched.put("refundedAmount", fee.senderRefund().toPlainString());
+            enriched.put("cancellationFee", fee.grossFee().toPlainString());
+        } else if (feeComputationFailure != null) {
+            raiseFeeComputationAlert(payment, paymentId, feeComputationFailure,
+                    "l'expéditeur est remboursé de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
+                            + " (remboursement pawaPay " + refund.getId() + ")");
+            cancellationFees.waiveAfterFailedComputation(payment);
+        } else if (unmatchedFee != null) {
+            raiseRefundMismatchAlert(payment, paymentId, refund, unmatchedFee);
+            cancellationFees.waiveAfterRefundInFlight(payment);
+        } else {
+            cancellationFees.waiveMobileMoneyIfDue(payment, deposit.getAmount());
+        }
+
         // Audit dans sa propre transaction — motif repris de MobileMoneyPayoutInitiator#release :
         // la trace du remboursement survit même si la transaction ambiante (le claim) échouait
         // ensuite. Rien de faillible ne suit ce point.
-        Map<String, Object> enriched = enrich(auditPayload, payment);
-        enriched.put("refundOperationId", refund.getId().toString());
         independentAuditTransaction.executeWithoutResult(status ->
                 auditService.log("PAYMENT", paymentId, auditAction, auditActor, enriched));
         log.info("Remboursement mobile money {} soumis pour le paiement {} ({})", refund.getId(), paymentId, auditAction);

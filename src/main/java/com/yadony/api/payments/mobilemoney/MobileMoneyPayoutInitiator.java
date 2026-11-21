@@ -4,6 +4,8 @@ import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.PaymentEntity;
+import com.yadony.api.payments.PaymentRail;
+import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.hold.PayoutHeldException;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutAccounts.PayoutDestination;
@@ -13,6 +15,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,6 +40,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * {@code @Version}, le moindre setter la rendrait sale et le flush régénérerait un UPDATE de
  * TOUTES les colonnes — {@code status = 'ESCROW'} écraserait le {@code RELEASED} qui vient
  * d'être posé.
+ *
+ * <p>Variante {@link #releaseCancellationFee} : versement du dédommagement d'annulation, rattaché à la retenue et non
+ * au paiement (aucun claim, purpose {@code CANCELLATION_FEE}, jamais de {@code payment_id}).
  */
 @Component
 public class MobileMoneyPayoutInitiator {
@@ -51,6 +57,15 @@ public class MobileMoneyPayoutInitiator {
     static final String ORPHAN_ALERT_PREFIX = "MM_PAYOUT_ORPHAN_";
     /** Payout refusé : un remboursement pawaPay du même paiement est vivant ou abouti. */
     static final String REFUND_EXISTS_ALERT_PREFIX = "MM_PAYOUT_REFUND_EXISTS_";
+
+    /**
+     * Versements morts (échec, refus) d'un même dédommagement au-delà desquels plus aucun n'est soumis
+     * automatiquement : intervention manuelle (même principe que le plafond des suppléments).
+     */
+    static final int MAX_DEAD_FEE_PAYOUTS = 3;
+
+    /** {@code clientReferenceId} pawaPay d'un dédommagement : 4 + 36 caractères, comme {@code bid-<bidId>}. */
+    static final String CANCELLATION_FEE_REFERENCE_PREFIX = "fee-";
 
     private final MobileMoneyPayoutAccounts accounts;
     private final PawapayOperationService operations;
@@ -69,13 +84,15 @@ public class MobileMoneyPayoutInitiator {
     private final TransactionTemplate independentAuditTransaction;
 
     private final PayoutHoldPolicy holdPolicy;
+    private final PaymentRepository payments;
 
     public MobileMoneyPayoutInitiator(MobileMoneyPayoutAccounts accounts, PawapayOperationService operations,
                                       PawapaySubmissionService submission, AdminAlertService adminAlert,
                                       AdminAlertEscalator alerts, AuditService audit,
                                       PlatformTransactionManager transactionManager,
-                                      PayoutHoldPolicy holdPolicy) {
+                                      PayoutHoldPolicy holdPolicy, PaymentRepository payments) {
         this.holdPolicy = holdPolicy;
+        this.payments = payments;
         this.accounts = accounts;
         this.operations = operations;
         this.submission = submission;
@@ -196,6 +213,95 @@ public class MobileMoneyPayoutInitiator {
                         "currency", payment.getCurrency(), "msisdnMasked", op.getMsisdnMasked(), "source", source,
                         "provider", to.provider(), "accountId", to.accountId().toString())));
         log.info("Payout mobile money {} soumis pour le paiement {} ({})", op.getId(), payment.getId(), source);
+        return op;
+    }
+
+    /**
+     * Verse au voyageur {@code travelerId} le dédommagement d'annulation {@code feeId} ({@code net} dans
+     * {@code currency}), rail mobile money. Variante de {@link #release} rattachée à la RETENUE, jamais au paiement :
+     * le paiement du colis est déjà remboursé (en partie) à l'expéditeur, il n'y a ni claim {@code ESCROW → RELEASED}
+     * ni versement de colis à protéger. L'opération porte le purpose {@code CANCELLATION_FEE} et
+     * {@code cancellation_fee_id} (V391), jamais {@code payment_id} : elle ne peut pas heurter le versement d'un colis
+     * ({@code uq_pawapay_ops_live_per_payment}) et les écouteurs du paiement principal l'ignorent.
+     *
+     * <ol>
+     *   <li><b>versement déjà vivant ou abouti</b> pour cette retenue : repris tel quel, jamais un second (rejeu de
+     *       l'événement, passage du planificateur, deux essais concurrents) ; l'index
+     *       {@code uq_pawapay_ops_live_per_cancellation_fee} tranche une course ;</li>
+     *   <li><b>voyageur gelé</b>, ou trop de versements morts ({@value #MAX_DEAD_FEE_PAYOUTS}) : refus sans appel
+     *       pawaPay. Le plafond borne le risque d'un versement classé mort par le poller puis accepté tard par
+     *       pawaPay, doublé par le nouvel essai ;</li>
+     *   <li><b>destination</b> : le compte du voyageur du même code pawaPay que le dépôt du colis, dans la devise de
+     *       la retenue, sinon le compte repris par la migration ({@link MobileMoneyPayoutAccounts#destinationFor}).
+     *       Aucun : refus {@code NO_MOBILE_MONEY_ACCOUNT}, sans appel pawaPay ;</li>
+     *   <li><b>soumission</b> : un refus pawaPay ({@code SUBMIT_REJECTED}, rien n'est parti) est un refus ; pawaPay muet
+     *       après la réservation laisse l'opération au poller, rendue telle quelle (jamais resoumise sous un autre
+     *       identifiant). Acceptée : auditée dans une transaction indépendante.</li>
+     * </ol>
+     *
+     * <p>Aucune alerte ici : l'appelant ({@code CancellationFeePayoutService}) met la retenue en attente et lève UNE
+     * alerte par retenue, quel que soit le nombre d'essais horaires.
+     *
+     * @return l'opération soumise, ou reprise (son statut dit si l'argent est déjà arrivé)
+     * @throws MobileMoneyPayoutRefusedException rien n'est parti, motif dans {@link MobileMoneyPayoutRefusedException#reason()}
+     */
+    public PawapayOperationEntity releaseCancellationFee(UUID feeId, UUID bidId, UUID travelerId, BigDecimal net,
+                                                         String currency) {
+        Optional<PawapayOperationEntity> live = operations.findLiveForCancellationFee(feeId);
+        if (live.isPresent()) {
+            log.info("Dédommagement {} : versement pawaPay {} déjà {}, repris sans seconde soumission", feeId,
+                    live.get().getId(), live.get().getStatus());
+            return live.get();
+        }
+        if (holdPolicy.isHeld(travelerId)) {
+            throw new MobileMoneyPayoutRefusedException("PAYOUT_HELD",
+                    "Versement du dédommagement " + feeId + " refusé : voyageur " + travelerId + " gelé");
+        }
+        long dead = operations.countDeadForCancellationFee(feeId);
+        if (dead >= MAX_DEAD_FEE_PAYOUTS) {
+            throw new MobileMoneyPayoutRefusedException("TOO_MANY_FAILED_PAYOUTS",
+                    "Versement du dédommagement " + feeId + " : " + dead + " versements morts, plus d'essai automatique");
+        }
+        // Code du dépôt du colis : il désigne le compte qui reçoit (même opérateur, même pays), comme pour le colis.
+        String depositProvider = payments.findForBid(bidId)
+                .filter(p -> p.getRail() == PaymentRail.PAWAPAY)
+                .flatMap(p -> operations.findLive(p.getId(), PawapayOperationKind.DEPOSIT))
+                .map(PawapayOperationEntity::getProvider)
+                .orElse(null);
+        PayoutDestination to = accounts.destinationFor(travelerId, depositProvider, currency)
+                .orElseThrow(() -> new MobileMoneyPayoutRefusedException("NO_MOBILE_MONEY_ACCOUNT",
+                        "Voyageur " + travelerId + " sans compte mobile money actif en " + currency
+                                + " pour le dédommagement " + feeId));
+
+        PawapayOperationEntity op;
+        try {
+            op = submission.submitCancellationFeePayout(feeId, travelerId, to.msisdn(), to.provider(), to.country(),
+                    net, currency, CANCELLATION_FEE_REFERENCE_PREFIX + feeId);
+        } catch (RuntimeException e) {
+            // Réservée puis pawaPay muet (ou course perdue contre un essai concurrent) : l'opération vivante fait foi.
+            Optional<PawapayOperationEntity> reserved = operations.findLiveForCancellationFee(feeId);
+            if (reserved.isPresent()) {
+                log.warn("Dédommagement {} : versement pawaPay {} sans réponse, laissé au poller ({})", feeId,
+                        reserved.get().getId(), e.toString());
+                return reserved.get();
+            }
+            throw e;
+        }
+        if (op.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
+            throw new MobileMoneyPayoutRefusedException("PAWAPAY_REJECTED_" + op.getFailureCode(),
+                    "pawaPay a refusé le versement du dédommagement " + feeId + " : " + op.getFailureCode());
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("cancellationFeeId", feeId.toString());
+        payload.put("operationId", op.getId().toString());
+        payload.put("net", net.toPlainString());
+        payload.put("currency", currency);
+        payload.put("msisdnMasked", String.valueOf(op.getMsisdnMasked()));
+        payload.put("provider", to.provider());
+        payload.put("accountId", to.accountId().toString());
+        independentAuditTransaction.executeWithoutResult(status -> audit.log("BID", bidId,
+                "CANCELLATION_FEE_PAYOUT_SUBMITTED", null, payload));
+        log.info("Dédommagement {} : versement mobile money {} soumis pour le colis {}", feeId, op.getId(), bidId);
         return op;
     }
 

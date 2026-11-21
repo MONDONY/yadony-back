@@ -20,6 +20,11 @@ import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldReason;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationService;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -78,6 +83,8 @@ class CancellationFeePayoutServiceTest {
     @Mock PayoutHoldPolicy holdPolicy;
     @Mock DisputeRepository disputes;
     @Mock AdminAlertEscalator alerts;
+    @Mock MobileMoneyPayoutInitiator mobileMoneyPayouts;
+    @Mock PawapayOperationService pawapayOperations;
 
     private CancellationFeePayoutService service;
     private MockedStatic<Transfer> transfers;
@@ -87,7 +94,7 @@ class CancellationFeePayoutServiceTest {
     @BeforeEach
     void setUp() {
         service = new CancellationFeePayoutService(port, payments, users, holdPolicy, disputes, alerts,
-                TransactionOperations.withoutTransaction());
+                mobileMoneyPayouts, pawapayOperations, TransactionOperations.withoutTransaction());
         transfers = mockStatic(Transfer.class);
 
         payment = new PaymentEntity();
@@ -402,16 +409,39 @@ class CancellationFeePayoutServiceTest {
     }
 
     @Test
-    void mobileMoneyRail_leftUntouched() {
-        // Versement pawaPay : tâche 7. Ni Stripe, ni transition, ni alerte.
+    void mobileMoneyRail_dispatchedToThePawapayInitiator_neverStripe() {
         payment.setRail(PaymentRail.PAWAPAY);
+        payment.setCurrency("XOF");
+        payment.setRefundedAmount(new BigDecimal("45922"));
+        when(port.findPayable(FEE_ID)).thenReturn(Optional.of(fee("17323", "XOF", PayableCancellationFee.Status.RETAINED)));
+        PawapayOperationEntity refund = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND,
+                PAYMENT_ID, null, new BigDecimal("45922"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        refund.setStatus(PawapayOperationStatus.COMPLETED);
+        when(pawapayOperations.findLatest(PAYMENT_ID, PawapayOperationKind.REFUND)).thenReturn(Optional.of(refund));
+        PawapayOperationEntity accepted = PawapayOperationEntity.forCancellationFee(UUID.randomUUID(), TRAVELER_ID,
+                FEE_ID, new BigDecimal("17323"), "XOF", "ORANGE_SEN", "SN", "221770000002");
+        accepted.setStatus(PawapayOperationStatus.ACCEPTED);
+        when(mobileMoneyPayouts.releaseCancellationFee(eq(FEE_ID), eq(BID_ID), eq(TRAVELER_ID), any(), eq("XOF")))
+                .thenReturn(accepted);
 
+        // Soumis, pas encore arrivé : l'issue pawaPay fera passer la ligne en PAID_OUT.
         assertThat(service.payOut(FEE_ID)).isFalse();
 
+        verify(mobileMoneyPayouts).releaseCancellationFee(FEE_ID, BID_ID, TRAVELER_ID, new BigDecimal("17323"), "XOF");
         transfers.verifyNoInteractions();
         verify(port, never()).markPaidOut(any(), any());
         verify(port, never()).markPayoutPending(any(), any());
         verifyNoInteractions(alerts);
+    }
+
+    @Test
+    void cardRail_neverReachesThePawapayInitiator() {
+        transfers.when(() -> Transfer.create(any(TransferCreateParams.class), any(RequestOptions.class)))
+                .thenReturn(transfer("tr_1"));
+
+        assertThat(service.payOut(FEE_ID)).isTrue();
+
+        verifyNoInteractions(mobileMoneyPayouts, pawapayOperations);
     }
 
     @Test

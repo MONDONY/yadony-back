@@ -20,6 +20,12 @@ import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutInitiator;
+import com.yadony.api.payments.mobilemoney.MobileMoneyPayoutRefusedException;
+import com.yadony.api.payments.pawapay.PawapayOperationEntity;
+import com.yadony.api.payments.pawapay.PawapayOperationKind;
+import com.yadony.api.payments.pawapay.PawapayOperationService;
+import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +35,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -60,7 +67,12 @@ import java.util.stream.Collectors;
  * remboursement, le contexte de persistance de la transaction terminée est encore lié au fil, avec le paiement
  * chargé avant son claim (statut périmé).
  *
- * <p>Rail mobile money : non traité ici (versement pawaPay, tâche 7), la ligne est laissée telle quelle.
+ * <p><b>Rail mobile money</b> : versement pawaPay rattaché à la retenue
+ * ({@code MobileMoneyPayoutInitiator#releaseCancellationFee}, purpose {@code CANCELLATION_FEE}, au plus un versement
+ * vivant par retenue), une fois le remboursement pawaPay de l'expéditeur abouti. L'issue est asynchrone : la ligne
+ * passe en {@code PAID_OUT} à la confirmation ({@link #mobileMoneyPayoutCompleted}, écouteur
+ * {@link CancellationFeePayoutOutcomeListener}), en attente à l'échec. Mêmes gardes communes (paiement remboursé,
+ * litige, voyageur gelé), même alerte unique, même planificateur.
  */
 @Component
 public class CancellationFeePayoutService {
@@ -82,6 +94,8 @@ public class CancellationFeePayoutService {
     private final PayoutHoldPolicy holdPolicy;
     private final DisputeRepository disputes;
     private final AdminAlertEscalator alerts;
+    private final MobileMoneyPayoutInitiator mobileMoneyPayouts;
+    private final PawapayOperationService pawapayOperations;
     /** Transactions courtes et neuves ({@code REQUIRES_NEW}) : jamais de transaction autour d'un appel Stripe. */
     private final TransactionOperations transaction;
 
@@ -89,13 +103,18 @@ public class CancellationFeePayoutService {
     public CancellationFeePayoutService(CancellationFeePayoutPort port, PaymentRepository payments,
                                         UserRepository users, PayoutHoldPolicy holdPolicy,
                                         DisputeRepository disputes, AdminAlertEscalator alerts,
+                                        MobileMoneyPayoutInitiator mobileMoneyPayouts,
+                                        PawapayOperationService pawapayOperations,
                                         PlatformTransactionManager transactionManager) {
-        this(port, payments, users, holdPolicy, disputes, alerts, requiresNew(transactionManager));
+        this(port, payments, users, holdPolicy, disputes, alerts, mobileMoneyPayouts, pawapayOperations,
+                requiresNew(transactionManager));
     }
 
     CancellationFeePayoutService(CancellationFeePayoutPort port, PaymentRepository payments,
                                  UserRepository users, PayoutHoldPolicy holdPolicy,
                                  DisputeRepository disputes, AdminAlertEscalator alerts,
+                                 MobileMoneyPayoutInitiator mobileMoneyPayouts,
+                                 PawapayOperationService pawapayOperations,
                                  TransactionOperations transaction) {
         this.port = port;
         this.payments = payments;
@@ -103,7 +122,48 @@ public class CancellationFeePayoutService {
         this.holdPolicy = holdPolicy;
         this.disputes = disputes;
         this.alerts = alerts;
+        this.mobileMoneyPayouts = mobileMoneyPayouts;
+        this.pawapayOperations = pawapayOperations;
         this.transaction = transaction;
+    }
+
+    /**
+     * Versement pawaPay du dédommagement confirmé (l'argent est sur le compte du voyageur) : ligne {@code PAID_OUT}, la
+     * référence est l'identifiant de l'opération pawaPay, l'alerte ouverte est close. Sans effet sur une ligne qui
+     * n'est plus à verser. Ne lève jamais : appelé par l'écouteur de l'issue pawaPay.
+     */
+    public void mobileMoneyPayoutCompleted(UUID feeId, UUID operationId) {
+        try {
+            PayableCancellationFee fee = transaction.execute(tx -> port.findPayable(feeId).orElse(null));
+            if (fee == null) {
+                log.info("Dédommagement {} : versement pawaPay {} abouti, ligne déjà versée ou close", feeId, operationId);
+                return;
+            }
+            paidOut(fee, operationId.toString());
+        } catch (RuntimeException e) {
+            log.error("Dédommagement {} : versement pawaPay {} abouti mais ligne non mise à jour, le passage horaire "
+                    + "retrouvera l'opération aboutie", feeId, operationId, e);
+        }
+    }
+
+    /**
+     * Versement pawaPay du dédommagement échoué (rien n'est parti) : ligne en attente, une seule alerte ; le passage
+     * horaire soumet une nouvelle opération (plafond de versements morts dans {@code MobileMoneyPayoutInitiator}).
+     * Ne lève jamais.
+     */
+    public void mobileMoneyPayoutFailed(UUID feeId, String failureCode) {
+        PayableCancellationFee fee;
+        try {
+            fee = transaction.execute(tx -> port.findPayable(feeId).orElse(null));
+        } catch (RuntimeException e) {
+            log.error("Dédommagement {} : échec pawaPay {} non appliqué à la ligne", feeId, failureCode, e);
+            return;
+        }
+        if (fee == null) {
+            log.info("Dédommagement {} : échec pawaPay {} sur une ligne déjà versée ou close", feeId, failureCode);
+            return;
+        }
+        leavePending(feeId, fee, "PAWAPAY_PAYOUT_FAILED_" + failureCode);
     }
 
     static TransactionTemplate requiresNew(PlatformTransactionManager transactionManager) {
@@ -116,8 +176,9 @@ public class CancellationFeePayoutService {
      * Verse le dédommagement de la retenue {@code feeId}, ou le met en attente. Ne lève jamais : à appeler hors de
      * toute transaction (après commit, planificateur).
      *
-     * @return {@code true} si la retenue est versée à l'issue de l'appel ; {@code false} si elle est en attente,
-     *         laissée au rail mobile money, ou n'était plus à verser (déjà versée, close, absente)
+     * @return {@code true} si la retenue est versée à l'issue de l'appel ; {@code false} si elle est en attente, si
+     *         son versement pawaPay est soumis mais pas encore confirmé (ou attend le remboursement de l'expéditeur),
+     *         ou si elle n'était plus à verser (déjà versée, close, absente)
      */
     public boolean payOut(UUID feeId) {
         PayableCancellationFee fee = null;
@@ -144,23 +205,33 @@ public class CancellationFeePayoutService {
             return leavePending(fee.feeId(), fee, "NEGATIVE_NET");
         }
         Plan plan = transaction.execute(tx -> plan(fee));
-        if (plan.mobileMoney()) {
-            log.warn("Dédommagement {} du colis {} : paiement mobile money, versement pawaPay non branché, ligne laissée {}",
-                    fee.feeId(), fee.bidId(), fee.status());
+        if (plan.waitingFor() != null) {
+            // Remboursement de l'expéditeur encore en vol : rien d'anormal, ni attente ni alerte. La ligne reste telle
+            // quelle et le passage horaire la reprend (RETAINED de plus de 10 min, ou déjà PAYOUT_PENDING).
+            log.info("Dédommagement {} du colis {} : {}, versement remis au prochain passage", fee.feeId(), fee.bidId(),
+                    plan.waitingFor());
             return false;
         }
         if (plan.blockedReason() != null) {
             return leavePending(fee.feeId(), fee, plan.blockedReason());
         }
-        return transfer(fee, plan);
+        return plan.mobileMoney() ? mobileMoneyPayout(fee) : transfer(fee, plan);
     }
 
     /** Ce qu'il faut pour verser, ou la raison de ne pas le faire. Lectures seules, dans une transaction neuve. */
-    private record Plan(String blockedReason, boolean mobileMoney, UUID paymentId, String chargeId,
+    private record Plan(String blockedReason, String waitingFor, boolean mobileMoney, UUID paymentId, String chargeId,
                         String destination, CurrencyAmount amount) {
 
         static Plan blocked(String reason) {
-            return new Plan(reason, false, null, null, null, null);
+            return new Plan(reason, null, false, null, null, null, null);
+        }
+
+        static Plan waiting(String what) {
+            return new Plan(null, what, false, null, null, null, null);
+        }
+
+        static Plan mobileMoney(UUID paymentId) {
+            return new Plan(null, null, true, paymentId, null, null, null);
         }
     }
 
@@ -172,9 +243,6 @@ public class CancellationFeePayoutService {
         PaymentEntity payment = payments.findForBid(fee.bidId()).orElse(null);
         if (payment == null) {
             return Plan.blocked("NO_PAYMENT");
-        }
-        if (payment.getRail() == PaymentRail.PAWAPAY) {
-            return new Plan(null, true, payment.getId(), null, null, null);
         }
         // La retenue est réglée par le remboursement partiel, qui passe le paiement en REFUNDED.
         if (payment.getStatus() != PaymentStatus.REFUNDED) {
@@ -192,6 +260,9 @@ public class CancellationFeePayoutService {
             return Plan.blocked("PAYOUT_HELD_" + hold.reasons().stream().map(Enum::name)
                     .collect(Collectors.joining(",")));
         }
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            return mobileMoneyPlan(payment);
+        }
         UserEntity traveler = users.findById(fee.travelerId()).orElse(null);
         if (traveler == null) {
             return Plan.blocked("TRAVELER_NOT_FOUND");
@@ -204,8 +275,58 @@ public class CancellationFeePayoutService {
         if (destination == null || destination.isBlank()) {
             return Plan.blocked("NO_CONNECT_ACCOUNT");
         }
-        return new Plan(null, false, payment.getId(), payment.getStripeChargeId(), destination,
+        return new Plan(null, null, false, payment.getId(), payment.getStripeChargeId(), destination,
                 CurrencyAmount.of(fee.travelerNet(), currency));
+    }
+
+    /**
+     * Rail mobile money : le remboursement pawaPay de l'expéditeur est asynchrone. Le voyageur n'est payé qu'une fois
+     * ce remboursement ABOUTI et du montant enregistré ({@code refunded_amount}, le dépôt moins la retenue) : un
+     * remboursement échoué, puis relancé pour le dépôt entier, ne doit jamais coexister avec un dédommagement versé.
+     */
+    private Plan mobileMoneyPlan(PaymentEntity payment) {
+        PawapayOperationEntity refund = pawapayOperations.findLatest(payment.getId(), PawapayOperationKind.REFUND)
+                .orElse(null);
+        if (refund == null) {
+            return Plan.blocked("SENDER_REFUND_MISSING");
+        }
+        if (!refund.getStatus().isFinal()) {
+            return Plan.waiting("remboursement de l'expéditeur " + refund.getId() + " " + refund.getStatus());
+        }
+        if (refund.getStatus() != PawapayOperationStatus.COMPLETED) {
+            return Plan.blocked("SENDER_REFUND_" + refund.getStatus().name());
+        }
+        BigDecimal recorded = payment.getRefundedAmount();
+        if (recorded == null || refund.getAmount().compareTo(recorded) != 0) {
+            return Plan.blocked("SENDER_REFUND_AMOUNT_MISMATCH");
+        }
+        return Plan.mobileMoney(payment.getId());
+    }
+
+    /**
+     * Versement pawaPay, hors transaction : opération vivante de la retenue reprise, sinon soumise. Soumise ou en vol,
+     * la ligne attend l'issue pawaPay ({@link #mobileMoneyPayoutCompleted}) ; déjà aboutie (issue perdue), elle est
+     * versée ici. Refus ou erreur : attente et alerte, nouvel essai au passage horaire.
+     */
+    private boolean mobileMoneyPayout(PayableCancellationFee fee) {
+        PawapayOperationEntity op;
+        try {
+            op = mobileMoneyPayouts.releaseCancellationFee(fee.feeId(), fee.bidId(), fee.travelerId(), fee.travelerNet(),
+                    fee.currency());
+        } catch (MobileMoneyPayoutRefusedException e) {
+            log.warn("Dédommagement {} du colis {} : versement pawaPay refusé ({})", fee.feeId(), fee.bidId(),
+                    e.getMessage());
+            return leavePending(fee.feeId(), fee, e.reason());
+        } catch (RuntimeException e) {
+            log.warn("Dédommagement {} du colis {} : versement pawaPay en erreur", fee.feeId(), fee.bidId(), e);
+            return leavePending(fee.feeId(), fee, "PAWAPAY_ERROR: " + describe(e));
+        }
+        if (op.getStatus() == PawapayOperationStatus.COMPLETED) {
+            return paidOut(fee, op.getId().toString());
+        }
+        log.info("Dédommagement {} du colis {} : versement pawaPay {} {}, issue attendue", fee.feeId(), fee.bidId(),
+                op.getId(), op.getStatus());
+        return false;
     }
 
     /** Appel Stripe, hors transaction : Transfer déjà présent repris, sinon créé sous la clé stable. */

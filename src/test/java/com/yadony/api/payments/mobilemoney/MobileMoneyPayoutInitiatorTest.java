@@ -63,7 +63,8 @@ class MobileMoneyPayoutInitiatorTest {
         // Le routage du versement est celui, réel, de MobileMoneyPayoutAccounts (sur un dépôt simulé) :
         // ces tests prouvent le choix du compte, pas seulement l'appel d'un collaborateur.
         initiator = new MobileMoneyPayoutInitiator(new MobileMoneyPayoutAccounts(accountRepository, TestMessages.resolver()), operations,
-                submission, adminAlert, alerts, audit, transactionManager, holdPolicy);
+                submission, adminAlert, alerts, audit, transactionManager, holdPolicy,
+                org.mockito.Mockito.mock(com.yadony.api.payments.PaymentRepository.class));
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
         payment.setRail(PaymentRail.PAWAPAY);

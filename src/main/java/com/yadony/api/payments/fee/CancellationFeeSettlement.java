@@ -5,6 +5,7 @@ import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.wallet.fees.PawapayFeeTable;
 import com.yadony.api.payments.wallet.fees.StripeFeeSource;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -13,12 +14,14 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
- * Règlement de la retenue d'annulation d'un expéditeur fautif, rail carte : rassemble les entrées du
- * calcul (montant payé, taux dû, plafond converti, frais Stripe perdus, commission) et les confie à
+ * Règlement de la retenue d'annulation d'un expéditeur fautif : rassemble les entrées du calcul (montant payé,
+ * taux dû, plafond converti, frais perdus du prestataire, commission) et les confie à
  * {@link CancellationFeeCalculator}, puis enregistre l'issue sur la ligne de la retenue par le port
- * {@link CancellationFeeRatePort}.
+ * {@link CancellationFeeRatePort}. Un seul calcul pour les deux rails ; seule la source des frais perdus change :
+ * frais Stripe réels de la charge (carte), barème pawaPay de l'opérateur du dépôt (mobile money).
  *
  * <p>Appelé par {@code RefundProcessor} sous le claim du paiement ({@code markRefundedIfEscrow}) : ce
  * claim garantit un seul remboursement par paiement, donc un seul règlement de la retenue, et rend sans
@@ -33,6 +36,10 @@ public class CancellationFeeSettlement {
     static final String LEGACY_DESTINATION_CHARGE = "LEGACY_DESTINATION_CHARGE";
     static final String ALREADY_PARTIALLY_REFUNDED = "PAYMENT_ALREADY_PARTIALLY_REFUNDED";
     static final String FEE_COMPUTATION_FAILED = "FEE_COMPUTATION_FAILED";
+    /** Rail mobile money : dépôt encaissé d'un autre montant que le paiement. */
+    static final String DEPOSIT_AMOUNT_MISMATCH = "DEPOSIT_AMOUNT_MISMATCH";
+    /** Rail mobile money : remboursement d'une tentative précédente déjà en vol, d'un autre montant. */
+    static final String REFUND_IN_FLIGHT = "REFUND_ALREADY_IN_FLIGHT";
 
     private static final String SUCCEEDED = "succeeded";
     private static final String CANCELED = "canceled";
@@ -43,19 +50,32 @@ public class CancellationFeeSettlement {
     private final CancellationFeeRatePort port;
     private final PaymentRepository payments;
     private final StripeFeeSource stripeFees;
+    private final PawapayFeeTable pawapayFees;
     private final CommissionRateResolver commissionRates;
     private final ExchangeRateService exchangeRates;
     private final ApplicationEventPublisher events;
 
     public CancellationFeeSettlement(CancellationFeeRatePort port, PaymentRepository payments,
-                                     StripeFeeSource stripeFees, CommissionRateResolver commissionRates,
-                                     ExchangeRateService exchangeRates, ApplicationEventPublisher events) {
+                                     StripeFeeSource stripeFees, PawapayFeeTable pawapayFees,
+                                     CommissionRateResolver commissionRates, ExchangeRateService exchangeRates,
+                                     ApplicationEventPublisher events) {
         this.port = port;
         this.payments = payments;
         this.stripeFees = stripeFees;
+        this.pawapayFees = pawapayFees;
         this.commissionRates = commissionRates;
         this.exchangeRates = exchangeRates;
         this.events = events;
+    }
+
+    /**
+     * Frais du prestataire perdus au remboursement, dans la devise du paiement : seule entrée du calcul propre au
+     * rail. {@code refunded} donne, à la demande, le montant rendu à l'expéditeur (payé − brut), connu avant les
+     * frais ; le rail carte ne le lit pas.
+     */
+    @FunctionalInterface
+    private interface LostRefundFees {
+        BigDecimal of(BigDecimal paid, Supplier<BigDecimal> refunded);
     }
 
     /**
@@ -75,16 +95,55 @@ public class CancellationFeeSettlement {
     }
 
     /**
+     * Rail mobile money : comme {@link #settle}, frais perdus lus dans le barème pawaPay de l'opérateur du dépôt
+     * ({@link #computeMobileMoney}). Vide aussi quand le dépôt encaissé n'est pas exactement le montant du paiement :
+     * le remboursement porte sur le dépôt, la retenue sur le paiement, l'écart serait perdu ou rendu deux fois.
+     *
+     * @param depositProvider code pawaPay de l'opérateur du dépôt d'origine
+     * @param depositAmount   montant du dépôt {@code COMPLETED} remboursé
+     */
+    public Optional<CancellationFeeBreakdown> settleMobileMoney(PaymentEntity payment, String depositProvider,
+                                                                BigDecimal depositAmount) {
+        if (mobileMoneyIneligibility(payment, depositAmount) != null) {
+            return Optional.empty();
+        }
+        return bidIdOf(payment)
+                .flatMap(port::dueRate)
+                .map(rate -> computeMobileMoney(payment, depositProvider, rate));
+    }
+
+    /**
      * Calcul unique de la retenue au taux donné, sans effet de bord (hors lecture des frais Stripe) :
      * le remboursement et l'aperçu montré à l'expéditeur avant d'annuler doivent passer par ici.
      */
     public CancellationFeeBreakdown compute(PaymentEntity payment, UUID senderId, UUID travelerId, BigDecimal rate) {
+        return compute(payment, senderId, travelerId, rate, (paid, refunded) -> stripeRefundFees(payment));
+    }
+
+    /**
+     * Même calcul sur le rail mobile money : les frais perdus sont ceux du barème pawaPay de l'opérateur du dépôt
+     * ({@link PawapayFeeTable#partialRefundFee}), le dépôt facturé sur l'encaissé, le remboursement sur ce qui est
+     * rendu. Repli du taux de commission sans les parties (le paiement mobile money garde toujours sa commission).
+     */
+    public CancellationFeeBreakdown computeMobileMoney(PaymentEntity payment, String depositProvider, BigDecimal rate) {
+        return compute(payment, null, null, rate, (paid, refunded) ->
+                pawapayFees.partialRefundFee(depositProvider, paid, refunded.get(), payment.getCurrency()));
+    }
+
+    private CancellationFeeBreakdown compute(PaymentEntity payment, UUID senderId, UUID travelerId, BigDecimal rate,
+                                             LostRefundFees lostFees) {
         String currency = payment.getCurrency();
         BigDecimal paid = payment.getAmount();
+        int scale = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
         // Vers le bas : le plafond converti ne dépasse jamais son équivalent en euros.
         BigDecimal cap = exchangeRates.convert(port.capEur(), "EUR", currency, RoundingMode.DOWN);
-        return CancellationFeeCalculator.compute(paid, rate, cap, refundFees(payment), commissionRate(payment,
-                senderId, travelerId), SupportedCurrency.fromCodeOrDefault(currency).minorUnit());
+        BigDecimal commissionRate = commissionRate(payment, senderId, travelerId);
+        // Le brut, donc le montant rendu à l'expéditeur, ne dépend pas des frais : un premier passage à frais nuls le
+        // donne, le rail mobile money facture son remboursement sur ce montant-là. Aucune formule recopiée hors du
+        // calculateur.
+        BigDecimal fees = lostFees.of(paid, () -> CancellationFeeCalculator
+                .compute(paid, rate, cap, BigDecimal.ZERO, commissionRate, scale).senderRefund());
+        return CancellationFeeCalculator.compute(paid, rate, cap, fees, commissionRate, scale);
     }
 
     /**
@@ -123,6 +182,32 @@ public class CancellationFeeSettlement {
         closeIfDue(payment, FEE_COMPUTATION_FAILED);
     }
 
+    /**
+     * Rail mobile money, l'expéditeur a été remboursé du dépôt entier : une retenue encore due que ce paiement ne
+     * pouvait pas porter (voir {@link #settleMobileMoney}) est close avec son motif. Sans effet si le paiement était
+     * éligible : {@link #settleMobileMoney} vient alors de lire le taux, rien n'était dû.
+     */
+    public void waiveMobileMoneyIfDue(PaymentEntity payment, BigDecimal depositAmount) {
+        String reason = mobileMoneyIneligibility(payment, depositAmount);
+        if (reason != null) {
+            closeIfDue(payment, reason);
+        }
+    }
+
+    /**
+     * Un remboursement d'une tentative précédente est déjà en vol pour un autre montant que l'expéditeur moins la
+     * retenue : il fait foi (jamais un second), la retenue est close {@code NOT_APPLICABLE}, motif
+     * {@value #REFUND_IN_FLIGHT}.
+     */
+    public void waiveAfterRefundInFlight(PaymentEntity payment) {
+        closeIfDue(payment, REFUND_IN_FLIGHT);
+    }
+
+    /** Paiement jamais encaissé (annulé avant tout dépôt abouti) : retenue close, motif {@value #NOT_CAPTURED}. */
+    public void waiveNotCollected(PaymentEntity payment) {
+        closeIfDue(payment, NOT_CAPTURED);
+    }
+
     /** Lecture simple d'abord : le remboursement ordinaire, sans retenue, ne pose aucun verrou de plus. */
     private void closeIfDue(PaymentEntity payment, String reason) {
         bidIdOf(payment)
@@ -146,6 +231,18 @@ public class CancellationFeeSettlement {
         return null;
     }
 
+    /** Comme {@link #ineligibility}, plus le dépôt d'un autre montant que le paiement (rail mobile money). */
+    private static String mobileMoneyIneligibility(PaymentEntity payment, BigDecimal depositAmount) {
+        String reason = ineligibility(payment);
+        if (reason != null) {
+            return reason;
+        }
+        if (depositAmount == null || payment.getAmount() == null || depositAmount.compareTo(payment.getAmount()) != 0) {
+            return DEPOSIT_AMOUNT_MISMATCH;
+        }
+        return null;
+    }
+
     /** Colis du paiement : le sien, ou celui matérialisé depuis le fil de négociation payé. */
     private Optional<UUID> bidIdOf(PaymentEntity payment) {
         if (payment.getBidId() != null) {
@@ -155,7 +252,7 @@ public class CancellationFeeSettlement {
     }
 
     /** Frais Stripe réels de la charge, perdus au remboursement ; repli configuré s'ils sont illisibles. */
-    private BigDecimal refundFees(PaymentEntity payment) {
+    private BigDecimal stripeRefundFees(PaymentEntity payment) {
         BigDecimal fee = stripeFees.fee(payment.getStripePaymentIntentId(), payment.getCurrency());
         return fee != null ? fee : stripeFees.fallback(payment.getAmount(), payment.getCurrency());
     }

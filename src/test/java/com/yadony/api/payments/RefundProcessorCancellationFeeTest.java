@@ -84,7 +84,7 @@ class RefundProcessorCancellationFeeTest {
     @BeforeEach
     void setUp() {
         CancellationFeeSettlement settlement = new CancellationFeeSettlement(feePort, paymentRepository, stripeFees,
-                commissionRates, new ExchangeRateService(rateLookup), events);
+                mock(com.yadony.api.payments.wallet.fees.PawapayFeeTable.class), commissionRates, new ExchangeRateService(rateLookup), events);
         processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
                 mock(PawapayOperationService.class), mock(PawapaySubmissionService.class),
                 alerts, mock(PlatformTransactionManager.class), settlement);

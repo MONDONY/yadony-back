@@ -853,8 +853,12 @@ public class AdminPaymentController {
                 .orElseThrow(() -> retryNotAllowed("problem.admin.retry-no-completed-deposit"));
         // Montant du DEPOSIT d'origine, jamais payment.getAmount() — même alignement que
         // RefundProcessor#refundEscrowedMobileMoney (les deux se valent aujourd'hui, sans
-        // garantie contractuelle demain).
-        PawapayOperationEntity refund = pawapaySubmission.submitRefund(id, deposit, deposit.getAmount());
+        // garantie contractuelle demain). Sauf remboursement partiel (frais d'annulation retenus) :
+        // ce qui reste dû à l'expéditeur est payments.refunded_amount, posé par RefundProcessor. Le
+        // dépôt entier lui rendrait la part promise au voyageur.
+        BigDecimal refundAmount = payment.getRefundedAmount() != null && payment.getRefundedAmount().signum() > 0
+                ? payment.getRefundedAmount() : deposit.getAmount();
+        PawapayOperationEntity refund = pawapaySubmission.submitRefund(id, deposit, refundAmount);
         if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             throw refundFailed("problem.admin.refund-rejected", String.valueOf(refund.getFailureCode()));
         }

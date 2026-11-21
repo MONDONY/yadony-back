@@ -94,6 +94,27 @@ public class PawapayOperationService {
                 relatedOperationId, amount, currency, provider, country, msisdn));
     }
 
+    /**
+     * Versement du dédommagement d'annulation {@code cancellationFeeId} au voyageur (purpose
+     * {@code CANCELLATION_FEE}, voyageur en {@code user_id}, {@code payment_id} toujours nul). Au plus un
+     * versement vivant ou abouti par retenue : garde applicative + index
+     * {@code uq_pawapay_ops_live_per_cancellation_fee} (V391), traduits en 409.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PawapayOperationEntity createForCancellationFee(UUID travelerId, UUID cancellationFeeId, BigDecimal amount,
+                                                           String currency, String provider, String country,
+                                                           String msisdn) {
+        if (travelerId == null || cancellationFeeId == null) {
+            throw new IllegalArgumentException("Versement de dédommagement sans voyageur ou sans retenue");
+        }
+        if (repository.existsByCancellationFeeIdAndKindAndStatusIn(cancellationFeeId, PawapayOperationKind.PAYOUT,
+                PawapayOperationStatus.LIVE_OR_DONE)) {
+            throw inProgress(PawapayOperationKind.PAYOUT);
+        }
+        return save(PawapayOperationEntity.forCancellationFee(UUID.randomUUID(), travelerId, cancellationFeeId,
+                amount, currency, provider, country, msisdn));
+    }
+
     private PawapayOperationEntity save(PawapayOperationEntity op) {
         PawapayOperationKind kind = op.getKind();
         UUID paymentId = op.getPaymentId();
@@ -119,6 +140,12 @@ public class PawapayOperationService {
             if (lowerCause.contains("uq_pawapay_ops_live_per_supplement")) {
                 log.warn("pawaPay {} : opération déjà vivante pour le supplément {} : {}",
                         kind, op.getBidSupplementId(), causeMessage);
+                throw inProgress(kind);
+            }
+            // Même filet pour le versement d'un dédommagement d'annulation (V391).
+            if (lowerCause.contains("uq_pawapay_ops_live_per_cancellation_fee")) {
+                log.warn("pawaPay {} : versement déjà vivant pour la retenue {} : {}",
+                        kind, op.getCancellationFeeId(), causeMessage);
                 throw inProgress(kind);
             }
             // Même filet, pour la recharge du portefeuille : la garde applicative lit avant
@@ -263,6 +290,20 @@ public class PawapayOperationService {
     @Transactional(readOnly = true)
     public Optional<PawapayOperationEntity> findLatestForSupplement(UUID bidSupplementId, PawapayOperationKind kind) {
         return repository.findFirstByBidSupplementIdAndKindOrderByCreatedAtDesc(bidSupplementId, kind);
+    }
+
+    /** Versement vivant ou abouti du dédommagement d'annulation {@code cancellationFeeId}. */
+    @Transactional(readOnly = true)
+    public Optional<PawapayOperationEntity> findLiveForCancellationFee(UUID cancellationFeeId) {
+        return repository.findFirstByCancellationFeeIdAndKindAndStatusInOrderByCreatedAtDesc(cancellationFeeId,
+                PawapayOperationKind.PAYOUT, PawapayOperationStatus.LIVE_OR_DONE);
+    }
+
+    /** Versements morts (échoués ou refusés à la soumission) du dédommagement d'annulation {@code cancellationFeeId}. */
+    @Transactional(readOnly = true)
+    public long countDeadForCancellationFee(UUID cancellationFeeId) {
+        return repository.countByCancellationFeeIdAndKindAndStatusIn(cancellationFeeId, PawapayOperationKind.PAYOUT,
+                PawapayOperationStatus.DEAD);
     }
 
     @Transactional(readOnly = true)

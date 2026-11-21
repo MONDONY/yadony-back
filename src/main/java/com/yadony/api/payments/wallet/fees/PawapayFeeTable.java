@@ -41,6 +41,19 @@ public record PawapayFeeTable(@Name("default") Rate defaults, Map<String, Rate> 
     }
 
     /**
+     * Frais pawaPay perdus quand un dépôt de {@code deposited} n'est rendu qu'en partie ({@code refunded}) :
+     * {@code (deposited x depositPercent + refunded x refundPercent) / 100}, arrondi une fois à l'échelle de la
+     * devise. Le dépôt est facturé sur ce qui a été encaissé, le remboursement sur ce qui repart seulement.
+     * Rendu entier ({@code refunded == deposited}) : même valeur que {@link #fee}.
+     */
+    public BigDecimal partialRefundFee(String provider, BigDecimal deposited, BigDecimal refunded, String currency) {
+        Rate rate = rateFor(provider);
+        int scale = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
+        return deposited.multiply(rate.depositPercent()).add(refunded.multiply(rate.refundPercent()))
+                .divide(new BigDecimal("100"), scale, RoundingMode.HALF_UP);
+    }
+
+    /**
      * Taux applicables à l'opérateur {@code provider} : sa surcharge si elle existe, sinon le
      * défaut configuré, sinon {@link #HARDCODED_DEFAULT}. Public pour le calcul du montant de
      * remboursement sûr ({@code PawapayRefundSafeAmount}), qui ne lit que {@code refundPercent}.

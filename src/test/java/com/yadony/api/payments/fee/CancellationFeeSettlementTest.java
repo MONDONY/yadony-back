@@ -24,6 +24,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -45,6 +47,7 @@ class CancellationFeeSettlementTest {
     @Mock CancellationFeeRatePort port;
     @Mock PaymentRepository payments;
     @Mock StripeFeeSource stripeFees;
+    @Mock com.yadony.api.payments.wallet.fees.PawapayFeeTable pawapayFees;
     @Mock CommissionRateResolver commissionRates;
     @Mock ExchangeRateLookup rateLookup;
     @Mock ApplicationEventPublisher events;
@@ -53,7 +56,7 @@ class CancellationFeeSettlementTest {
 
     @BeforeEach
     void setUp() {
-        settlement = new CancellationFeeSettlement(port, payments, stripeFees, commissionRates,
+        settlement = new CancellationFeeSettlement(port, payments, stripeFees, pawapayFees, commissionRates,
                 new ExchangeRateService(rateLookup), events);
         lenient().when(port.capEur()).thenReturn(new BigDecimal("30"));
     }
@@ -280,6 +283,78 @@ class CancellationFeeSettlementTest {
         InOrder order = inOrder(port, events);
         order.verify(port).markRetained(payment.getBidId(), fee, "EUR");
         order.verify(events).publishEvent(new CancellationFeeRetainedEvent(payment.getBidId()));
+    }
+
+    // ── Rail mobile money : frais lus dans le barème pawaPay de l'opérateur du dépôt ──────────────────────────
+
+    @Test
+    void computeMobileMoney_readsThePawapayFeesOnWhatIsActuallyRefunded() {
+        when(rateLookup.unitsPerEur("XOF")).thenReturn(new BigDecimal("655.957"));
+        PaymentEntity payment = payment("65600", "3124", "XOF");
+        // Le rendu (65 600 − 19 678 = 45 922) ne dépend pas des frais : c'est sur lui que pawaPay facture.
+        when(pawapayFees.partialRefundFee(eq("ORANGE_SEN"), argThat(a -> a.compareTo(new BigDecimal("65600")) == 0),
+                argThat(a -> a.compareTo(new BigDecimal("45922")) == 0), eq("XOF"))).thenReturn(new BigDecimal("1443"));
+
+        CancellationFeeBreakdown b = settlement.computeMobileMoney(payment, "ORANGE_SEN", new BigDecimal("0.30"));
+
+        assertAmounts(b, "19678", "1443", "912", "17323", "45922", 0);
+        verifyNoInteractions(stripeFees, commissionRates);
+    }
+
+    @Test
+    void settleMobileMoney_dueFee_computedWithTheDepositOperator() {
+        PaymentEntity payment = payment("50000", "2381", "XOF");
+        when(rateLookup.unitsPerEur("XOF")).thenReturn(new BigDecimal("655.957"));
+        when(port.dueRate(payment.getBidId())).thenReturn(Optional.of(new BigDecimal("0.30")));
+        when(pawapayFees.partialRefundFee(eq("MTN_MOMO_CIV"), any(), any(), eq("XOF"))).thenReturn(new BigDecimal("1950"));
+
+        Optional<CancellationFeeBreakdown> b = settlement.settleMobileMoney(payment, "MTN_MOMO_CIV", new BigDecimal("50000"));
+
+        assertThat(b).hasValueSatisfying(fee -> assertAmounts(fee, "15000", "1950", "653", "12397", "35000", 0));
+    }
+
+    @Test
+    void settleMobileMoney_depositOfAnotherAmount_cannotCarryAFee_closedNotApplicable() {
+        PaymentEntity payment = payment("65600", "3124", "XOF");
+        when(port.dueRate(payment.getBidId())).thenReturn(Optional.of(new BigDecimal("0.30")));
+
+        assertThat(settlement.settleMobileMoney(payment, "ORANGE_SEN", new BigDecimal("65000"))).isEmpty();
+        settlement.waiveMobileMoneyIfDue(payment, new BigDecimal("65000"));
+
+        verify(port).markNotApplicable(payment.getBidId(), "DEPOSIT_AMOUNT_MISMATCH");
+        verifyNoInteractions(pawapayFees);
+    }
+
+    @Test
+    void settleMobileMoney_noFeeDue_emptyWithoutReadingTheFees() {
+        PaymentEntity payment = payment("65600", "3124", "XOF");
+
+        assertThat(settlement.settleMobileMoney(payment, "ORANGE_SEN", new BigDecimal("65600"))).isEmpty();
+        settlement.waiveMobileMoneyIfDue(payment, new BigDecimal("65600"));
+
+        verifyNoInteractions(pawapayFees, rateLookup);
+        verify(port, never()).markNotApplicable(any(), any());
+    }
+
+    @Test
+    void waiveAfterRefundInFlight_andNotCollected_closeTheDueFeeWithTheirReason() {
+        PaymentEntity payment = payment("65600", "3124", "XOF");
+        when(port.dueRate(payment.getBidId())).thenReturn(Optional.of(new BigDecimal("0.30")));
+
+        settlement.waiveAfterRefundInFlight(payment);
+        settlement.waiveNotCollected(payment);
+
+        verify(port).markNotApplicable(payment.getBidId(), "REFUND_ALREADY_IN_FLIGHT");
+        verify(port).markNotApplicable(payment.getBidId(), "PAYMENT_NOT_CAPTURED");
+    }
+
+    @Test
+    void waiveNotCollected_nothingDue_noLockingWrite() {
+        PaymentEntity payment = payment("65600", "3124", "XOF");
+
+        settlement.waiveNotCollected(payment);
+
+        verify(port, never()).markNotApplicable(any(), any());
     }
 
     private static PaymentEntity payment(String amount, String commission, String currency) {
