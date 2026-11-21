@@ -47,8 +47,11 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     boolean existsByCancellationFeeIdAndKindAndStatusIn(
             UUID cancellationFeeId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
 
-    long countByCancellationFeeIdAndKindAndStatusIn(
-            UUID cancellationFeeId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
+    long countByCancellationFeeIdAndKindAndStatus(
+            UUID cancellationFeeId, PawapayOperationKind kind, PawapayOperationStatus status);
+
+    long countByCancellationFeeIdAndKindAndStatusAndCreatedAtAfter(
+            UUID cancellationFeeId, PawapayOperationKind kind, PawapayOperationStatus status, LocalDateTime createdAfter);
 
     boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(UUID userId, PawapayOperationKind kind,
             String currency, PawapayOperationPurpose purpose, Collection<PawapayOperationStatus> statuses);

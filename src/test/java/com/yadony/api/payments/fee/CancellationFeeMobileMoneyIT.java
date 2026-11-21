@@ -124,6 +124,7 @@ class CancellationFeeMobileMoneyIT {
     @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
 
     @Autowired RefundProcessor refundProcessor;
+    @Autowired com.yadony.api.cancellation.fee.CancellationFeeAdminService adminService;
     @Autowired CancellationFeePayoutScheduler scheduler;
     @Autowired PawapayOperationService operations;
     @Autowired PawapayOperationRepository operationRepository;
@@ -317,6 +318,108 @@ class CancellationFeeMobileMoneyIT {
         assertThat(requests.getAllValues()).extracting(PawapayRefundRequest::amount)
                 .allSatisfy(amount -> assertThat(amount).isEqualByComparingTo("45922"));
         assertThat(status()).isEqualTo(CancellationFeeStatus.RETAINED);
+    }
+
+    @Test
+    @DisplayName("partiel refusé, l'admin renonce à la retenue : le remboursement suivant rend le dépôt entier")
+    void partialRefundRejected_adminWaivesTheFee_nextRefundReturnsTheWholeDeposit() {
+        when(client.initiateRefund(any()))
+                .thenReturn(new PawapayInitiationResult(PawapayInitiationResult.Outcome.REJECTED, "AMOUNT_OUT_OF_BOUNDS",
+                        "refusé"))
+                .thenReturn(PawapayInitiationResult.accepted());
+        assertThatThrownBy(this::refund).isInstanceOf(IllegalStateException.class);
+        assertThat(status()).isEqualTo(CancellationFeeStatus.DUE);
+        UUID adminId = UUID.randomUUID();
+
+        adminService.waive(bidId, adminId, "Partiel refusé par l'opérateur, remboursement intégral");
+
+        assertThat(status()).isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        Map<String, Object> audit = jdbc.queryForMap("SELECT actor_id, payload::text AS payload FROM audit_log "
+                + "WHERE entity_id = ? AND action = 'CANCELLATION_FEE_NOT_APPLICABLE'", bidId);
+        assertThat(audit.get("actor_id")).isEqualTo(adminId);
+        assertThat((String) audit.get("payload")).contains("ADMIN_WAIVED").contains("Partiel refusé par l'opérateur");
+
+        assertThat(refund()).isTrue();
+
+        ArgumentCaptor<PawapayRefundRequest> requests = ArgumentCaptor.forClass(PawapayRefundRequest.class);
+        verify(client, times(2)).initiateRefund(requests.capture());
+        assertThat(requests.getAllValues().get(1).amount()).as("le dépôt entier").isEqualByComparingTo("65600");
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId))
+                .isEqualTo("REFUNDED");
+        assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class, paymentId))
+                .isNull();
+        assertThat(status()).isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        assertThat(audits("CANCELLATION_FEE_RETAINED")).isZero();
+    }
+
+    @Test
+    @DisplayName("plafond : seuls les versements FAILED comptent, l'arrêt lève une alerte à part, la relance admin verse")
+    void onlyFailedPayoutsCount_stopRaisesADistinctAlert_adminRetryPays() throws Exception {
+        withMobileMoneyAccount();
+        assertThat(refund()).isTrue();
+        operations.apply(operationId(paymentId, "REFUND"), PawapayOperationStatus.COMPLETED, null, null, providerTx(),
+                null, "{}", PawapayOperationService.Source.CALLBACK);
+        // Historique : trois refus à la soumission (rien n'est parti) et deux échecs pawaPay.
+        deadFeePayout(PawapayOperationStatus.SUBMIT_REJECTED);
+        deadFeePayout(PawapayOperationStatus.SUBMIT_REJECTED);
+        deadFeePayout(PawapayOperationStatus.SUBMIT_REJECTED);
+        deadFeePayout(PawapayOperationStatus.FAILED);
+        deadFeePayout(PawapayOperationStatus.FAILED);
+        ageRetainedRow();
+
+        // Deux échecs seulement : un nouveau versement part malgré les trois refus.
+        scheduler.run();
+        ArgumentCaptor<PawapayPayoutRequest> first = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
+        verify(client).initiatePayout(first.capture());
+        operations.apply(first.getValue().payoutId(), PawapayOperationStatus.FAILED, "RECIPIENT_NOT_FOUND", "inconnu",
+                null, null, "{}", PawapayOperationService.Source.CALLBACK);
+        awaitFeeStatus(CancellationFeeStatus.PAYOUT_PENDING);
+        assertThat(stopAlerts()).isZero();
+
+        // Troisième échec : plus d'essai automatique, alerte d'arrêt, nouveau motif enregistré et audité.
+        scheduler.run();
+        verify(client, times(1)).initiatePayout(any());
+        assertThat(stopAlerts()).isEqualTo(1);
+        assertThat(feeRepository.findById(feeId).orElseThrow().getPayoutPendingReason())
+                .isEqualTo("TOO_MANY_FAILED_PAYOUTS");
+        assertThat(jdbc.queryForList("SELECT payload::text FROM audit_log WHERE entity_id = ? "
+                + "AND action = 'CANCELLATION_FEE_PAYOUT_PENDING' ORDER BY created_at", String.class, bidId))
+                .hasSize(2)
+                .last().satisfies(payload -> assertThat(payload).contains("TOO_MANY_FAILED_PAYOUTS"));
+        // Passage suivant, même cause : ni versement, ni seconde alerte, ni audit de plus.
+        scheduler.run();
+        verify(client, times(1)).initiatePayout(any());
+        assertThat(stopAlerts()).isEqualTo(1);
+        assertThat(audits("CANCELLATION_FEE_PAYOUT_PENDING")).isEqualTo(2);
+
+        // Relance admin : le plafond repart de zéro, versement tenté aussitôt par le chemin habituel.
+        UUID adminId = UUID.randomUUID();
+        adminService.retryPayout(feeId, adminId, "Numéro du voyageur corrigé avec le support");
+
+        ArgumentCaptor<PawapayPayoutRequest> both = ArgumentCaptor.forClass(PawapayPayoutRequest.class);
+        verify(client, times(2)).initiatePayout(both.capture());
+        assertThat(stopAlerts()).as("alerte d'arrêt close par la relance").isZero();
+        assertThat(audits("CANCELLATION_FEE_PAYOUT_RETRY_REQUESTED")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT actor_id FROM audit_log WHERE entity_id = ? "
+                + "AND action = 'CANCELLATION_FEE_PAYOUT_RETRY_REQUESTED'", UUID.class, bidId)).isEqualTo(adminId);
+        operations.apply(both.getAllValues().get(1).payoutId(), PawapayOperationStatus.COMPLETED, null, null,
+                providerTx(), null, "{}", PawapayOperationService.Source.CALLBACK);
+
+        awaitFeeStatus(CancellationFeeStatus.PAID_OUT);
+        awaitOpenAlerts(0);
+    }
+
+    private void deadFeePayout(PawapayOperationStatus status) {
+        PawapayOperationEntity op = PawapayOperationEntity.forCancellationFee(UUID.randomUUID(), travelerId, feeId,
+                new BigDecimal("16662"), "XOF", "ORANGE_SEN", "SN", ACCOUNT_MSISDN);
+        op.setStatus(status);
+        operationRepository.saveAndFlush(op);
+    }
+
+    private long stopAlerts() {
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM admin_alerts WHERE type = ? AND resolved = false",
+                Long.class, CancellationFeePayoutService.STOPPED_ALERT_PREFIX + feeId);
+        return n == null ? 0 : n;
     }
 
     private boolean refund() {

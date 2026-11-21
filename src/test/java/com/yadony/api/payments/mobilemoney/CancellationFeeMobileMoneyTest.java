@@ -596,13 +596,81 @@ class CancellationFeeMobileMoneyTest {
         }
 
         @Test
-        void tooManyFailedPayouts_noNewSubmission() {
-            when(operations.countDeadForCancellationFee(feeId)).thenReturn(3L);
+        void threeFailedPayouts_stopTheAutomaticRetries_withADistinctAlert() {
+            when(operations.countFailedForCancellationFee(feeId, null)).thenReturn(3L);
 
             assertThat(service.payOut(feeId)).isFalse();
 
             verify(port).markPayoutPending(feeId, "TOO_MANY_FAILED_PAYOUTS");
             verify(submission, never()).submitCancellationFeePayout(any(), any(), any(), any(), any(), any(), any(), any());
+            // Alerte à part : celle du versement en attente dit « nouvel essai chaque heure », ici il n'y en a plus.
+            verify(alerts).raiseOnce(eq(CancellationFeePayoutService.STOPPED_ALERT_PREFIX + feeId),
+                    contains("retry-payout"), anyMap());
+        }
+
+        @Test
+        void belowTheCap_aNewPayoutIsSubmitted_onlyFailedOperationsAreCounted() {
+            // Le plafond ne lit que les versements FAILED (refus à la soumission exclus, prouvé en base par l'IT).
+            when(operations.countFailedForCancellationFee(feeId, null)).thenReturn(2L);
+
+            assertThat(service.payOut(feeId)).isFalse();
+
+            verify(operations).countFailedForCancellationFee(feeId, null);
+            verify(submission).submitCancellationFeePayout(any(), any(), any(), any(), any(), any(), any(), any());
+            verify(alerts, never()).raiseOnce(eq(CancellationFeePayoutService.STOPPED_ALERT_PREFIX + feeId),
+                    anyString(), anyMap());
+        }
+
+        @Test
+        void rearmedByAnAdmin_onlyLaterFailuresCount() {
+            Instant rearmed = Instant.parse("2026-11-21T10:00:00Z");
+            when(port.findPayable(feeId)).thenReturn(Optional.of(new PayableCancellationFee(feeId, bidId, travelerId,
+                    new BigDecimal("17323"), "XOF", PayableCancellationFee.Status.PAYOUT_PENDING, rearmed)));
+            when(operations.countFailedForCancellationFee(feeId, null)).thenReturn(5L);
+            when(operations.countFailedForCancellationFee(feeId, rearmed)).thenReturn(0L);
+
+            assertThat(service.payOut(feeId)).isFalse();
+
+            verify(submission).submitCancellationFeePayout(any(), any(), any(), any(), any(), any(), any(), any());
+            verify(port, never()).markPayoutPending(any(), any());
+        }
+
+        @Test
+        void resumeAfterAdminRetry_closesTheStopAlert_thenAttemptsThroughTheSamePath() {
+            assertThat(service.resumeAfterAdminRetry(feeId)).isFalse();
+
+            verify(alerts).resolveOpen(CancellationFeePayoutService.STOPPED_ALERT_PREFIX + feeId);
+            verify(submission).submitCancellationFeePayout(eq(feeId), eq(travelerId), eq(ACCOUNT_MSISDN),
+                    eq("ORANGE_SEN"), eq("SN"), argThat(a -> same(a, "17323")), eq("XOF"), eq("fee-" + feeId));
+        }
+
+        @Test
+        void resumeAfterAdminRetry_neverBypassesTheSenderRefundGate() {
+            when(operations.findLatest(payment.getId(), PawapayOperationKind.REFUND))
+                    .thenReturn(Optional.of(paymentOperation(PawapayOperationKind.REFUND, PawapayOperationStatus.COMPLETED,
+                            "65600")));
+
+            assertThat(service.resumeAfterAdminRetry(feeId)).isFalse();
+
+            verify(port).markPayoutPending(feeId, "SENDER_REFUND_AMOUNT_MISMATCH");
+            verifyNoInteractions(submission);
+        }
+
+        @Test
+        void paidOut_closesTheStopAlertToo() {
+            PawapayOperationEntity done = feePayout(PawapayOperationStatus.COMPLETED, "17323");
+            when(operations.findLiveForCancellationFee(feeId)).thenReturn(Optional.of(done));
+
+            assertThat(service.payOut(feeId)).isTrue();
+
+            verify(alerts).resolveOpen(alertType);
+            verify(alerts).resolveOpen(CancellationFeePayoutService.STOPPED_ALERT_PREFIX + feeId);
+        }
+
+        @Test
+        void stopAlertType_fitsTheAdminAlertsColumn() {
+            assertThat((CancellationFeePayoutService.STOPPED_ALERT_PREFIX + UUID.randomUUID()).length())
+                    .isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
         }
 
         @Test

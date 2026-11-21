@@ -12,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -95,8 +96,10 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
     }
 
     /**
-     * Sous le verrou de la ligne. Seule une ligne {@code RETAINED} passe en attente (un audit) ; une ligne déjà en
-     * attente y reste sans nouvel audit à chaque essai horaire ; une ligne versée n'est jamais rétrogradée.
+     * Sous le verrou de la ligne. Une ligne {@code RETAINED} passe en attente avec son motif (un audit). Une ligne déjà
+     * en attente garde le même motif sans rien écrire à chaque essai horaire ; un motif DIFFÉRENT (l'arrêt des essais
+     * automatiques, une autre cause) est enregistré et audité avec le précédent. Une ligne versée n'est jamais
+     * rétrogradée.
      */
     @Override
     @Transactional
@@ -105,21 +108,45 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
         if (fee == null) {
             return false;
         }
+        String bounded = bounded(reason);
         if (fee.getStatus() == CancellationFeeStatus.PAYOUT_PENDING) {
+            if (Objects.equals(fee.getPayoutPendingReason(), bounded)) {
+                return true;
+            }
+            String previous = fee.getPayoutPendingReason();
+            fee.setPayoutPendingReason(bounded);
+            fees.save(fee);
+            auditPending(fee, bounded, previous);
             return true;
         }
         if (fee.getStatus() != CancellationFeeStatus.RETAINED) {
             return false;
         }
         fee.setStatus(CancellationFeeStatus.PAYOUT_PENDING);
+        fee.setPayoutPendingReason(bounded);
         fees.save(fee);
-        auditService.log("BID", fee.getBidId(), AUDIT_FEE_PAYOUT_PENDING, null, Map.of(
-                "cancellationFeeId", String.valueOf(fee.getId()),
-                "reason", String.valueOf(reason),
-                "travelerId", String.valueOf(fee.getTravelerId()),
-                "travelerNet", fee.getTravelerNet().toPlainString(),
-                "currency", fee.getCurrency()));
+        auditPending(fee, bounded, null);
         return true;
+    }
+
+    private void auditPending(CancellationFeeEntity fee, String reason, String previousReason) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("cancellationFeeId", String.valueOf(fee.getId()));
+        payload.put("reason", String.valueOf(reason));
+        if (previousReason != null) {
+            payload.put("previousReason", previousReason);
+        }
+        payload.put("travelerId", String.valueOf(fee.getTravelerId()));
+        payload.put("travelerNet", fee.getTravelerNet().toPlainString());
+        payload.put("currency", fee.getCurrency());
+        auditService.log("BID", fee.getBidId(), AUDIT_FEE_PAYOUT_PENDING, null, payload);
+    }
+
+    private static String bounded(String reason) {
+        if (reason == null || reason.length() <= CancellationFeeEntity.PAYOUT_PENDING_REASON_MAX) {
+            return reason;
+        }
+        return reason.substring(0, CancellationFeeEntity.PAYOUT_PENDING_REASON_MAX);
     }
 
     private static boolean isPayable(CancellationFeeStatus status) {
@@ -136,6 +163,7 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
             return Optional.empty();
         }
         return Optional.of(new PayableCancellationFee(fee.getId(), fee.getBidId(), fee.getTravelerId(),
-                fee.getTravelerNet(), fee.getCurrency(), status));
+                fee.getTravelerNet(), fee.getCurrency(), status,
+                fee.getPayoutRearmedAt() == null ? null : fee.getPayoutRearmedAt().toInstant(ZoneOffset.UTC)));
     }
 }

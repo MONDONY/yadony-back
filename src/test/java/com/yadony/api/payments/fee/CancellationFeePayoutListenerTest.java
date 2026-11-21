@@ -49,6 +49,15 @@ class CancellationFeePayoutListenerTest {
     }
 
     @Test
+    void adminRetryRequested_resumesThePayout() {
+        listener().onPayoutRetryRequested(
+                new com.yadony.api.cancellation.events.CancellationFeePayoutRetryRequestedEvent(FEE_ID, UUID.randomUUID()));
+
+        verify(payoutService).resumeAfterAdminRetry(FEE_ID);
+        verifyNoInteractions(port);
+    }
+
+    @Test
     void lookupFailure_neverThrows_theSchedulerTakesOver() {
         when(port.findPayableByBid(BID_ID)).thenThrow(new IllegalStateException("db down"));
 

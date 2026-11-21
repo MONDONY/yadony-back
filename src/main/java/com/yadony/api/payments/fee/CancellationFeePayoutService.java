@@ -72,7 +72,9 @@ import java.util.stream.Collectors;
  * vivant par retenue), une fois le remboursement pawaPay de l'expéditeur abouti. L'issue est asynchrone : la ligne
  * passe en {@code PAID_OUT} à la confirmation ({@link #mobileMoneyPayoutCompleted}, écouteur
  * {@link CancellationFeePayoutOutcomeListener}), en attente à l'échec. Mêmes gardes communes (paiement remboursé,
- * litige, voyageur gelé), même alerte unique, même planificateur.
+ * litige, voyageur gelé), même alerte unique, même planificateur. Après {@code MobileMoneyPayoutInitiator}
+ * {@code MAX_FAILED_FEE_PAYOUTS} versements échoués, plus d'essai automatique : alerte distincte
+ * {@link #STOPPED_ALERT_PREFIX}, jusqu'à la relance d'un administrateur ({@link #resumeAfterAdminRetry}).
  */
 @Component
 public class CancellationFeePayoutService {
@@ -83,6 +85,8 @@ public class CancellationFeePayoutService {
     public static final String IDEMPOTENCY_KEY_PREFIX = "cancel-fee-transfer-";
     /** Alerte admin d'un versement en attente : préfixe (18) + UUID de la retenue (36) = 54, sous les 60 de la colonne. */
     public static final String ALERT_PREFIX = "CANCEL_FEE_PAYOUT_";
+    /** Alerte des essais automatiques arrêtés (plafond mobile money) : préfixe (19) + UUID (36) = 55. */
+    public static final String STOPPED_ALERT_PREFIX = "CANCEL_FEE_STOPPED_";
     /** Groupe Stripe des Transfers d'une retenue : retrouvé après l'expiration de la clé d'idempotence. */
     static final String TRANSFER_GROUP_PREFIX = "cancel_fee_";
     /** Métadonnée {@code source} du Transfer, comme les versements de colis ({@code delivery}, {@code deposit}…). */
@@ -164,6 +168,17 @@ public class CancellationFeePayoutService {
             return;
         }
         leavePending(feeId, fee, "PAWAPAY_PAYOUT_FAILED_" + failureCode);
+    }
+
+    /**
+     * Relance d'un administrateur ({@code POST /admin/cancellation-fees/{feeId}/retry-payout}, ligne réarmée et
+     * commitée) : l'alerte d'arrêt des essais est close, puis le versement est tenté aussitôt par {@link #payOut},
+     * avec toutes ses gardes (remboursement de l'expéditeur abouti et du montant enregistré compris) et ses protections
+     * contre un second versement. Ne lève jamais.
+     */
+    public boolean resumeAfterAdminRetry(UUID feeId) {
+        resolveOpen(STOPPED_ALERT_PREFIX + feeId);
+        return payOut(feeId);
     }
 
     static TransactionTemplate requiresNew(PlatformTransactionManager transactionManager) {
@@ -312,11 +327,15 @@ public class CancellationFeePayoutService {
         PawapayOperationEntity op;
         try {
             op = mobileMoneyPayouts.releaseCancellationFee(fee.feeId(), fee.bidId(), fee.travelerId(), fee.travelerNet(),
-                    fee.currency());
+                    fee.currency(), fee.payoutRearmedAt());
         } catch (MobileMoneyPayoutRefusedException e) {
             log.warn("Dédommagement {} du colis {} : versement pawaPay refusé ({})", fee.feeId(), fee.bidId(),
                     e.getMessage());
-            return leavePending(fee.feeId(), fee, e.reason());
+            boolean result = leavePending(fee.feeId(), fee, e.reason());
+            if (MobileMoneyPayoutInitiator.TOO_MANY_FAILED_PAYOUTS.equals(e.reason())) {
+                raiseStoppedAlert(fee, e.getMessage());
+            }
+            return result;
         } catch (RuntimeException e) {
             log.warn("Dédommagement {} du colis {} : versement pawaPay en erreur", fee.feeId(), fee.bidId(), e);
             return leavePending(fee.feeId(), fee, "PAWAPAY_ERROR: " + describe(e));
@@ -401,6 +420,7 @@ public class CancellationFeePayoutService {
                 fee.bidId(), fee.travelerNet().toPlainString(), fee.currency(),
                 payoutRef != null ? payoutRef : "rien à transférer");
         resolveAlert(fee.feeId());
+        resolveOpen(STOPPED_ALERT_PREFIX + fee.feeId());
         return true;
     }
 
@@ -447,10 +467,39 @@ public class CancellationFeePayoutService {
     }
 
     private void resolveAlert(UUID feeId) {
+        resolveOpen(ALERT_PREFIX + feeId);
+    }
+
+    private void resolveOpen(String type) {
         try {
-            alerts.resolveOpen(ALERT_PREFIX + feeId);
+            alerts.resolveOpen(type);
         } catch (RuntimeException e) {
-            log.warn("Alerte {}{} non close après le versement : {}", ALERT_PREFIX, feeId, e.getMessage());
+            log.warn("Alerte {} non close : {}", type, e.getMessage());
+        }
+    }
+
+    /**
+     * Essais automatiques arrêtés (plafond de versements pawaPay échoués) : alerte DISTINCTE de celle du versement en
+     * attente, dont le texte annonce un nouvel essai chaque heure. Une seule ouverte par retenue ; close par la
+     * relance admin ou par le versement.
+     */
+    private void raiseStoppedAlert(PayableCancellationFee fee, String detail) {
+        try {
+            Map<String, Object> context = new LinkedHashMap<>();
+            context.put("feeId", fee.feeId().toString());
+            context.put("bidId", fee.bidId().toString());
+            context.put("travelerId", fee.travelerId().toString());
+            context.put("travelerNet", fee.travelerNet().toPlainString());
+            context.put("currency", fee.currency());
+            context.put("reason", MobileMoneyPayoutInitiator.TOO_MANY_FAILED_PAYOUTS);
+            alerts.raiseOnce(STOPPED_ALERT_PREFIX + fee.feeId(),
+                    "Dédommagement d'annulation : essais automatiques ARRÊTÉS (" + detail + "). "
+                            + fee.travelerNet().toPlainString() + " " + fee.currency() + " restent dus au voyageur "
+                            + fee.travelerId() + " (colis " + fee.bidId() + "). Action manuelle : vérifier son compte "
+                            + "mobile money puis POST /admin/cancellation-fees/" + fee.feeId() + "/retry-payout.",
+                    context);
+        } catch (RuntimeException e) {
+            log.error("Alerte {}{} non levée", STOPPED_ALERT_PREFIX, fee.feeId(), e);
         }
     }
 

@@ -6,6 +6,7 @@ import com.yadony.api.payments.pawapay.events.PawapayOperationCompletedEvent;
 import com.yadony.api.payments.pawapay.events.PawapayLateCompletionEvent;
 import com.yadony.api.payments.pawapay.events.PawapayOperationFailedEvent;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Locale;
@@ -299,11 +300,19 @@ public class PawapayOperationService {
                 PawapayOperationKind.PAYOUT, PawapayOperationStatus.LIVE_OR_DONE);
     }
 
-    /** Versements morts (échoués ou refusés à la soumission) du dédommagement d'annulation {@code cancellationFeeId}. */
+    /**
+     * Versements ÉCHOUÉS chez pawaPay ({@code FAILED}) du dédommagement {@code cancellationFeeId}, créés après
+     * {@code since} quand il est donné. Un refus à la soumission ({@code SUBMIT_REJECTED}) n'est jamais compté : rien
+     * n'est parti, une panne passagère de pawaPay ne doit pas épuiser les essais.
+     */
     @Transactional(readOnly = true)
-    public long countDeadForCancellationFee(UUID cancellationFeeId) {
-        return repository.countByCancellationFeeIdAndKindAndStatusIn(cancellationFeeId, PawapayOperationKind.PAYOUT,
-                PawapayOperationStatus.DEAD);
+    public long countFailedForCancellationFee(UUID cancellationFeeId, Instant since) {
+        return since == null
+                ? repository.countByCancellationFeeIdAndKindAndStatus(cancellationFeeId, PawapayOperationKind.PAYOUT,
+                        PawapayOperationStatus.FAILED)
+                : repository.countByCancellationFeeIdAndKindAndStatusAndCreatedAtAfter(cancellationFeeId,
+                        PawapayOperationKind.PAYOUT, PawapayOperationStatus.FAILED,
+                        LocalDateTime.ofInstant(since, ZoneOffset.UTC));
     }
 
     @Transactional(readOnly = true)

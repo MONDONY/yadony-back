@@ -112,6 +112,7 @@ class RefundProcessorCancellationFeeIT {
     }
 
     @Autowired RefundProcessor refundProcessor;
+    @Autowired com.yadony.api.cancellation.fee.CancellationFeeAdminService adminService;
     @Autowired PaymentRepository paymentRepository;
     @Autowired CancellationFeeRepository feeRepository;
     @Autowired UserRepository userRepository;
@@ -216,6 +217,39 @@ class RefundProcessorCancellationFeeIT {
         assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus())
                 .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
         assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(1);
+        assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("l'admin renonce à la retenue due : le remboursement suivant est intégral chez Stripe")
+    void adminWaivedTheDueFee_nextRefundIsAFullStripeRefund() {
+        UUID adminId = UUID.randomUUID();
+        adminService.waive(bidId, adminId, "Retenue contestée par l'expéditeur, accord du support");
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus())
+                .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+
+            assertThat(params.getValue().getAmount()).as("remboursement intégral").isNull();
+        }
+
+        Map<String, Object> payment = jdbc.queryForMap("SELECT status, refunded_amount FROM payments WHERE id = ?", paymentId);
+        assertThat(payment.get("status")).isEqualTo("REFUNDED");
+        assertThat(payment.get("refunded_amount")).isNull();
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus())
+                .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        assertThat(jdbc.queryForObject("SELECT payload::text FROM audit_log WHERE entity_id = ? AND action = ?",
+                String.class, bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).contains("ADMIN_WAIVED");
+        assertThat(jdbc.queryForObject("SELECT actor_id FROM audit_log WHERE entity_id = ? AND action = ?",
+                UUID.class, bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(adminId);
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isZero();
         assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class)).isEmpty();
     }
 

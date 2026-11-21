@@ -422,9 +422,9 @@ public class RefundProcessor {
      * le refund porte sur le dépôt moins la retenue, puis {@code refunded_amount}, retenue réglée et
      * {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent}, comme le rail carte. Un refus pawaPay du
      * remboursement partiel laisse la retenue due (claim annulé) ; un nouvel essai resoumet le même montant. Pour
-     * rembourser le dépôt entier à la place, la retenue doit d'abord sortir de {@code DUE}
-     * ({@code CancellationFeeRatePort#markNotApplicable} ; aucun geste admin ne le propose encore) :
-     * {@code processRefund} rend alors le dépôt entier, comme sans retenue.
+     * rembourser le dépôt entier à la place, un administrateur renonce d'abord à la retenue
+     * ({@code POST /admin/cancellation-fees/bids/{bidId}/waive}, ligne {@code NOT_APPLICABLE}
+     * {@code ADMIN_WAIVED}) : {@code processRefund} rend alors le dépôt entier, comme sans retenue.
      *
      * <p>Cette méthode et {@link #refundEscrowedMobileMoney} ne font JAMAIS
      * {@code payment.setStatus(...)} après un claim bulk — {@code enrich(...)} n'utilise pas

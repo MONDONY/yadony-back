@@ -15,6 +15,7 @@ import com.yadony.api.payments.pawapay.PawapayOperationService;
 import com.yadony.api.payments.pawapay.PawapayOperationStatus;
 import com.yadony.api.payments.pawapay.PawapaySubmissionService;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -59,10 +60,15 @@ public class MobileMoneyPayoutInitiator {
     static final String REFUND_EXISTS_ALERT_PREFIX = "MM_PAYOUT_REFUND_EXISTS_";
 
     /**
-     * Versements morts (échec, refus) d'un même dédommagement au-delà desquels plus aucun n'est soumis
-     * automatiquement : intervention manuelle (même principe que le plafond des suppléments).
+     * Versements ÉCHOUÉS chez pawaPay ({@code FAILED}) d'un même dédommagement au-delà desquels plus aucun n'est
+     * soumis automatiquement : intervention manuelle, relance admin (même principe que le plafond des suppléments).
+     * Les refus à la soumission ({@code SUBMIT_REJECTED}) ne comptent pas : rien n'est parti, une panne passagère de
+     * pawaPay ne doit pas épuiser les essais.
      */
-    static final int MAX_DEAD_FEE_PAYOUTS = 3;
+    static final int MAX_FAILED_FEE_PAYOUTS = 3;
+
+    /** Motif du refus au plafond : les essais automatiques du dédommagement sont arrêtés. */
+    public static final String TOO_MANY_FAILED_PAYOUTS = "TOO_MANY_FAILED_PAYOUTS";
 
     /** {@code clientReferenceId} pawaPay d'un dédommagement : 4 + 36 caractères, comme {@code bid-<bidId>}. */
     static final String CANCELLATION_FEE_REFERENCE_PREFIX = "fee-";
@@ -228,9 +234,10 @@ public class MobileMoneyPayoutInitiator {
      *   <li><b>versement déjà vivant ou abouti</b> pour cette retenue : repris tel quel, jamais un second (rejeu de
      *       l'événement, passage du planificateur, deux essais concurrents) ; l'index
      *       {@code uq_pawapay_ops_live_per_cancellation_fee} tranche une course ;</li>
-     *   <li><b>voyageur gelé</b>, ou trop de versements morts ({@value #MAX_DEAD_FEE_PAYOUTS}) : refus sans appel
-     *       pawaPay. Le plafond borne le risque d'un versement classé mort par le poller puis accepté tard par
-     *       pawaPay, doublé par le nouvel essai ;</li>
+     *   <li><b>voyageur gelé</b>, ou {@value #MAX_FAILED_FEE_PAYOUTS} versements échoués ({@code FAILED} seulement,
+     *       depuis la dernière relance admin {@code failuresSince}) : refus sans appel pawaPay
+     *       ({@value #TOO_MANY_FAILED_PAYOUTS} au plafond). Le plafond borne le risque d'un versement classé mort
+     *       puis accepté tard par pawaPay, doublé par le nouvel essai ;</li>
      *   <li><b>destination</b> : le compte du voyageur du même code pawaPay que le dépôt du colis, dans la devise de
      *       la retenue, sinon le compte repris par la migration ({@link MobileMoneyPayoutAccounts#destinationFor}).
      *       Aucun : refus {@code NO_MOBILE_MONEY_ACCOUNT}, sans appel pawaPay ;</li>
@@ -242,11 +249,13 @@ public class MobileMoneyPayoutInitiator {
      * <p>Aucune alerte ici : l'appelant ({@code CancellationFeePayoutService}) met la retenue en attente et lève UNE
      * alerte par retenue, quel que soit le nombre d'essais horaires.
      *
+     * @param failuresSince relance admin du versement ({@code payout_rearmed_at}) ou {@code null} : seuls les échecs
+     *                      postérieurs comptent pour le plafond
      * @return l'opération soumise, ou reprise (son statut dit si l'argent est déjà arrivé)
      * @throws MobileMoneyPayoutRefusedException rien n'est parti, motif dans {@link MobileMoneyPayoutRefusedException#reason()}
      */
     public PawapayOperationEntity releaseCancellationFee(UUID feeId, UUID bidId, UUID travelerId, BigDecimal net,
-                                                         String currency) {
+                                                         String currency, Instant failuresSince) {
         Optional<PawapayOperationEntity> live = operations.findLiveForCancellationFee(feeId);
         if (live.isPresent()) {
             log.info("Dédommagement {} : versement pawaPay {} déjà {}, repris sans seconde soumission", feeId,
@@ -257,10 +266,10 @@ public class MobileMoneyPayoutInitiator {
             throw new MobileMoneyPayoutRefusedException("PAYOUT_HELD",
                     "Versement du dédommagement " + feeId + " refusé : voyageur " + travelerId + " gelé");
         }
-        long dead = operations.countDeadForCancellationFee(feeId);
-        if (dead >= MAX_DEAD_FEE_PAYOUTS) {
-            throw new MobileMoneyPayoutRefusedException("TOO_MANY_FAILED_PAYOUTS",
-                    "Versement du dédommagement " + feeId + " : " + dead + " versements morts, plus d'essai automatique");
+        long failed = operations.countFailedForCancellationFee(feeId, failuresSince);
+        if (failed >= MAX_FAILED_FEE_PAYOUTS) {
+            throw new MobileMoneyPayoutRefusedException(TOO_MANY_FAILED_PAYOUTS,
+                    "Versement du dédommagement " + feeId + " : " + failed + " versements échoués, plus d'essai automatique");
         }
         // Code du dépôt du colis : il désigne le compte qui reçoit (même opérateur, même pays), comme pour le colis.
         String depositProvider = payments.findForBid(bidId)

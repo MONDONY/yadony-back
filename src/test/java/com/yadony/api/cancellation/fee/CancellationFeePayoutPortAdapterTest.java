@@ -190,20 +190,59 @@ class CancellationFeePayoutPortAdapterTest {
 
         verify(fees).save(row);
         assertThat(row.getStatus()).isEqualTo(CancellationFeeStatus.PAYOUT_PENDING);
+        assertThat(row.getPayoutPendingReason()).isEqualTo("NO_CONNECT_ACCOUNT");
         assertThat(audited(CancellationFeePayoutPortAdapter.AUDIT_FEE_PAYOUT_PENDING))
                 .containsEntry("cancellationFeeId", FEE_ID.toString())
                 .containsEntry("reason", "NO_CONNECT_ACCOUNT");
     }
 
     @Test
-    void markPayoutPending_alreadyPending_trueWithoutSecondAudit() {
+    void markPayoutPending_alreadyPendingForTheSameReason_trueWithoutSecondAudit() {
         CancellationFeeEntity row = fee(CancellationFeeStatus.PAYOUT_PENDING, "26.84");
+        row.setPayoutPendingReason("STRIPE_ERROR");
         when(fees.findByIdForUpdate(FEE_ID)).thenReturn(Optional.of(row));
 
         assertThat(adapter().markPayoutPending(FEE_ID, "STRIPE_ERROR")).isTrue();
 
         verify(fees, never()).save(any());
         verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void markPayoutPending_alreadyPendingForAnotherReason_reasonRecordedAndAudited() {
+        // Revue tâche 7 : l'arrêt des essais automatiques doit se voir, pas seulement le premier motif.
+        CancellationFeeEntity row = fee(CancellationFeeStatus.PAYOUT_PENDING, "26.84");
+        row.setPayoutPendingReason("PAWAPAY_PAYOUT_FAILED_RECIPIENT_NOT_FOUND");
+        when(fees.findByIdForUpdate(FEE_ID)).thenReturn(Optional.of(row));
+
+        assertThat(adapter().markPayoutPending(FEE_ID, "TOO_MANY_FAILED_PAYOUTS")).isTrue();
+
+        verify(fees).save(row);
+        assertThat(row.getStatus()).isEqualTo(CancellationFeeStatus.PAYOUT_PENDING);
+        assertThat(row.getPayoutPendingReason()).isEqualTo("TOO_MANY_FAILED_PAYOUTS");
+        assertThat(audited(CancellationFeePayoutPortAdapter.AUDIT_FEE_PAYOUT_PENDING))
+                .containsEntry("reason", "TOO_MANY_FAILED_PAYOUTS")
+                .containsEntry("previousReason", "PAWAPAY_PAYOUT_FAILED_RECIPIENT_NOT_FOUND");
+    }
+
+    @Test
+    void markPayoutPending_longReason_boundedToTheColumn() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.RETAINED, "26.84");
+        when(fees.findByIdForUpdate(FEE_ID)).thenReturn(Optional.of(row));
+
+        adapter().markPayoutPending(FEE_ID, "STRIPE_ERROR: " + "x".repeat(400));
+
+        assertThat(row.getPayoutPendingReason()).hasSize(CancellationFeeEntity.PAYOUT_PENDING_REASON_MAX);
+    }
+
+    @Test
+    void findPayable_rearmedRow_carriesTheRearmInstant() {
+        CancellationFeeEntity row = fee(CancellationFeeStatus.PAYOUT_PENDING, "26.84");
+        row.setPayoutRearmedAt(LocalDateTime.of(2026, 11, 21, 10, 0));
+        when(fees.findActiveById(FEE_ID)).thenReturn(Optional.of(row));
+
+        assertThat(adapter().findPayable(FEE_ID)).hasValueSatisfying(
+                f -> assertThat(f.payoutRearmedAt()).isEqualTo(Instant.parse("2026-11-21T10:00:00Z")));
     }
 
     @ParameterizedTest

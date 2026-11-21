@@ -126,7 +126,9 @@ class PaymentListenerTransactionalContractTest {
                 Arguments.of(BidSupplementCashListener.class, "onRefundRequested"),
                 // Dédommagement d'annulation versé au voyageur (Transfer Stripe) : lectures et transitions de
                 // la retenue en transactions REQUIRES_NEW courtes autour de l'appel, jamais une englobante.
-                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutListener.class, "onFeeRetained")
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutListener.class, "onFeeRetained"),
+                // Relance admin du même versement (Stripe ou pawaPay) : même chemin, même règle.
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutListener.class, "onPayoutRetryRequested")
         );
     }
 

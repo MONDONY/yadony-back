@@ -421,13 +421,14 @@ class CancellationFeePayoutServiceTest {
         PawapayOperationEntity accepted = PawapayOperationEntity.forCancellationFee(UUID.randomUUID(), TRAVELER_ID,
                 FEE_ID, new BigDecimal("17323"), "XOF", "ORANGE_SEN", "SN", "221770000002");
         accepted.setStatus(PawapayOperationStatus.ACCEPTED);
-        when(mobileMoneyPayouts.releaseCancellationFee(eq(FEE_ID), eq(BID_ID), eq(TRAVELER_ID), any(), eq("XOF")))
-                .thenReturn(accepted);
+        when(mobileMoneyPayouts.releaseCancellationFee(eq(FEE_ID), eq(BID_ID), eq(TRAVELER_ID), any(), eq("XOF"),
+                isNull())).thenReturn(accepted);
 
         // Soumis, pas encore arrivé : l'issue pawaPay fera passer la ligne en PAID_OUT.
         assertThat(service.payOut(FEE_ID)).isFalse();
 
-        verify(mobileMoneyPayouts).releaseCancellationFee(FEE_ID, BID_ID, TRAVELER_ID, new BigDecimal("17323"), "XOF");
+        verify(mobileMoneyPayouts).releaseCancellationFee(FEE_ID, BID_ID, TRAVELER_ID, new BigDecimal("17323"), "XOF",
+                null);
         transfers.verifyNoInteractions();
         verify(port, never()).markPaidOut(any(), any());
         verify(port, never()).markPayoutPending(any(), any());

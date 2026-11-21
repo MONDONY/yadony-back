@@ -1,5 +1,7 @@
 package com.yadony.api.payments.fee;
 
+import com.yadony.api.cancellation.events.CancellationFeePayoutRetryRequestedEvent;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,5 +63,15 @@ public class CancellationFeePayoutListener {
             return;
         }
         payoutService.payOut(feeId);
+    }
+
+    /**
+     * Relance d'un administrateur, après le commit du réarmement : essai immédiat par le chemin habituel, même règle de
+     * transaction ({@link CancellationFeePayoutService#resumeAfterAdminRetry} ne lève jamais). Perdu (redéploiement),
+     * le passage horaire reprend la ligne en attente, réarmée.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPayoutRetryRequested(CancellationFeePayoutRetryRequestedEvent event) {
+        payoutService.resumeAfterAdminRetry(event.feeId());
     }
 }
