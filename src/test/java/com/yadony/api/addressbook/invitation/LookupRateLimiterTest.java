@@ -23,7 +23,7 @@ class LookupRateLimiterTest {
 
     @Test
     void allowsThirtyThenRefusesPerUser() {
-        LookupRateLimiter limiter = new LookupRateLimiter(clock);
+        LookupRateLimiter limiter = new LookupRateLimiter(clock, 30);
         UUID user = UUID.randomUUID();
         for (int i = 0; i < 30; i++) {
             assertThat(limiter.tryAcquire(user)).as("call %d", i + 1).isTrue();
@@ -34,7 +34,7 @@ class LookupRateLimiterTest {
 
     @Test
     void windowSlidesAfterOneHour() {
-        LookupRateLimiter limiter = new LookupRateLimiter(clock);
+        LookupRateLimiter limiter = new LookupRateLimiter(clock, 30);
         UUID user = UUID.randomUUID();
         for (int i = 0; i < 30; i++) {
             limiter.tryAcquire(user);
@@ -43,5 +43,20 @@ class LookupRateLimiterTest {
         assertThat(limiter.tryAcquire(user)).isFalse();
         now.set(now.get().plus(Duration.ofMinutes(2)));
         assertThat(limiter.tryAcquire(user)).isTrue();
+    }
+
+    @Test
+    void limitIsParametrisedAndBucketsAreIndependent() {
+        LookupRateLimiter lookup = new LookupRateLimiter(clock, 30);
+        LookupRateLimiter availability = new LookupRateLimiter(clock, 120);
+        UUID user = UUID.randomUUID();
+        for (int i = 0; i < 30; i++) {
+            lookup.tryAcquire(user);
+        }
+        assertThat(lookup.tryAcquire(user)).isFalse();
+        for (int i = 0; i < 120; i++) {
+            assertThat(availability.tryAcquire(user)).as("call %d", i + 1).isTrue();
+        }
+        assertThat(availability.tryAcquire(user)).isFalse();
     }
 }

@@ -1,5 +1,6 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.addressbook.invitation.LookupRateLimiter;
 import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.auth.dto.UsernameAvailabilityResponse;
 import com.yadony.api.common.AuditService;
@@ -45,6 +46,7 @@ class UsernameServiceTest {
     @Mock AuthService authService;
     @Mock AuditService auditService;
 
+    LookupRateLimiter availabilityLimiter;
     UsernameService service;
     UserEntity me;
     UserResponse response;
@@ -52,7 +54,9 @@ class UsernameServiceTest {
     @BeforeEach
     void setUp() {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
-        service = new UsernameService(userRepository, releasedRepository, authService, auditService, clock);
+        availabilityLimiter = new LookupRateLimiter(clock, 120);
+        service = new UsernameService(userRepository, releasedRepository, authService, auditService, clock,
+                availabilityLimiter);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "entityManager", entityManager);
         me = new UserEntity();
         org.springframework.test.util.ReflectionTestUtils.setField(me, "id", UUID.randomUUID());
@@ -212,5 +216,46 @@ class UsernameServiceTest {
         when(userRepository.findByFirebaseUid("x")).thenReturn(Optional.empty());
         assertThat(thrown(() -> service.check("x", "awa")).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(thrown(() -> service.change("x", "awa.new")).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void check_121stCallInTheHour_429() {
+        when(userRepository.existsByUsernameIgnoreCase(anyString())).thenReturn(false);
+        for (int i = 0; i < 120; i++) {
+            assertThat(service.check(UID, "libre.nom").available()).isTrue();
+        }
+
+        YadonyBusinessException e = thrown(() -> service.check(UID, "libre.nom"));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(e.getErrorCode()).isEqualTo("username-availability-quota");
+    }
+
+    @Test
+    void check_quotaIsIndependentFromTheLookupBucket() {
+        LookupRateLimiter lookupBucket = new LookupRateLimiter(Clock.fixed(NOW, ZoneOffset.UTC), 30);
+        for (int i = 0; i < 30; i++) {
+            lookupBucket.tryAcquire(me.getId());
+        }
+        assertThat(lookupBucket.tryAcquire(me.getId())).isFalse();
+
+        assertThat(service.check(UID, "libre.nom").available()).isTrue();
+    }
+
+    @Test
+    void check_phoneLikeIdentifier_reportsLooksLikePhone() {
+        UsernameAvailabilityResponse r = service.check(UID, "0612345678");
+
+        assertThat(r.available()).isFalse();
+        assertThat(r.reason()).isEqualTo("LOOKS_LIKE_PHONE");
+    }
+
+    @Test
+    void change_phoneLikeIdentifier_422LooksLikePhone() {
+        YadonyBusinessException e = thrown(() -> service.change(UID, "221771234512"));
+
+        assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(e.getErrorCode()).isEqualTo("username-looks-like-phone");
+        verify(userRepository, never()).saveAndFlush(any());
     }
 }

@@ -5,6 +5,7 @@ import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,14 +45,20 @@ class RecipientInvitationLookupIT {
 
     @BeforeEach
     void seed() {
-        // Suppression physique : un compte supprimé en douceur garderait son identifiant (unique).
-        jdbc.update("DELETE FROM user_blocks WHERE blocker_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
-                ME_UID, AWA_UID);
-        jdbc.update("DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
-                ME_UID, AWA_UID);
-        jdbc.update("DELETE FROM users WHERE firebase_uid IN (?, ?)", ME_UID, AWA_UID);
-        me = persist(ME_UID, "Moussa", "Traore", "moussa.traore");
-        awa = persist(AWA_UID, "awa", "Diallo", "awa.diallo");
+        purge();
+        me = persist(ME_UID, "Moussa", "Traore", "lkp.moussa");
+        awa = persist(AWA_UID, "awa", "Diallo", "lkp.awa");
+    }
+
+    @AfterEach
+    void purge() {
+        // Suppression physique, par compte et par identifiant (préfixe « lkp. » réservé à cette classe) : un
+        // compte supprimé en douceur garderait son identifiant (unique) et la base de test est partagée.
+        String ids = "SELECT id FROM users WHERE firebase_uid IN (?, ?) OR lower(username) LIKE 'lkp.%'";
+        jdbc.update("DELETE FROM user_blocks WHERE blocker_id IN (" + ids + ") OR blocked_id IN (" + ids + ")",
+                ME_UID, AWA_UID, ME_UID, AWA_UID);
+        jdbc.update("DELETE FROM user_roles WHERE user_id IN (" + ids + ")", ME_UID, AWA_UID);
+        jdbc.update("DELETE FROM users WHERE firebase_uid IN (?, ?) OR lower(username) LIKE 'lkp.%'", ME_UID, AWA_UID);
     }
 
     private UserEntity persist(String uid, String first, String last, String username) {
@@ -74,8 +81,8 @@ class RecipientInvitationLookupIT {
 
     @Test
     void foundReturnsOnlyUsernameAndInitial() throws Exception {
-        lookup("awa.diallo").andExpect(status().isOk())
-                .andExpect(content().json("{\"username\":\"awa.diallo\",\"initial\":\"A\"}", true))
+        lookup("lkp.awa").andExpect(status().isOk())
+                .andExpect(content().json("{\"username\":\"lkp.awa\",\"initial\":\"A\"}", true))
                 .andExpect(jsonPath("$.phoneNumber").doesNotExist())
                 .andExpect(jsonPath("$.phone").doesNotExist())
                 .andExpect(jsonPath("$.email").doesNotExist())
@@ -85,7 +92,7 @@ class RecipientInvitationLookupIT {
 
     @Test
     void mixedCaseFindsSameAccount() throws Exception {
-        lookup("AWA.Diallo").andExpect(status().isOk()).andExpect(jsonPath("$.username").value("awa.diallo"));
+        lookup("LKP.Awa").andExpect(status().isOk()).andExpect(jsonPath("$.username").value("lkp.awa"));
     }
 
     @Test
@@ -102,19 +109,19 @@ class RecipientInvitationLookupIT {
     @Test
     void softDeletedAccountIs404() throws Exception {
         jdbc.update("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", awa.getId());
-        lookup("awa.diallo").andExpect(status().isNotFound());
+        lookup("lkp.awa").andExpect(status().isNotFound());
     }
 
     @Test
     void userWhoBlockedCallerIs404() throws Exception {
         jdbc.update("INSERT INTO user_blocks (id, blocker_id, blocked_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
                 UUID.randomUUID(), awa.getId(), me.getId());
-        lookup("awa.diallo").andExpect(status().isNotFound());
+        lookup("lkp.awa").andExpect(status().isNotFound());
     }
 
     @Test
     void selfIs422() throws Exception {
-        lookup("moussa.traore").andExpect(status().isUnprocessableEntity())
+        lookup("lkp.moussa").andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.type").value("https://yadony.app/errors/recipient-invitation-self"));
     }
 
@@ -123,7 +130,21 @@ class RecipientInvitationLookupIT {
         for (int i = 0; i < 30; i++) {
             lookup("inconnu.numero").andExpect(status().isNotFound());
         }
-        lookup("awa.diallo").andExpect(status().isTooManyRequests())
+        lookup("lkp.awa").andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.type").value("https://yadony.app/errors/recipient-lookup-quota"));
+    }
+
+    @Test
+    void suspendedAccountIs404() throws Exception {
+        jdbc.update("UPDATE users SET status = 'SUSPENDED' WHERE id = ?", awa.getId());
+        lookup("lkp.awa").andExpect(status().isNotFound());
+    }
+
+    @Test
+    void invalidFormatDoesNotConsumeTheQuota() throws Exception {
+        for (int i = 0; i < 40; i++) {
+            lookup("a b!").andExpect(status().isNotFound());
+        }
+        lookup("lkp.awa").andExpect(status().isOk());
     }
 }

@@ -34,7 +34,29 @@ class UsernamePolicyTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"admin", "yadony", "support", "moderation", "officiel", "yadony.support"})
+    @ValueSource(strings = {"0612345678", "221771234512", "awa.1234567", "a1234567"})
+    void violation_ressembleAUnTelephone(String value) {
+        assertThat(UsernamePolicy.violation(value)).contains(Violation.LOOKS_LIKE_PHONE);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"user1785012345", "user12", "awa123456", "awa.12.34567"})
+    void violation_chiffresPermis(String value) {
+        assertThat(UsernamePolicy.violation(value)).isEqualTo(Optional.empty());
+    }
+
+    @Test
+    void isWellFormed_neRegardeQueLeFormat() {
+        assertThat(UsernamePolicy.isWellFormed("support.awa")).isTrue();
+        assertThat(UsernamePolicy.isWellFormed("0612345678")).isTrue();
+        assertThat(UsernamePolicy.isWellFormed("a b")).isFalse();
+        assertThat(UsernamePolicy.isWellFormed(null)).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"admin", "yadony", "support", "moderation", "officiel", "yadony.support",
+            "moderateur", "moderator", "official", "staff.awa", "equipe.dony", "yad0ny", "supp0rt", "adm1n",
+            "m0d3ration", "0fficiel"})
     void violation_reserves(String value) {
         assertThat(UsernamePolicy.violation(value)).contains(Violation.RESERVED);
     }

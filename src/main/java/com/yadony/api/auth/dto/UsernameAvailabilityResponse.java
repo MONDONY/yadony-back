@@ -7,7 +7,7 @@ import java.util.List;
  *
  * @param available l'identifiant peut être pris par l'appelant
  * @param reason {@code null} si disponible, sinon {@code INVALID_FORMAT}, {@code RESERVED},
- *        {@code TAKEN}, {@code RECENTLY_RELEASED} ou {@code UNCHANGED} (c'est déjà le sien)
+ *        {@code LOOKS_LIKE_PHONE} (suite de 7 chiffres ou plus), {@code TAKEN}, {@code RECENTLY_RELEASED} ou {@code UNCHANGED} (c'est déjà le sien)
  * @param suggestions jusqu'à trois alternatives libres ; vide hors {@code TAKEN} et
  *        {@code RECENTLY_RELEASED}
  */

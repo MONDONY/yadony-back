@@ -110,7 +110,12 @@ public class AuthController {
         return ResponseEntity.ok(authService.updateProfile(firebaseUid, request));
     }
 
-    /** Disponibilité d'un identifiant pour l'appelant (limitée en débit par Nginx sur /auth/me). */
+    /**
+     * Disponibilité d'un identifiant pour l'appelant. Bornes réelles : 120 vérifications par heure et par
+     * utilisateur (429 {@code username-availability-quota}, seau propre), en plus de la zone Nginx
+     * {@code api_general} par IP (600 req/min, burst 200) qui couvre {@code /auth/me}, et non la zone
+     * sensible {@code /auth}. Nginx seul ne borne donc pas l'énumération.
+     */
     @GetMapping("/me/username/availability")
     public ResponseEntity<UsernameAvailabilityResponse> checkUsername(
             @RequestParam("value") String value) {

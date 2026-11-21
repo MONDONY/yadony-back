@@ -1,11 +1,13 @@
 package com.yadony.api.auth;
 
+import com.yadony.api.addressbook.invitation.LookupRateLimiter;
 import com.yadony.api.auth.dto.UserResponse;
 import com.yadony.api.auth.dto.UsernameAvailabilityResponse;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -42,6 +45,7 @@ public class UsernameService {
     private final AuthService authService;
     private final AuditService auditService;
     private final Clock clock;
+    private final LookupRateLimiter availabilityLimiter;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -50,17 +54,25 @@ public class UsernameService {
                            ReleasedUsernameRepository releasedRepository,
                            AuthService authService,
                            AuditService auditService,
-                           Clock clock) {
+                           Clock clock,
+                           @Qualifier("usernameAvailabilityRateLimiter") LookupRateLimiter availabilityLimiter) {
         this.userRepository = userRepository;
         this.releasedRepository = releasedRepository;
         this.authService = authService;
         this.auditService = auditService;
         this.clock = clock;
+        this.availabilityLimiter = availabilityLimiter;
     }
 
     @Transactional(readOnly = true)
     public UsernameAvailabilityResponse check(String firebaseUid, String raw) {
         UserEntity me = loadUser(userRepository.findByFirebaseUid(firebaseUid));
+        // La réponse (TAKEN, RECENTLY_RELEASED) révèle l'existence d'un compte : 120 vérifications par heure
+        // et par utilisateur, compté avant toute lecture.
+        if (!availabilityLimiter.tryAcquire(me.getId())) {
+            throw YadonyBusinessException.localized(HttpStatus.TOO_MANY_REQUESTS, "username-availability-quota",
+                    "problem.username-availability-quota");
+        }
         String candidate = UsernamePolicy.normalize(raw);
 
         if (candidate.equals(lower(me.getUsername()))) {
@@ -86,11 +98,14 @@ public class UsernameService {
         String candidate = UsernamePolicy.normalize(raw);
         Optional<UsernamePolicy.Violation> violation = UsernamePolicy.violation(candidate);
         if (violation.isPresent()) {
-            throw violation.get() == UsernamePolicy.Violation.RESERVED
-                    ? YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "username-reserved", "problem.username-reserved")
-                    : YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
-                            "username-invalid", "problem.username-invalid");
+            throw switch (violation.get()) {
+                case RESERVED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "username-reserved", "problem.username-reserved");
+                case LOOKS_LIKE_PHONE -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "username-looks-like-phone", "problem.username-looks-like-phone");
+                case INVALID_FORMAT -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "username-invalid", "problem.username-invalid");
+            };
         }
 
         // Verrou de ligne par UPDATE neutre (exécutable sous H2, contrairement à
@@ -157,6 +172,6 @@ public class UsernameService {
     }
 
     private static String lower(String s) {
-        return s == null ? "" : s.toLowerCase(java.util.Locale.ROOT);
+        return s == null ? "" : s.toLowerCase(Locale.ROOT);
     }
 }

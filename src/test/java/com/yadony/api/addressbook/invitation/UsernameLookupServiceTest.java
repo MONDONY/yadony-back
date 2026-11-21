@@ -3,6 +3,7 @@ package com.yadony.api.addressbook.invitation;
 import com.yadony.api.addressbook.invitation.dto.UsernameLookupResponse;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.YadonyBusinessException;
 import org.junit.jupiter.api.BeforeEach;
@@ -107,6 +108,20 @@ class UsernameLookupServiceTest {
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("user-not-found"));
         verify(userRepository, never()).findByUsernameIgnoreCase(any());
+        verifyNoInteractions(rateLimiter);
+    }
+
+    @Test
+    void suspendedOrBannedAccountIsNotFound() {
+        UserEntity suspended = user("Awa", "awa.diallo");
+        suspended.setStatus(UserStatus.SUSPENDED);
+        UserEntity banned = user("Moussa", "moussa.k");
+        banned.setStatus(UserStatus.BANNED);
+        when(userRepository.findByUsernameIgnoreCase("awa.diallo")).thenReturn(Optional.of(suspended));
+        when(userRepository.findByUsernameIgnoreCase("moussa.k")).thenReturn(Optional.of(banned));
+
+        assertThat(service.resolveVisible(me, "awa.diallo")).isEmpty();
+        assertThat(service.resolveVisible(me, "moussa.k")).isEmpty();
     }
 
     @Test
@@ -129,6 +144,17 @@ class UsernameLookupServiceTest {
                     assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
                     assertThat(e.getErrorCode()).isEqualTo("recipient-invitation-self");
                 });
+    }
+
+    @Test
+    void beginLookupChecksFormatBeforeCountingQuota() {
+        assertThatThrownBy(() -> service.beginLookup(me.getId(), "a b"))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("user-not-found"));
+        verifyNoInteractions(rateLimiter);
+
+        service.beginLookup(me.getId(), "Awa.Diallo");
+        verify(rateLimiter).tryAcquire(me.getId());
     }
 
     @Test
