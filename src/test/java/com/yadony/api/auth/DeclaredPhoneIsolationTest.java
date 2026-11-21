@@ -103,10 +103,9 @@ class DeclaredPhoneIsolationTest {
 
     // ── Firebase : le numéro déclaré ne devient jamais phoneNumber ni clé de recherche ──────────
 
-    @ParameterizedTest
-    @EnumSource(DeclaredPhoneLevel.class)
+    @Test
     @DisplayName("contact : phoneNumber reste nul, declaredPhone porte le claim")
-    void contact_phoneNumberStaysNull(DeclaredPhoneLevel level) throws Exception {
+    void contact_phoneNumberStaysNull() throws Exception {
         FirebaseContactService service = contactServiceFor(mock(FirebaseAuth.class));
 
         FirebaseContactService.Contact contact = service.getContact(UID);
@@ -115,10 +114,9 @@ class DeclaredPhoneIsolationTest {
         assertThat(contact.declaredPhone()).isEqualTo(DECLARED);
     }
 
-    @ParameterizedTest
-    @EnumSource(DeclaredPhoneLevel.class)
+    @Test
     @DisplayName("findUidByPhone / findPhoneOwner / findPhoneHolder : le numéro déclaré ne désigne personne")
-    void findUidByPhone_doesNotMatchDeclared(DeclaredPhoneLevel level) throws Exception {
+    void findUidByPhone_doesNotMatchDeclared() throws Exception {
         FirebaseAuth firebaseAuth = mock(FirebaseAuth.class);
         FirebaseContactService service = contactServiceFor(firebaseAuth);
         // Firebase n'indexe pas les claims : getUserByPhoneNumber ne connaît pas ce numéro.
@@ -130,8 +128,11 @@ class DeclaredPhoneIsolationTest {
         assertThat(service.findPhoneOwner(DECLARED).outcome())
                 .isEqualTo(FirebaseContactService.PhoneOwnerLookup.Outcome.NOT_FOUND);
         assertThat(service.findPhoneHolder(DECLARED)).isEmpty();
-        // La recherche passe bien par l'index téléphone de Firebase, jamais par les claims.
+        // La recherche passe par l'index téléphone de Firebase, jamais par une lecture ou un
+        // balayage des claims : un lookup fondé sur declared_phone ferait échouer ces deux lignes.
         verify(firebaseAuth, never()).getUserByEmail(anyString());
+        verify(firebaseAuth, never()).getUser(anyString());
+        verify(firebaseAuth, never()).listUsers(any());
     }
 
     // ── Connexion ───────────────────────────────────────────────────────────────────────────────
@@ -161,13 +162,11 @@ class DeclaredPhoneIsolationTest {
         return token;
     }
 
-    @ParameterizedTest
-    @EnumSource(DeclaredPhoneLevel.class)
+    @Test
     @DisplayName("connexion par téléphone : refusée (phone-required) sans numéro vérifié par SMS")
-    void phoneLogin_rejected(DeclaredPhoneLevel level) {
+    void phoneLogin_rejected() {
         UserRepository userRepository = mock(UserRepository.class);
         FirebaseContactService firebaseContact = mock(FirebaseContactService.class);
-        when(firebaseContact.getContact(UID)).thenReturn(declaredOnly());
         when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.empty());
         AuthService authService = newAuthService(userRepository, firebaseContact);
 
@@ -180,10 +179,9 @@ class DeclaredPhoneIsolationTest {
         verify(userRepository, never()).save(any());
     }
 
-    @ParameterizedTest
-    @EnumSource(DeclaredPhoneLevel.class)
+    @Test
     @DisplayName("connexion par SMS OTP (jeton custom) : le numéro déclaré ne tient pas lieu de numéro vérifié")
-    void smsOtpLogin_rejected(DeclaredPhoneLevel level) {
+    void smsOtpLogin_rejected() {
         UserRepository userRepository = mock(UserRepository.class);
         FirebaseContactService firebaseContact = mock(FirebaseContactService.class);
         when(firebaseContact.getContact(UID)).thenReturn(declaredOnly());
@@ -301,6 +299,39 @@ class DeclaredPhoneIsolationTest {
         verify(smsService, never()).sendOrThrow(anyString(), anyString());
         // Traitée comme « pas de numéro » : marquée, pas rejouée.
         assertThat(notification.getSmsSentAt()).isNotNull();
+    }
+
+    // ── Rattachement : seul un numéro validé par Yadony, concordant et non contesté, est de confiance ──
+
+    @Test
+    @DisplayName("trustedDeclaredPhone : DECLARED -> vide ; YADONY_VERIFIED -> le numéro ; numéro SMS présent -> vide")
+    void trustedDeclaredPhone_declaredEmpty_yadonyReturnsNumber() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("cle-de-test");
+        FirebaseContactService firebaseContact = mock(FirebaseContactService.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        PhoneLookupService lookup = new PhoneLookupService(firebaseContact, userRepository, hasher,
+                new DeclaredPhoneResolver(hasher));
+        when(firebaseContact.findPhoneOwner(DECLARED)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        when(firebaseContact.getContacts(any())).thenAnswer(inv -> {
+            java.util.Collection<String> uids = inv.getArgument(0);
+            Map<String, FirebaseContactService.Contact> out = new java.util.HashMap<>();
+            uids.forEach(uid -> out.put(uid, new FirebaseContactService.Contact(null, null, DECLARED)));
+            return out;
+        });
+        FirebaseContactService.Contact claimOnly = new FirebaseContactService.Contact(null, null, DECLARED);
+
+        UserEntity declared = userWith(DeclaredPhoneLevel.DECLARED);
+        declared.setDeclaredPhoneHash(hasher.hash(DECLARED));
+        assertThat(lookup.trustedDeclaredPhone(declared, claimOnly)).isEmpty();
+
+        UserEntity yadony = userWith(DeclaredPhoneLevel.YADONY_VERIFIED);
+        yadony.setDeclaredPhoneHash(hasher.hash(DECLARED));
+        when(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(DECLARED))).thenReturn(List.of(yadony));
+        assertThat(lookup.trustedDeclaredPhone(yadony, claimOnly)).contains(DECLARED);
+
+        // Un compte qui a un numéro vérifié par SMS : le numéro déclaré ne compte plus.
+        assertThat(lookup.trustedDeclaredPhone(yadony,
+                new FirebaseContactService.Contact("+2250700000000", null, DECLARED))).isEmpty();
     }
 
     // ── Garde source : jamais de declaredPhone dans payments ni notifications ──────────────────
