@@ -46,7 +46,9 @@ import java.util.UUID;
  *   <li>retenue d'annulation due par l'expéditeur fautif ({@link CancellationFeeSettlement}) : sur un
  *       PI capturé, {@code Refund.create} du seul montant payé moins le dédommagement du voyageur (même
  *       clé), puis retenue réglée et {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent} ;
- *       partout ailleurs, remboursement intégral inchangé et retenue close {@code NOT_APPLICABLE} ;</li>
+ *       partout ailleurs, remboursement intégral inchangé et retenue close {@code NOT_APPLICABLE}. Un
+ *       calcul de retenue qui échoue ne bloque jamais l'expéditeur : remboursement intégral, alerte
+ *       {@code FEE_COMPUTE_FAILED_<paymentId>}, retenue close ;</li>
  *   <li>échec Stripe → alerte admin + exception : la transaction REQUIRES_NEW rollback le claim,
  *       le paiement reste remboursable (et la retenue due) ;</li>
  *   <li>RELEASED / REFUNDED / FAILED / CANCELLED → no-op (jamais de refund post-versement).</li>
@@ -82,6 +84,9 @@ public class RefundProcessor {
 
     /** Annulation d'un PaymentIntent PENDING refusée par Stripe : autorisation restée posée. */
     static final String PENDING_CANCEL_FAILED_ALERT_PREFIX = "REFUND_FAILED_";
+
+    /** Retenue d'annulation incalculable : expéditeur remboursé en entier, voyageur non dédommagé (19 + 36). */
+    static final String FEE_COMPUTE_FAILED_ALERT_PREFIX = "FEE_COMPUTE_FAILED_";
 
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
@@ -193,6 +198,7 @@ public class RefundProcessor {
         final String stripeAction;
         final String piStatus;
         Optional<CancellationFeeBreakdown> retainedFee = Optional.empty();
+        RuntimeException feeComputationFailure = null;
         try {
             // Chez Yadony, la capture du PaymentIntent n'a lieu qu'à la livraison
             // (DeliveryConfirmedEvent). Un paiement ESCROW correspond donc, dans la
@@ -208,8 +214,17 @@ public class RefundProcessor {
                 // markRefundedIfEscrow ci-dessus, jamais avant. Ce claim garantit un seul remboursement
                 // par paiement, donc un seul règlement de la retenue ; la lecture du taux par le port
                 // est volontairement sans verrou, le claim la sérialise.
-                retainedFee = cancellationFees.settle(payment, metadataId(pi, "sender_id"),
-                        metadataId(pi, "traveler_id"));
+                try {
+                    retainedFee = cancellationFees.settle(payment, metadataId(pi, "sender_id"),
+                            metadataId(pi, "traveler_id"));
+                } catch (RuntimeException e) {
+                    // Le calcul de la retenue ne bloque JAMAIS le remboursement de l'expéditeur (taux de
+                    // change absent, barème invalide…) : remboursement intégral comme avant, alerte et
+                    // clôture de la retenue après le succès Stripe.
+                    log.error("Retenue d'annulation incalculable pour le paiement {} : remboursement intégral",
+                            paymentId, e);
+                    feeComputationFailure = e;
+                }
                 if (retainedFee.isPresent()) {
                     refundMinusCancellationFee(payment, paymentId, retainedFee.get());
                     stripeAction = "remboursement partiel émis (PI capturé, frais d'annulation retenus)";
@@ -252,6 +267,9 @@ public class RefundProcessor {
             cancellationFees.retain(payment, fee);
             enriched.put("refundedAmount", fee.senderRefund().toPlainString());
             enriched.put("cancellationFee", fee.grossFee().toPlainString());
+        } else if (feeComputationFailure != null) {
+            raiseFeeComputationAlert(payment, paymentId, feeComputationFailure);
+            cancellationFees.waiveAfterFailedComputation(payment);
         } else {
             cancellationFees.waiveIfDue(payment, piStatus);
         }
@@ -278,6 +296,25 @@ public class RefundProcessor {
                 RequestOptions.builder()
                         .setIdempotencyKey("refund-" + paymentId)
                         .build());
+    }
+
+    /**
+     * Alerte unique par paiement, levée APRÈS le remboursement intégral (un échec Stripe l'aurait sinon
+     * annoncé à tort). Une alerte qui échoue ne remet pas en cause le remboursement déjà émis.
+     */
+    private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure) {
+        try {
+            alerts.raiseOnce(FEE_COMPUTE_FAILED_ALERT_PREFIX + paymentId,
+                    "Retenue d'annulation incalculable pour le paiement " + paymentId + " : "
+                            + failure.getMessage() + " ; l'expéditeur a été remboursé en entier, le voyageur "
+                            + "n'est pas dédommagé, à régler à la main",
+                    Map.of("paymentId", paymentId.toString(),
+                            "bidId", String.valueOf(payment.getBidId()),
+                            "error", String.valueOf(failure.getMessage())));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", FEE_COMPUTE_FAILED_ALERT_PREFIX, paymentId,
+                    alertFailure);
+        }
     }
 
     /**

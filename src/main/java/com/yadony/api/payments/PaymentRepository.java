@@ -369,11 +369,11 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     int markRefundedIfEscrow(@Param("id") UUID id);
 
     /**
-     * Remboursement partiel émis par {@code RefundProcessor} (frais d'annulation retenus) :
-     * {@code refunded_amount} porté d'avance à la valeur absolue que Stripe renverra par
-     * {@code charge.refunded}, comme {@link #claimForSplit}. Écriture ciblée, jamais un setter sur
-     * l'entité chargée avant le claim {@link #markRefundedIfEscrow} : son flush réécrirait le statut
-     * ESCROW périmé.
+     * Montant remboursé d'un remboursement partiel, seule colonne écrite. Deux appelants :
+     * {@code RefundProcessor} (frais d'annulation retenus), qui le porte d'avance à la valeur absolue que
+     * Stripe renverra, comme {@link #claimForSplit} ; et le webhook {@code charge.refunded} partiel. Jamais
+     * un setter sur une entité lue avant le claim {@link #markRefundedIfEscrow} ou sans verrou : son flush
+     * réécrirait toutes les colonnes, dont un statut ESCROW périmé.
      */
     @Modifying
     @Query("UPDATE PaymentEntity p SET p.refundedAmount = :refunded WHERE p.id = :id")

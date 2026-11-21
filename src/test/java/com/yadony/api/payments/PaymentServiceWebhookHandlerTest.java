@@ -356,18 +356,42 @@ class PaymentServiceWebhookHandlerTest {
         Charge charge = mockCharge("pi_refund_partial", 3000L, 1000L);
 
         var payment = new PaymentEntity();
-        PaymentServiceTestFactory.setId(payment, java.util.UUID.randomUUID());
+        java.util.UUID paymentId = java.util.UUID.randomUUID();
+        PaymentServiceTestFactory.setId(payment, paymentId);
         payment.setStatus(PaymentStatus.ESCROW);
         when(paymentRepository.findByStripePaymentIntentId("pi_refund_partial")).thenReturn(Optional.of(payment));
 
         service.handleChargeRefunded(mockEvent(charge));
 
+        // Écriture ciblée du seul montant : jamais un save de l'entité lue sans verrou (statut périmé).
+        verify(paymentRepository).recordRefundedAmount(eq(paymentId),
+                org.mockito.ArgumentMatchers.argThat(a -> a.compareTo(new BigDecimal("10.00")) == 0));
+        verify(paymentRepository, never()).save(any());
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.ESCROW);
-        assertThat(payment.getRefundedAmount()).isEqualByComparingTo(new BigDecimal("10.00"));
-        verify(paymentRepository).save(payment);
         verify(auditService).log(eq("PAYMENT"), any(), eq("PAYMENT_PARTIALLY_REFUNDED"), any(), any());
         verify(auditService, never()).log(any(), any(), eq("PAYMENT_REFUNDED"), any(), any());
         verify(adminAlert, never()).raise(any(), any(), any());
+    }
+
+    @Test
+    void handleChargeRefunded_partialRefundOnRefundedPayment_neverRewritesTheStatus() {
+        // Remboursement moins une retenue d'annulation : RefundProcessor a déjà posé REFUNDED et 70,00.
+        Charge charge = mockCharge("pi_refund_fee", 10000L, 7000L);
+
+        var payment = new PaymentEntity();
+        java.util.UUID paymentId = java.util.UUID.randomUUID();
+        PaymentServiceTestFactory.setId(payment, paymentId);
+        payment.setStatus(PaymentStatus.REFUNDED);
+        payment.setRefundedAmount(new BigDecimal("70.00"));
+        when(paymentRepository.findByStripePaymentIntentId("pi_refund_fee")).thenReturn(Optional.of(payment));
+
+        service.handleChargeRefunded(mockEvent(charge));
+
+        verify(paymentRepository).recordRefundedAmount(eq(paymentId),
+                org.mockito.ArgumentMatchers.argThat(a -> a.compareTo(new BigDecimal("70.00")) == 0));
+        verify(paymentRepository, never()).save(any());
+        // Déjà enregistré par le remboursement : pas de second audit.
+        verify(auditService, never()).log(any(), any(), eq("PAYMENT_PARTIALLY_REFUNDED"), any(), any());
     }
 
     @Test

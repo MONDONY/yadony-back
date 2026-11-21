@@ -250,6 +250,26 @@ class CancellationFeeSettlementTest {
     }
 
     @Test
+    void waiveAfterFailedComputation_closesTheDueFeeWithItsReason() {
+        PaymentEntity payment = payment("100.00", "4.76", "EUR");
+        when(port.dueRate(payment.getBidId())).thenReturn(Optional.of(new BigDecimal("1.5000")));
+
+        settlement.waiveAfterFailedComputation(payment);
+
+        verify(port).markNotApplicable(payment.getBidId(), "FEE_COMPUTATION_FAILED");
+    }
+
+    @Test
+    void waiveAfterFailedComputation_nothingDue_noLockingWrite() {
+        PaymentEntity payment = payment("100.00", "4.76", "EUR");
+        when(port.dueRate(payment.getBidId())).thenReturn(Optional.empty());
+
+        settlement.waiveAfterFailedComputation(payment);
+
+        verify(port, never()).markNotApplicable(any(), any());
+    }
+
+    @Test
     void retain_marksRetainedThenPublishesTheEvent() {
         PaymentEntity payment = payment("100.00", "4.76", "EUR");
         CancellationFeeBreakdown fee = new CancellationFeeBreakdown(new BigDecimal("30.00"), new BigDecimal("1.75"),

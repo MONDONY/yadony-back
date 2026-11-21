@@ -9,6 +9,7 @@ import com.stripe.param.RefundCreateParams;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.payments.currency.ExchangeRateLookup;
 import com.yadony.api.payments.currency.ExchangeRateService;
@@ -28,6 +29,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -40,6 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -72,6 +75,7 @@ class RefundProcessorCancellationFeeTest {
     @Mock CommissionRateResolver commissionRates;
     @Mock ExchangeRateLookup rateLookup;
     @Mock ApplicationEventPublisher events;
+    @Mock AdminAlertEscalator alerts;
 
     private RefundProcessor processor;
     private UUID paymentId;
@@ -83,7 +87,7 @@ class RefundProcessorCancellationFeeTest {
                 commissionRates, new ExchangeRateService(rateLookup), events);
         processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
                 mock(PawapayOperationService.class), mock(PawapaySubmissionService.class),
-                mock(AdminAlertEscalator.class), mock(PlatformTransactionManager.class), settlement);
+                alerts, mock(PlatformTransactionManager.class), settlement);
         paymentId = UUID.randomUUID();
         bidId = UUID.randomUUID();
         lenient().when(feePort.capEur()).thenReturn(new BigDecimal("30"));
@@ -370,6 +374,90 @@ class RefundProcessorCancellationFeeTest {
             assertThat(refund()).isTrue();
         }
         verify(feePort).markRetained(eq(bidId), any(CancellationFeeBreakdown.class), eq("EUR"));
+    }
+
+    @Test
+    void computationFailure_missingExchangeRate_refundsFullAndRaisesAlert() {
+        // Devise sans ligne exchange_rates : la conversion du plafond lève. L'expéditeur est remboursé
+        // en entier quand même, jamais bloqué par la retenue.
+        escrow("100000", "4762", "XOF");
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+        when(feePort.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("0.30")));
+        when(rateLookup.unitsPerEur("XOF")).thenThrow(YadonyBusinessException.localized(
+                HttpStatus.UNPROCESSABLE_ENTITY, ExchangeRateService.RATE_MISSING_CODE,
+                "problem.exchange-rate-missing", Map.of("currency", "XOF"), "XOF"));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent captured = intent("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve(PI)).thenReturn(captured);
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            ArgumentCaptor<RequestOptions> options = ArgumentCaptor.forClass(RequestOptions.class);
+            refundStatic.when(() -> Refund.create(params.capture(), options.capture())).thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+
+            assertThat(params.getValue().getAmount()).as("remboursement intégral").isNull();
+            assertThat(options.getValue().getIdempotencyKey()).isEqualTo("refund-" + paymentId);
+        }
+        String type = RefundProcessor.FEE_COMPUTE_FAILED_ALERT_PREFIX + paymentId;
+        assertThat(type.length()).isLessThanOrEqualTo(AdminAlertEscalator.TYPE_MAX_LENGTH);
+        verify(alerts).raiseOnce(eq(type), contains("remboursé en entier"), anyMap());
+        verify(feePort).markNotApplicable(bidId, "FEE_COMPUTATION_FAILED");
+        verify(feePort, never()).markRetained(any(), any(), any());
+        verify(paymentRepository, never()).recordRefundedAmount(any(), any());
+        verifyNoInteractions(events);
+        assertThat(auditPayload()).doesNotContainKeys("refundedAmount", "cancellationFee");
+    }
+
+    @Test
+    void computationFailure_invalidRate_refundsFull() {
+        // Barème non validé : un taux au-delà de 1 fait lever le calculateur. Même une alerte en échec
+        // ne remet pas en cause le remboursement.
+        escrow("100.00", "4.76", "EUR");
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+        when(feePort.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("1.5000")));
+        when(stripeFees.fee(PI, "EUR")).thenReturn(new BigDecimal("1.75"));
+        when(alerts.raiseOnce(any(), any(), anyMap())).thenThrow(new IllegalStateException("alertes indisponibles"));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent captured = intent("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve(PI)).thenReturn(captured);
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+
+            assertThat(params.getValue().getAmount()).isNull();
+        }
+        verify(feePort).markNotApplicable(bidId, "FEE_COMPUTATION_FAILED");
+        verify(feePort, never()).markRetained(any(), any(), any());
+        verify(auditService).log(eq("PAYMENT"), eq(paymentId), eq("PAYMENT_REFUNDED_BID_REJECTED"), eq(bidId), anyMap());
+    }
+
+    @Test
+    void computationFailure_thenStripeFailure_keepsTheStripeFailureBehaviour() {
+        escrow("100.00", "4.76", "EUR");
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+        when(feePort.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("1.5000")));
+        when(stripeFees.fee(PI, "EUR")).thenReturn(new BigDecimal("1.75"));
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent captured = intent("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve(PI)).thenReturn(captured);
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new ApiException("boom", null, null, 500, null));
+
+            assertThatThrownBy(this::refund).isInstanceOf(IllegalStateException.class);
+        }
+        // Échec Stripe inchangé : alerte STRIPE_REFUND_FAILED, exception (rollback du claim), retenue due.
+        verify(adminAlert).raise(eq("STRIPE_REFUND_FAILED"), any(), anyMap());
+        verifyNoInteractions(alerts);
+        verify(feePort, never()).markNotApplicable(any(), any());
+        verifyNoInteractions(auditService);
     }
 
     private boolean refund() {

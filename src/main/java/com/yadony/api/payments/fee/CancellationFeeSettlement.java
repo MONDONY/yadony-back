@@ -32,6 +32,7 @@ public class CancellationFeeSettlement {
     static final String INTENT_CANCELED = "PAYMENT_INTENT_CANCELED";
     static final String LEGACY_DESTINATION_CHARGE = "LEGACY_DESTINATION_CHARGE";
     static final String ALREADY_PARTIALLY_REFUNDED = "PAYMENT_ALREADY_PARTIALLY_REFUNDED";
+    static final String FEE_COMPUTATION_FAILED = "FEE_COMPUTATION_FAILED";
 
     private static final String SUCCEEDED = "succeeded";
     private static final String CANCELED = "canceled";
@@ -111,11 +112,22 @@ public class CancellationFeeSettlement {
             }
             reason = CANCELED.equals(paymentIntentStatus) ? INTENT_CANCELED : NOT_CAPTURED;
         }
-        // Lecture simple d'abord : le remboursement ordinaire, sans retenue, ne pose aucun verrou de plus.
-        String motive = reason;
+        closeIfDue(payment, reason);
+    }
+
+    /**
+     * Le calcul de la retenue a échoué ({@link #settle} a levé) et l'expéditeur a été remboursé en entier :
+     * la retenue encore due est close {@code NOT_APPLICABLE}, motif {@value #FEE_COMPUTATION_FAILED}.
+     */
+    public void waiveAfterFailedComputation(PaymentEntity payment) {
+        closeIfDue(payment, FEE_COMPUTATION_FAILED);
+    }
+
+    /** Lecture simple d'abord : le remboursement ordinaire, sans retenue, ne pose aucun verrou de plus. */
+    private void closeIfDue(PaymentEntity payment, String reason) {
         bidIdOf(payment)
                 .filter(bidId -> port.dueRate(bidId).isPresent())
-                .ifPresent(bidId -> port.markNotApplicable(bidId, motive));
+                .ifPresent(bidId -> port.markNotApplicable(bidId, reason));
     }
 
     /**

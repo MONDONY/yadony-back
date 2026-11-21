@@ -123,9 +123,22 @@ public class StripeReconciler {
                     if (!captured) codes.add("VERSE_SANS_ENCAISSEMENT");
                 }
                 case REFUNDED -> {
-                    boolean refundedAtStripeInFull = "canceled".equals(status)
-                            || (captured && refundedAtStripe >= expected);
-                    if (!refundedAtStripeInFull) codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");
+                    BigDecimal recorded = payment.getRefundedAmount();
+                    if (recorded != null && recorded.signum() > 0) {
+                        // Montant remboursé enregistré (remboursement moins une retenue d'annulation,
+                        // partage admin, ou miroir du webhook) : Stripe doit avoir rendu EXACTEMENT ce
+                        // montant, ni moins (remboursement absent), ni plus.
+                        long recordedMinor = CurrencyAmount.of(recorded, currency).minor();
+                        if (!captured || refundedAtStripe == 0) {
+                            codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");
+                        } else if (refundedAtStripe != recordedMinor) {
+                            codes.add("REMBOURSE_DIFFERENT");
+                        }
+                    } else {
+                        boolean refundedAtStripeInFull = "canceled".equals(status)
+                                || (captured && refundedAtStripe >= expected);
+                        if (!refundedAtStripeInFull) codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");
+                    }
                 }
                 case CANCELLED, FAILED -> {
                     if (captured || authorized) codes.add("ENCAISSE_MAIS_ANNULE");

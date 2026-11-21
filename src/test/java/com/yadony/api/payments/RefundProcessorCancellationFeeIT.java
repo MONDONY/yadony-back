@@ -3,6 +3,8 @@ package com.yadony.api.payments;
 import com.stripe.exception.ApiException;
 import com.stripe.model.BalanceTransaction;
 import com.stripe.model.Charge;
+import com.stripe.model.Event;
+import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
@@ -47,13 +49,20 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.event.ApplicationEvents;
 import org.springframework.test.context.event.RecordApplicationEvents;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -109,6 +118,8 @@ class RefundProcessorCancellationFeeIT {
     @Autowired BidRepository bidRepository;
     @Autowired JdbcTemplate jdbc;
     @Autowired ApplicationEvents applicationEvents;
+    @Autowired PaymentService paymentService;
+    @Autowired TransactionTemplate tx;
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
     @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
@@ -202,6 +213,86 @@ class RefundProcessorCancellationFeeIT {
                 .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
         assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(1);
         assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("calcul impossible (taux invalide) : remboursé en entier, retenue close NOT_APPLICABLE auditée, alerte")
+    void computationFailure_refundsFull_feeClosedNotApplicableWithAuditAndAlert() {
+        // Barème non validé : un taux de 150 % passe NUMERIC(5,4) mais fait lever le calcul.
+        jdbc.update("UPDATE cancellation_fees SET rate = 1.5 WHERE bid_id = ?", bidId);
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+
+            assertThat(params.getValue().getAmount()).as("remboursement intégral").isNull();
+        }
+
+        Map<String, Object> payment = jdbc.queryForMap("SELECT status, refunded_amount FROM payments WHERE id = ?", paymentId);
+        assertThat(payment.get("status")).isEqualTo("REFUNDED");
+        assertThat(payment.get("refunded_amount")).isNull();
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus())
+                .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        assertThat(jdbc.queryForObject("SELECT payload::text FROM audit_log WHERE entity_id = ? AND action = ?",
+                String.class, bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).contains("FEE_COMPUTATION_FAILED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM admin_alerts WHERE type = ? AND resolved = false",
+                Long.class, RefundProcessor.FEE_COMPUTE_FAILED_ALERT_PREFIX + paymentId)).isEqualTo(1L);
+        assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("webhook charge.refunded partiel pendant la transaction du remboursement : le paiement reste REFUNDED")
+    void partialRefundWebhook_duringTheRefundTransaction_neverReopensTheEscrow() throws Exception {
+        // Stripe envoie charge.refunded pendant que la transaction du remboursement (claim REFUNDED, verrou
+        // de ligne) est encore ouverte : le webhook lit le paiement ESCROW, puis son écriture attend le
+        // verrou. Elle ne doit pas réécrire ce statut périmé après le commit du remboursement.
+        CountDownLatch refundSent = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> refundRun = pool.submit(() -> {
+                try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+                     MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+                    stubIntent(piStatic, "succeeded");
+                    refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                            .thenAnswer(call -> {
+                                refundSent.countDown();
+                                Thread.sleep(1_500);
+                                return mock(Refund.class);
+                            });
+                    return refund();
+                }
+            });
+            assertThat(refundSent.await(30, TimeUnit.SECONDS)).isTrue();
+            Future<?> webhookRun = pool.submit(() -> tx.executeWithoutResult(status ->
+                    paymentService.handleChargeRefunded(chargeRefunded(10_000L, 7_000L))));
+
+            assertThat(refundRun.get(60, TimeUnit.SECONDS)).isTrue();
+            webhookRun.get(60, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        Map<String, Object> payment = jdbc.queryForMap("SELECT status, refunded_amount FROM payments WHERE id = ?", paymentId);
+        assertThat(payment.get("status")).isEqualTo("REFUNDED");
+        assertThat((BigDecimal) payment.get("refunded_amount")).isEqualByComparingTo("70.00");
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+    }
+
+    /** Événement Stripe {@code charge.refunded} de ce paiement (montants en unités mineures). */
+    private Event chargeRefunded(long amount, long amountRefunded) {
+        Charge charge = mock(Charge.class);
+        when(charge.getPaymentIntent()).thenReturn(piId);
+        when(charge.getAmount()).thenReturn(amount);
+        when(charge.getAmountRefunded()).thenReturn(amountRefunded);
+        EventDataObjectDeserializer data = mock(EventDataObjectDeserializer.class);
+        when(data.getObject()).thenReturn(Optional.of(charge));
+        Event event = mock(Event.class);
+        when(event.getDataObjectDeserializer()).thenReturn(data);
+        return event;
     }
 
     private boolean refund() {
