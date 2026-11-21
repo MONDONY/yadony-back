@@ -329,6 +329,8 @@ class NotificationTextsTest {
         map.put("recipientInvitationAccepted sans prénom", NotificationTexts.recipientInvitationAccepted(m, null));
         map.put("recipientInvitationRemoved", NotificationTexts.recipientInvitationRemoved(m, NOM));
         map.put("recipientInvitationRemoved sans prénom", NotificationTexts.recipientInvitationRemoved(m, null));
+        // Pseudo de 20 caractères au maximum, préfixé de « @ ».
+        map.put("recipientInvitationDeclined", NotificationTexts.recipientInvitationDeclined(m, "@awa.diallo.longname1"));
         return map;
     }
 
@@ -457,6 +459,10 @@ class NotificationTextsTest {
                 "Destinataires Yadony", "Awa ne vous compte plus parmi ses destinataires Yadony."));
         assertThat(NotificationTexts.recipientInvitationRemoved(en, null).body())
                 .isEqualTo("A sender removed you from their Yadony recipients.");
+        assertThat(NotificationTexts.recipientInvitationDeclined(fr, "@awa.diallo")).isEqualTo(new NotificationText(
+                "Invitation non acceptée", "@awa.diallo n'a pas accepté votre invitation."));
+        assertThat(NotificationTexts.recipientInvitationDeclined(en, "@awa.diallo")).isEqualTo(new NotificationText(
+                "Invitation declined", "@awa.diallo didn't accept your invitation."));
     }
 
     @Test

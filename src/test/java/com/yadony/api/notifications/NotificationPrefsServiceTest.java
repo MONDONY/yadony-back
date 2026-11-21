@@ -114,7 +114,8 @@ class NotificationPrefsServiceTest {
                 "RECIPIENT_PARCEL_ARRIVED", "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_CONFIRMED", "RECIPIENT_DECLINED", "RECIPIENT_WITHDRAWN", "RECIPIENT_REPLACEMENT_REQUESTED",
                 "RECIPIENT_PARCEL_CANCELLED", "RECIPIENT_PARCEL_RESCHEDULED",
                 "RECIPIENT_PARCEL_REASSIGNED", "RECIPIENT_CHANGED", "RECIPIENT_PICKUP_UPDATED",
-                "RECIPIENT_PARCEL_ANNOUNCED", "RECIPIENT_INVITATION", "RECIPIENT_INVITATION_ACCEPTED"}) {
+                "RECIPIENT_PARCEL_ANNOUNCED", "RECIPIENT_INVITATION", "RECIPIENT_INVITATION_ACCEPTED",
+                "RECIPIENT_INVITATION_DECLINED"}) {
             assertThat(service.isAllowed(USER_ID, type)).as(type).isFalse();
         }
     }
@@ -650,9 +651,10 @@ class NotificationPrefsServiceTest {
     void feedOnly_coversSilentTypes_andNeverACriticalOne() {
         assertThat(NotificationPrefsService.isFeedOnly("RECIPIENT_CONFIRMED")).isTrue();
         assertThat(NotificationPrefsService.isFeedOnly("REPORT_RESOLVED")).isTrue();
+        assertThat(NotificationPrefsService.isFeedOnly("RECIPIENT_INVITATION_DECLINED")).isTrue();
         assertThat(NotificationPrefsService.isFeedOnly("BID_ACCEPTED")).isFalse();
         assertThat(NotificationPrefsService.isFeedOnly(null)).isFalse();
-        assertThat(NotificationPrefsService.FEED_ONLY).hasSize(12)
+        assertThat(NotificationPrefsService.FEED_ONLY).hasSize(13)
                 .noneMatch(NotificationTypes::isCritical);
     }
 }

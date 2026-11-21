@@ -17,6 +17,9 @@ public interface RecipientInvitationRepository extends JpaRepository<RecipientIn
     boolean existsByInviterUserIdAndTargetHashAndStatusIn(UUID inviterUserId, String targetHash,
                                                           Collection<InvitationStatus> statuses);
 
+    boolean existsByInviterUserIdAndInviteeUserIdAndStatusIn(UUID inviterUserId, UUID inviteeUserId,
+                                                             Set<InvitationStatus> statuses);
+
     boolean existsByInviterUserIdAndInviteeUserIdAndStatus(UUID inviterUserId, UUID inviteeUserId,
                                                            InvitationStatus status);
 

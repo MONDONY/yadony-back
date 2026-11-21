@@ -9,6 +9,8 @@ import com.yadony.api.auth.dto.RegisterRequest;
 import com.yadony.api.auth.dto.UpdateProfileRequest;
 import com.yadony.api.auth.dto.UpgradeToProRequest;
 import com.yadony.api.auth.dto.UserResponse;
+import com.yadony.api.auth.dto.ChangeUsernameRequest;
+import com.yadony.api.auth.dto.UsernameAvailabilityResponse;
 import com.yadony.api.auth.dto.WalletRefundRequestResponse;
 import com.yadony.api.common.YadonyBusinessException;
 import com.google.firebase.auth.FirebaseToken;
@@ -38,9 +40,13 @@ public class AuthController {
     private final AuthService authService;
     private final GuestClaimService guestClaimService;
 
-    public AuthController(AuthService authService, GuestClaimService guestClaimService) {
+    private final UsernameService usernameService;
+
+    public AuthController(AuthService authService, GuestClaimService guestClaimService,
+                          UsernameService usernameService) {
         this.authService = authService;
         this.guestClaimService = guestClaimService;
+        this.usernameService = usernameService;
     }
 
     /**
@@ -102,6 +108,24 @@ public class AuthController {
     public ResponseEntity<UserResponse> updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
         String firebaseUid = requireFirebaseUid();
         return ResponseEntity.ok(authService.updateProfile(firebaseUid, request));
+    }
+
+    /**
+     * Disponibilité d'un identifiant pour l'appelant. Bornes réelles : 120 vérifications par heure et par
+     * utilisateur (429 {@code username-availability-quota}, seau propre), en plus de la zone Nginx
+     * {@code api_general} par IP (600 req/min, burst 200) qui couvre {@code /auth/me}, et non la zone
+     * sensible {@code /auth}. Nginx seul ne borne donc pas l'énumération.
+     */
+    @GetMapping("/me/username/availability")
+    public ResponseEntity<UsernameAvailabilityResponse> checkUsername(
+            @RequestParam("value") String value) {
+        return ResponseEntity.ok(usernameService.check(requireFirebaseUid(), value));
+    }
+
+    @PutMapping("/me/username")
+    public ResponseEntity<UserResponse> changeUsername(
+            @Valid @RequestBody ChangeUsernameRequest request) {
+        return ResponseEntity.ok(usernameService.change(requireFirebaseUid(), request.username()));
     }
 
     @PutMapping("/me/fcm-token")
