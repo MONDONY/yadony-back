@@ -217,12 +217,219 @@ class MoneyIntegrityMonitorIT {
                 .hasSize(2).isSorted();
     }
 
+    /**
+     * Retenue d'annulation réglée sur une carte : 70 rendus sur 100 payés est l'état normal (30 retenus), pas un
+     * remboursement Stripe inachevé. Un remboursement partiel sans retenue au montant exact reste signalé.
+     */
     @Test
-    void lesDixHuitInvariantsTournentSurLeSchemaReelEtSontAZeroSurUneBaseVide() {
+    void inv07_retenueDAnnulationAuMontantExact_nEstPasUnRemboursementNonConfirme() {
+        UUID travelerId = persistUser();
+        UUID senderId = persistUser();
+        UUID announcementId = persistAnnouncement(travelerId);
+        UUID retainedBid = persistCardBid(announcementId, senderId);
+        UUID threadBid = persistCardBid(announcementId, senderId);
+        UUID noFeeBid = persistCardBid(announcementId, senderId);
+        UUID mismatchBid = persistCardBid(announcementId, senderId);
+        UUID dueBid = persistCardBid(announcementId, senderId);
+
+        UUID retained = persistRefundedCardPayment(retainedBid, "100.00", "70.00");
+        persistFee(retainedBid, senderId, travelerId, "RETAINED", "30.00");
+        UUID viaThread = persistRefundedCardPayment(threadBid, "100.00", "70.00");
+        persistFee(threadBid, senderId, travelerId, "PAID_OUT", "30.00");
+        moveToNegotiationThread(viaThread, threadBid);
+        UUID noFee = persistRefundedCardPayment(noFeeBid, "100.00", "70.00");
+        UUID mismatch = persistRefundedCardPayment(mismatchBid, "100.00", "50.00");
+        persistFee(mismatchBid, senderId, travelerId, "PAYOUT_PENDING", "30.00");
+        UUID dueOnly = persistRefundedCardPayment(dueBid, "100.00", "70.00");
+        persistFee(dueBid, senderId, travelerId, "DUE", "0");
+        for (UUID paymentId : java.util.List.of(retained, viaThread, noFee, mismatch, dueOnly)) {
+            auditPaymentAt(paymentId, "now() - interval '2 days'");
+        }
+
+        MoneyIntegrityMonitor.Inspection inspection = monitor.inspect("INV-07", 50).orElseThrow();
+
+        assertThat(inspection.rows())
+                .filteredOn(r -> "REFUND_STRIPE_NON_CONFIRME".equals(r.get("anomaly")))
+                .extracting(r -> String.valueOf(r.get("payment_id")))
+                .containsExactlyInAnyOrder(noFee.toString(), mismatch.toString(), dueOnly.toString());
+    }
+
+    /** Retenue jamais réglée alors que l'expéditeur est remboursé depuis plus de 24 h. */
+    @Test
+    void inv19_retenueRestéeDueSurUnPaiementRembourseDepuisPlusDe24h() {
+        UUID travelerId = persistUser();
+        UUID senderId = persistUser();
+        UUID announcementId = persistAnnouncement(travelerId);
+        UUID staleBid = persistCardBid(announcementId, senderId);
+        UUID recentBid = persistCardBid(announcementId, senderId);
+        UUID escrowBid = persistCardBid(announcementId, senderId);
+
+        UUID stalePayment = persistRefundedCardPayment(staleBid, "100.00", null);
+        UUID stale = persistFee(staleBid, senderId, travelerId, "DUE", "0");
+        ageFee(stale, "now() - interval '2 days'");
+        auditPaymentAt(stalePayment, "now() - interval '2 days'");
+        UUID recentPayment = persistRefundedCardPayment(recentBid, "100.00", null);
+        UUID recent = persistFee(recentBid, senderId, travelerId, "DUE", "0");
+        ageFee(recent, "now() - interval '2 days'");
+        auditPaymentAt(recentPayment, "now() - interval '1 hour'");
+        persistEscrowCardPayment(escrowBid);
+        UUID escrow = persistFee(escrowBid, senderId, travelerId, "DUE", "0");
+        ageFee(escrow, "now() - interval '2 days'");
+
+        assertThat(inv19Anomalies())
+                .containsOnly(Map.entry(stale.toString(), "RETENUE_DUE_SUR_PAIEMENT_REMBOURSE"));
+    }
+
+    /** Dédommagement toujours pas versé 3 jours après la retenue (réglée ou en attente) ; versé : rien. */
+    @Test
+    void inv19_dedommagementNonVerseTroisJoursApresLaRetenue() {
+        UUID travelerId = persistUser();
+        UUID senderId = persistUser();
+        UUID announcementId = persistAnnouncement(travelerId);
+        UUID oldRetainedBid = persistCardBid(announcementId, senderId);
+        UUID oldPendingBid = persistCardBid(announcementId, senderId);
+        UUID freshRetainedBid = persistCardBid(announcementId, senderId);
+        UUID oldPaidBid = persistCardBid(announcementId, senderId);
+
+        persistRefundedCardPayment(oldRetainedBid, "100.00", "70.00");
+        UUID oldRetained = persistFee(oldRetainedBid, senderId, travelerId, "RETAINED", "30.00");
+        auditRetainedAt(oldRetainedBid, "now() - interval '4 days'");
+        persistRefundedCardPayment(oldPendingBid, "100.00", "70.00");
+        UUID oldPending = persistFee(oldPendingBid, senderId, travelerId, "PAYOUT_PENDING", "30.00");
+        // Ligne créée il y a 4 jours (annulation), réglée il y a 1 heure : l'audit de la retenue fait foi.
+        ageFee(oldPending, "now() - interval '4 days'");
+        auditRetainedAt(oldPendingBid, "now() - interval '5 days'");
+        persistRefundedCardPayment(freshRetainedBid, "100.00", "70.00");
+        UUID freshRetained = persistFee(freshRetainedBid, senderId, travelerId, "RETAINED", "30.00");
+        ageFee(freshRetained, "now() - interval '4 days'");
+        auditRetainedAt(freshRetainedBid, "now() - interval '1 hour'");
+        persistRefundedCardPayment(oldPaidBid, "100.00", "70.00");
+        UUID oldPaid = persistFee(oldPaidBid, senderId, travelerId, "PAID_OUT", "30.00");
+        auditRetainedAt(oldPaidBid, "now() - interval '5 days'");
+
+        // oldPaid : versé, rien à signaler même 5 jours après la retenue.
+        assertThat(inv19Anomalies()).doesNotContainKey(oldPaid.toString()).containsOnly(
+                Map.entry(oldRetained.toString(), "DEDOMMAGEMENT_NON_VERSE"),
+                Map.entry(oldPending.toString(), "DEDOMMAGEMENT_NON_VERSE"));
+    }
+
+    /**
+     * Retenue réglée : remboursé + brut retenu = payé, sinon l'expéditeur a été remboursé de trop (ou de trop peu)
+     * alors que le voyageur est (ou sera) dédommagé. Le paiement d'un fil de négociation compte comme celui du colis.
+     */
+    @Test
+    void inv19_retenueRegleeIncoherenteAvecLeMontantRembourse() {
+        UUID travelerId = persistUser();
+        UUID senderId = persistUser();
+        UUID announcementId = persistAnnouncement(travelerId);
+        UUID exactBid = persistCardBid(announcementId, senderId);
+        UUID threadBid = persistCardBid(announcementId, senderId);
+        UUID fullRefundBid = persistCardBid(announcementId, senderId);
+        UUID notRecordedBid = persistCardBid(announcementId, senderId);
+        UUID noPaymentBid = persistCardBid(announcementId, senderId);
+
+        persistRefundedCardPayment(exactBid, "100.00", "70.00");
+        persistFee(exactBid, senderId, travelerId, "PAID_OUT", "30.00");
+        UUID viaThread = persistRefundedCardPayment(threadBid, "100.00", "70.00");
+        persistFee(threadBid, senderId, travelerId, "RETAINED", "30.00");
+        moveToNegotiationThread(viaThread, threadBid);
+        persistRefundedCardPayment(fullRefundBid, "100.00", "100.00");
+        UUID fullRefund = persistFee(fullRefundBid, senderId, travelerId, "PAID_OUT", "30.00");
+        persistRefundedCardPayment(notRecordedBid, "100.00", null);
+        UUID notRecorded = persistFee(notRecordedBid, senderId, travelerId, "PAYOUT_PENDING", "30.00");
+        UUID noPayment = persistFee(noPaymentBid, senderId, travelerId, "RETAINED", "30.00");
+
+        assertThat(inv19Anomalies()).containsOnly(
+                Map.entry(fullRefund.toString(), "RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT"),
+                Map.entry(notRecorded.toString(), "RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT"),
+                Map.entry(noPayment.toString(), "RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT"));
+    }
+
+    private Map<String, String> inv19Anomalies() {
+        MoneyIntegrityMonitor.Inspection inspection = monitor.inspect("INV-19", 50).orElseThrow();
+        assertThat(inspection.severity()).isEqualTo("HAUTE");
+        Map<String, String> byFee = new java.util.HashMap<>();
+        inspection.rows().forEach(r ->
+                byFee.put(String.valueOf(r.get("cancellation_fee_id")), String.valueOf(r.get("anomaly"))));
+        return byFee;
+    }
+
+    private UUID persistCardBid(UUID announcementId, UUID senderId) {
+        BidEntity bid = new BidEntity();
+        bid.setAnnouncementId(announcementId);
+        bid.setSenderId(senderId);
+        bid.setPaymentMethod(PaymentMethod.STRIPE);
+        bid.setCurrency("EUR");
+        bid.setWeightKg(new BigDecimal("5"));
+        bid.setStatus(BidStatus.CANCELLED);
+        return bidRepository.saveAndFlush(bid).getId();
+    }
+
+    /** Paiement carte capturé puis remboursé ; {@code refunded} nul : montant remboursé jamais enregistré. */
+    private UUID persistRefundedCardPayment(UUID bidId, String amount, String refunded) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO payments (id, bid_id, stripe_payment_intent_id, amount, commission_amount, currency,
+                                      status, rail, captured_at, refunded_amount)
+                VALUES (?, ?, ?, ?, 4.76, 'EUR', 'REFUNDED', 'STRIPE', now() - interval '3 days', ?)
+                """, id, bidId, "pi_fee_" + UUID.randomUUID(), new BigDecimal(amount),
+                refunded == null ? null : new BigDecimal(refunded));
+        return id;
+    }
+
+    private void persistEscrowCardPayment(UUID bidId) {
+        jdbcTemplate.update("""
+                INSERT INTO payments (id, bid_id, stripe_payment_intent_id, amount, commission_amount, currency,
+                                      status, rail, captured_at)
+                VALUES (?, ?, ?, 100.00, 4.76, 'EUR', 'ESCROW', 'STRIPE', now() - interval '3 days')
+                """, UUID.randomUUID(), bidId, "pi_fee_" + UUID.randomUUID());
+    }
+
+    private UUID persistFee(UUID bidId, UUID senderId, UUID travelerId, String status, String grossFee) {
+        UUID id = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO cancellation_fees (id, bid_id, sender_id, traveler_id, rate, reason, status, gross_fee,
+                                               refund_fees, commission, traveler_net, currency)
+                VALUES (?, ?, ?, ?, 0.30, 'SENDER_CANCEL', ?, ?, 0, 0, 0, 'EUR')
+                """, id, bidId, senderId, travelerId, status, new BigDecimal(grossFee));
+        return id;
+    }
+
+    private void ageFee(UUID feeId, String createdAtSql) {
+        jdbcTemplate.update("UPDATE cancellation_fees SET created_at = " + createdAtSql + " WHERE id = ?", feeId);
+    }
+
+    private void auditPaymentAt(UUID paymentId, String createdAtSql) {
+        jdbcTemplate.update("INSERT INTO audit_log (entity_type, entity_id, action, created_at) VALUES "
+                + "('PAYMENT', ?, 'BID_CANCELLED_REFUND', " + createdAtSql + ")", paymentId);
+    }
+
+    private void auditRetainedAt(UUID bidId, String createdAtSql) {
+        jdbcTemplate.update("INSERT INTO audit_log (entity_type, entity_id, action, created_at) VALUES "
+                + "('BID', ?, 'CANCELLATION_FEE_RETAINED', " + createdAtSql + ")", bidId);
+    }
+
+    /**
+     * Paiement d'un fil de négociation : rattaché au fil (le colis matérialisé y pointe), plus au colis. Le fil n'est
+     * pas créé, la clé étrangère est suspendue le temps de cette seule transaction (comme
+     * {@link #linkToNegotiationThread}).
+     */
+    private void moveToNegotiationThread(UUID paymentId, UUID bidId) {
+        UUID threadId = UUID.randomUUID();
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+            jdbcTemplate.execute("SET LOCAL session_replication_role = 'replica'");
+            jdbcTemplate.update("UPDATE bids SET linked_negotiation_thread_id = ? WHERE id = ?", threadId, bidId);
+            jdbcTemplate.update("UPDATE payments SET bid_id = NULL, negotiation_thread_id = ? WHERE id = ?",
+                    threadId, paymentId);
+        });
+    }
+
+    @Test
+    void lesDixNeufInvariantsTournentSurLeSchemaReelEtSontAZeroSurUneBaseVide() {
         Map<String, Long> counts = monitor.runAll();
 
         assertThat(counts).hasSize(MoneyInvariants.ALL.size());
-        assertThat(MoneyInvariants.ALL).hasSize(18);
+        assertThat(MoneyInvariants.ALL).hasSize(19);
         assertThat(counts.values()).allSatisfy(n -> assertThat(n).isZero());
         verify(alertEscalator, never()).raiseOnce(anyString(), anyString(), anyString(), anyMap());
     }
