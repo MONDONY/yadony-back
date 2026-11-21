@@ -118,6 +118,13 @@ public class AccountFinalizationService {
         user.setBusinessName(null);
         user.setBusinessRegistrationNumber(null);
         user.setBusinessCountry(null);
+        // Numéro déclaré sans SMS (V391) : le claim part avec le compte Firebase, mais l'empreinte HMAC
+        // restait sur la ligne. Avec la base et la clé, HMAC(numéro) retrouvait le compte supprimé et son
+        // historique, comme le SIRET plus haut. On efface aussi le niveau et la trace de validation.
+        user.setDeclaredPhoneHash(null);
+        user.setDeclaredPhoneLevel(null);
+        user.setDeclaredPhoneVerifiedAt(null);
+        user.setDeclaredPhoneVerifiedBy(null);
         // DAC7 : le NIF et le numéro de TVA identifient la personne comme le SIRET. Gardés seulement si DAC7 est allumé
         // et qu'une opération déclarable de l'année courante ou précédente reste à déclarer (yadony.dac7.retention-
         // years, obligation légale, RGPD art. 17-3-b), puis purgés chaque mois hors fenêtre
