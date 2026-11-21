@@ -2,13 +2,11 @@ package com.yadony.api.likes;
 
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
-import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.YadonyNotFoundException;
 import com.yadony.api.likes.dto.TripLikeResponse;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.AnnouncementStatus;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,7 +44,9 @@ public class TripLikeService {
     /**
      * @throws YadonyNotFoundException si le trajet n'est pas aimable (absent, hors ACTIVE/FULL,
      *                                 caché, ou d'un voyageur masqué par un blocage)
-     * @throws YadonyBusinessException (422 {@code trip-like-own-trip}) sur son propre trajet
+     *
+     * <p>Le voyageur peut aimer son propre trajet, comme n'importe qui : un seul j'aime par
+     * personne et par trajet, et le compteur le compte comme les autres.
      */
     public TripLikeResponse like(UUID userId, UUID tripId) {
         requireLikeable(userId, tripId);
@@ -94,10 +94,6 @@ public class TripLikeService {
             throw notFound(tripId);
         }
         UUID travelerId = trip.getTravelerId();
-        if (userId.equals(travelerId)) {
-            throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
-                    "trip-like-own-trip", "problem.trip-like-own-trip");
-        }
         if (travelerId != null && blockVisibility.isHidden(userId, travelerId)) {
             throw notFound(tripId);
         }
