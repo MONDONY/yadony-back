@@ -244,6 +244,7 @@ class NegotiatedBidRefundResolutionIT {
     private RefundProcessor realRefundProcessor() {
         return new RefundProcessor(paymentRepository, mock(AuditService.class), mock(AdminAlertService.class),
                 mock(PawapayOperationService.class), mock(PawapaySubmissionService.class),
-                mock(AdminAlertEscalator.class), mock(PlatformTransactionManager.class));
+                mock(AdminAlertEscalator.class), mock(PlatformTransactionManager.class),
+                mock(com.yadony.api.payments.fee.CancellationFeeSettlement.class));
     }
 }

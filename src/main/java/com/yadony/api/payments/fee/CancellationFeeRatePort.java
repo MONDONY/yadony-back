@@ -17,10 +17,16 @@ import java.util.UUID;
 public interface CancellationFeeRatePort {
 
     /**
+     * Lecture sans verrou : l'appelant la fait sous une garantie qui lui est propre (le claim du paiement
+     * pour un remboursement, voir {@code RefundProcessor}).
+     *
      * @return le taux de la retenue (0 &lt; taux &le; 1) si une retenue est due et pas encore réglée pour
      *         ce colis ; vide sinon (aucune faute de l'expéditeur, espèces, retenue déjà réglée).
      */
     Optional<BigDecimal> dueRate(UUID bidId);
+
+    /** Plafond du dédommagement par colis, en euros (barème du paquet {@code cancellation}). */
+    BigDecimal capEur();
 
     /**
      * Enregistre la ventilation de la retenue réglée et passe la ligne en {@code RETAINED}. Idempotent :
@@ -29,4 +35,13 @@ public interface CancellationFeeRatePort {
      * @param currency devise du paiement remboursé (code ISO à 3 lettres)
      */
     void markRetained(UUID bidId, CancellationFeeBreakdown breakdown, String currency);
+
+    /**
+     * Clôt en {@code NOT_APPLICABLE} une retenue encore due que le remboursement n'a pas pu porter
+     * (l'expéditeur a été remboursé en entier). Idempotent : sans effet si la ligne n'est plus due ou
+     * n'existe pas.
+     *
+     * @param reason motif court, repris dans l'audit
+     */
+    void markNotApplicable(UUID bidId, String reason);
 }

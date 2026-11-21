@@ -14,7 +14,8 @@ import java.util.UUID;
 
 /**
  * Réponse du paquet {@code cancellation} au port {@link CancellationFeeRatePort} du paquet
- * {@code payments} : taux de la retenue encore due, puis règlement de cette retenue. Le paquet
+ * {@code payments} : taux de la retenue encore due et plafond du barème, puis règlement de cette retenue
+ * (ou sa clôture quand le remboursement n'a pas pu la porter). Le paquet
  * {@code cancellation} ne connaît que la décision (ligne {@code DUE}, {@link SenderCancellationFeeRecorder}),
  * jamais les montants, qu'il reçoit tout calculés.
  */
@@ -22,13 +23,17 @@ import java.util.UUID;
 public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
 
     static final String AUDIT_FEE_RETAINED = "CANCELLATION_FEE_RETAINED";
+    static final String AUDIT_FEE_NOT_APPLICABLE = "CANCELLATION_FEE_NOT_APPLICABLE";
 
     private final CancellationFeeRepository fees;
     private final AuditService auditService;
+    private final CancellationFeeProperties properties;
 
-    public CancellationFeeRatePortAdapter(CancellationFeeRepository fees, AuditService auditService) {
+    public CancellationFeeRatePortAdapter(CancellationFeeRepository fees, AuditService auditService,
+                                          CancellationFeeProperties properties) {
         this.fees = fees;
         this.auditService = auditService;
+        this.properties = properties;
     }
 
     @Override
@@ -36,6 +41,29 @@ public class CancellationFeeRatePortAdapter implements CancellationFeeRatePort {
         return fees.findByBidId(bidId)
                 .filter(fee -> fee.getStatus() == CancellationFeeStatus.DUE)
                 .map(CancellationFeeEntity::getRate);
+    }
+
+    @Override
+    public BigDecimal capEur() {
+        return properties.capEur();
+    }
+
+    /**
+     * Même verrou que {@link #markRetained} : la retenue est réglée ou close, jamais les deux. Les montants
+     * restent à zéro, rien n'ayant été retenu.
+     */
+    @Override
+    @Transactional
+    public void markNotApplicable(UUID bidId, String reason) {
+        fees.findByBidIdForUpdate(bidId)
+                .filter(fee -> fee.getStatus() == CancellationFeeStatus.DUE)
+                .ifPresent(fee -> {
+                    fee.setStatus(CancellationFeeStatus.NOT_APPLICABLE);
+                    fees.save(fee);
+                    auditService.log("BID", bidId, AUDIT_FEE_NOT_APPLICABLE, null, Map.of(
+                            "cancellationFeeId", String.valueOf(fee.getId()),
+                            "reason", String.valueOf(reason)));
+                });
     }
 
     /**

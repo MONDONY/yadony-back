@@ -124,6 +124,56 @@ class CancellationFeeRatePortAdapterTest {
         verifyNoInteractions(auditService);
     }
 
+    @Test
+    void capEur_isTheConfiguredCap() {
+        CancellationFeeRatePortAdapter configured = new CancellationFeeRatePortAdapter(fees, auditService,
+                new CancellationFeeProperties(new BigDecimal("25"), null));
+
+        assertThat(configured.capEur()).isEqualByComparingTo("25");
+    }
+
+    @Test
+    void markNotApplicable_dueRow_closesAndAudits() {
+        CancellationFeeEntity due = fee(CancellationFeeStatus.DUE);
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(due));
+
+        adapter.markNotApplicable(BID_ID, "PAYMENT_NOT_CAPTURED");
+
+        verify(fees).save(due);
+        assertThat(due.getStatus()).isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        // Rien n'a été retenu : les montants restent à zéro.
+        assertThat(due.getGrossFee()).isEqualByComparingTo("0");
+        assertThat(due.getTravelerNet()).isEqualByComparingTo("0");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).log(eq("BID"), eq(BID_ID), eq(CancellationFeeRatePortAdapter.AUDIT_FEE_NOT_APPLICABLE),
+                isNull(), payload.capture());
+        assertThat(payload.getValue()).containsEntry("reason", "PAYMENT_NOT_CAPTURED").containsKey("cancellationFeeId");
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = CancellationFeeStatus.class, names = "DUE", mode = EnumSource.Mode.EXCLUDE)
+    void markNotApplicable_notDue_noOp(CancellationFeeStatus status) {
+        CancellationFeeEntity row = fee(status);
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.of(row));
+
+        adapter.markNotApplicable(BID_ID, "PAYMENT_NOT_CAPTURED");
+
+        verify(fees, never()).save(any());
+        verifyNoInteractions(auditService);
+        assertThat(row.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    void markNotApplicable_noRow_noOp() {
+        when(fees.findByBidIdForUpdate(BID_ID)).thenReturn(Optional.empty());
+
+        adapter.markNotApplicable(BID_ID, "PAYMENT_NOT_CAPTURED");
+
+        verify(fees, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
     private static CancellationFeeEntity fee(CancellationFeeStatus status) {
         CancellationFeeEntity f = new CancellationFeeEntity();
         f.setBidId(BID_ID);

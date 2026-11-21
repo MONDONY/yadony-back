@@ -1,0 +1,311 @@
+package com.yadony.api.payments;
+
+import com.stripe.exception.ApiException;
+import com.stripe.model.BalanceTransaction;
+import com.stripe.model.Charge;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.Refund;
+import com.stripe.net.RequestOptions;
+import com.stripe.param.PaymentIntentCancelParams;
+import com.stripe.param.PaymentIntentRetrieveParams;
+import com.stripe.param.RefundCreateParams;
+import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.Role;
+import com.yadony.api.auth.StripeAccountStatus;
+import com.yadony.api.auth.UserEntity;
+import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
+import com.yadony.api.cancellation.fee.CancellationFeeEntity;
+import com.yadony.api.cancellation.fee.CancellationFeeReason;
+import com.yadony.api.cancellation.fee.CancellationFeeRepository;
+import com.yadony.api.cancellation.fee.CancellationFeeStatus;
+import com.yadony.api.city.GeoNamesDataLoader;
+import com.yadony.api.matching.AnnouncementEntity;
+import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.AnnouncementStatus;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.TransportMode;
+import com.yadony.api.notifications.NotificationDispatcher;
+import com.yadony.api.payments.cash.PaymentMethod;
+import com.yadony.api.payments.fee.CancellationFeeRetainedEvent;
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
+
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
+
+/**
+ * Retenue d'annulation réglée au remboursement, sur la vraie pile (PostgreSQL, Flyway jusqu'à V390,
+ * transaction REQUIRES_NEW de {@link RefundProcessor}, vrai port {@code cancellation} et son verrou de
+ * ligne, vrai audit) : seul Stripe est simulé. Prouve ce que les tests unitaires ne peuvent pas : un échec
+ * Stripe défait le claim ET laisse la retenue due, et l'entité paiement chargée avant le claim n'écrase
+ * jamais le statut REFUNDED au flush.
+ */
+@SpringBootTest
+@ActiveProfiles("e2e")
+@RecordApplicationEvents
+@DisplayName("Remboursement moins la retenue d'annulation (PostgreSQL, Stripe simulé)")
+class RefundProcessorCancellationFeeIT {
+
+    private static EmbeddedPostgres postgres;
+
+    @BeforeAll
+    static void startPostgres() throws Exception {
+        postgres = EmbeddedPostgres.builder().start();
+    }
+
+    @AfterAll
+    static void stopPostgres() throws Exception {
+        if (postgres != null) {
+            postgres.close();
+        }
+    }
+
+    @DynamicPropertySource
+    static void configurePostgres(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", () -> postgres.getJdbcUrl("postgres", "postgres"));
+        registry.add("spring.datasource.username", () -> "postgres");
+        registry.add("spring.datasource.password", () -> "postgres");
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        registry.add("spring.flyway.enabled", () -> true);
+    }
+
+    @Autowired RefundProcessor refundProcessor;
+    @Autowired PaymentRepository paymentRepository;
+    @Autowired CancellationFeeRepository feeRepository;
+    @Autowired UserRepository userRepository;
+    @Autowired AnnouncementRepository announcementRepository;
+    @Autowired BidRepository bidRepository;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired ApplicationEvents applicationEvents;
+    @MockitoBean NotificationDispatcher notificationDispatcher;
+    // Import de dizaines de milliers de villes au démarrage, inutile ici.
+    @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
+
+    private String piId;
+    private UUID bidId;
+    private UUID paymentId;
+
+    @BeforeEach
+    void setUp() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        UserEntity sender = persistUser(Role.SENDER);
+        AnnouncementEntity trip = persistTrip(traveler);
+        bidId = persistCancelledBid(trip, sender).getId();
+        piId = "pi_fee_it_" + UUID.randomUUID();
+        paymentId = persistEscrow();
+        persistDueFee(sender, traveler);
+    }
+
+    @Test
+    @DisplayName("PI capturé + retenue due : 70 € rendus, paiement REFUNDED, retenue RETAINED, événement publié")
+    void dueFee_partialRefund_refundedPaymentAndRetainedFee() {
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refund()).isTrue();
+
+            assertThat(params.getValue().getAmount()).isEqualTo(7000L);
+        }
+
+        Map<String, Object> payment = jdbc.queryForMap("SELECT status, refunded_amount FROM payments WHERE id = ?", paymentId);
+        assertThat(payment.get("status")).isEqualTo("REFUNDED");
+        assertThat((BigDecimal) payment.get("refunded_amount")).isEqualByComparingTo("70.00");
+
+        CancellationFeeEntity fee = feeRepository.findByBidId(bidId).orElseThrow();
+        assertThat(fee.getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+        assertThat(fee.getGrossFee()).isEqualByComparingTo("30.00");
+        assertThat(fee.getRefundFees()).isEqualByComparingTo("1.75");
+        assertThat(fee.getCommission()).isEqualByComparingTo("1.41");
+        assertThat(fee.getTravelerNet()).isEqualByComparingTo("26.84");
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isEqualTo(1);
+        assertThat(audits(paymentId, "PAYMENT_REFUNDED_BID_REJECTED")).isEqualTo(1);
+        assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class))
+                .containsExactly(new CancellationFeeRetainedEvent(bidId));
+
+        // Rejeu de l'événement de remboursement : le claim est perdu, rien ne repart.
+        try (MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            assertThat(refund()).isFalse();
+            refundStatic.verifyNoInteractions();
+        }
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("échec Stripe : claim défait (ESCROW), retenue toujours DUE, rien de réglé")
+    void stripeFailure_rollsBackTheClaimAndKeepsTheFeeDue() {
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded");
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(RequestOptions.class)))
+                    .thenThrow(new ApiException("boom", null, null, 500, null));
+
+            assertThatThrownBy(this::refund).isInstanceOf(IllegalStateException.class);
+        }
+
+        Map<String, Object> payment = jdbc.queryForMap("SELECT status, refunded_amount FROM payments WHERE id = ?", paymentId);
+        assertThat(payment.get("status")).isEqualTo("ESCROW");
+        assertThat(payment.get("refunded_amount")).isNull();
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus()).isEqualTo(CancellationFeeStatus.DUE);
+        assertThat(audits(bidId, "CANCELLATION_FEE_RETAINED")).isZero();
+        assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("autorisation non capturée : annulée en entier, retenue close NOT_APPLICABLE et auditée")
+    void uncapturedIntent_cancelledWhole_feeClosedNotApplicable() throws Exception {
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class)) {
+            PaymentIntent authorized = stubIntent(piStatic, "requires_capture");
+            when(authorized.cancel(any(PaymentIntentCancelParams.class))).thenReturn(authorized);
+
+            assertThat(refund()).isTrue();
+        }
+
+        assertThat(jdbc.queryForObject("SELECT status FROM payments WHERE id = ?", String.class, paymentId))
+                .isEqualTo("REFUNDED");
+        assertThat(feeRepository.findByBidId(bidId).orElseThrow().getStatus())
+                .isEqualTo(CancellationFeeStatus.NOT_APPLICABLE);
+        assertThat(audits(bidId, "CANCELLATION_FEE_NOT_APPLICABLE")).isEqualTo(1);
+        assertThat(applicationEvents.stream(CancellationFeeRetainedEvent.class)).isEmpty();
+    }
+
+    private boolean refund() {
+        return refundProcessor.processRefund(paymentId, "PAYMENT_REFUNDED_BID_REJECTED", bidId,
+                Map.of("reason", "bid_rejected"));
+    }
+
+    /** PaymentIntent lu par le remboursement, et sa charge (frais Stripe réels 1,75 €) lue par {@code StripeFeeSource}. */
+    private PaymentIntent stubIntent(MockedStatic<PaymentIntent> piStatic, String status) {
+        PaymentIntent pi = mock(PaymentIntent.class);
+        when(pi.getStatus()).thenReturn(status);
+        BalanceTransaction balance = mock(BalanceTransaction.class);
+        when(balance.getFee()).thenReturn(175L);
+        when(balance.getCurrency()).thenReturn("eur");
+        Charge charge = mock(Charge.class);
+        when(charge.getBalanceTransactionObject()).thenReturn(balance);
+        PaymentIntent expanded = mock(PaymentIntent.class);
+        when(expanded.getLatestChargeObject()).thenReturn(charge);
+
+        piStatic.when(() -> PaymentIntent.retrieve(piId)).thenReturn(pi);
+        piStatic.when(() -> PaymentIntent.retrieve(eq(piId), any(PaymentIntentRetrieveParams.class),
+                (RequestOptions) any())).thenReturn(expanded);
+        return pi;
+    }
+
+    private UUID persistEscrow() {
+        PaymentEntity p = new PaymentEntity();
+        p.setBidId(bidId);
+        p.setStripePaymentIntentId(piId);
+        p.setAmount(new BigDecimal("100.00"));
+        p.setCommissionAmount(new BigDecimal("4.76"));
+        p.setCurrency("EUR");
+        p.setStatus(PaymentStatus.ESCROW);
+        return paymentRepository.saveAndFlush(p).getId();
+    }
+
+    private void persistDueFee(UserEntity sender, UserEntity traveler) {
+        CancellationFeeEntity fee = new CancellationFeeEntity();
+        fee.setBidId(bidId);
+        fee.setSenderId(sender.getId());
+        fee.setTravelerId(traveler.getId());
+        fee.setRate(new BigDecimal("0.30"));
+        fee.setReason(CancellationFeeReason.SENDER_CANCEL);
+        fee.setStatus(CancellationFeeStatus.DUE);
+        fee.setGrossFee(BigDecimal.ZERO);
+        fee.setRefundFees(BigDecimal.ZERO);
+        fee.setCommission(BigDecimal.ZERO);
+        fee.setTravelerNet(BigDecimal.ZERO);
+        fee.setCurrency("EUR");
+        feeRepository.saveAndFlush(fee);
+    }
+
+    private long audits(UUID entityId, String action) {
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = ?",
+                Long.class, entityId, action);
+        return n == null ? 0 : n;
+    }
+
+    private UserEntity persistUser(Role role) {
+        UserEntity user = new UserEntity();
+        user.setFirebaseUid("fee-refund-it-" + UUID.randomUUID());
+        user.setFirstName("Test");
+        user.setStatus(UserStatus.ACTIVE);
+        user.setKycStatus(KycStatus.VERIFIED);
+        user.setRoles(Set.of(role));
+        user.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+        return userRepository.saveAndFlush(user);
+    }
+
+    private AnnouncementEntity persistTrip(UserEntity traveler) {
+        OffsetDateTime departureAt = OffsetDateTime.now(ZoneOffset.UTC).plusHours(12);
+        AnnouncementEntity a = new AnnouncementEntity();
+        a.setTravelerId(traveler.getId());
+        a.setDepartureCity("Paris");
+        a.setArrivalCity("Dakar");
+        a.setDepartureDate(departureAt.toLocalDate());
+        a.setDepartureAt(departureAt);
+        a.setTransportMode(TransportMode.PLANE);
+        a.setPickupAddressLabel("Gare du Nord, Paris");
+        a.setPickupLat(new BigDecimal("48.880756"));
+        a.setPickupLng(new BigDecimal("2.354987"));
+        a.setDeliveryAddressLabel("Aéroport de Dakar");
+        a.setDeliveryLat(new BigDecimal("14.670833"));
+        a.setDeliveryLng(new BigDecimal("-17.073056"));
+        a.setAvailableKg(new BigDecimal("15.00"));
+        a.setTotalKg(new BigDecimal("20.00"));
+        a.setPricePerKg(new BigDecimal("10.00"));
+        a.setCurrency("EUR");
+        a.setTimezone("Europe/Paris");
+        a.setStatus(AnnouncementStatus.ACTIVE);
+        return announcementRepository.saveAndFlush(a);
+    }
+
+    private BidEntity persistCancelledBid(AnnouncementEntity trip, UserEntity sender) {
+        BidEntity bid = new BidEntity();
+        bid.setAnnouncementId(trip.getId());
+        bid.setSenderId(sender.getId());
+        bid.setWeightKg(new BigDecimal("5.00"));
+        bid.setCurrency("EUR");
+        bid.setPaymentMethod(PaymentMethod.STRIPE);
+        bid.setStatus(BidStatus.CANCELLED);
+        bid.setQrToken(UUID.randomUUID().toString());
+        bid.setTrackingToken(UUID.randomUUID().toString());
+        bid.setTrackingNumber("DNY" + String.format("%09d", Math.floorMod(System.nanoTime(), 1_000_000_000L)));
+        return bidRepository.saveAndFlush(bid);
+    }
+}

@@ -3,6 +3,10 @@ package com.yadony.api.payments;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.fee.CancellationFeeBreakdown;
+import com.yadony.api.payments.fee.CancellationFeeSettlement;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
@@ -39,8 +43,12 @@ import java.util.UUID;
  *       (requires_capture — cas normal chez Yadony, capture à la livraison seulement), ou
  *       {@code Refund.create} (clé d'idempotence {@code "refund-" + paymentId}) si déjà capturé
  *       (succeeded) ; un PI déjà {@code canceled} est un no-op idempotent ;</li>
+ *   <li>retenue d'annulation due par l'expéditeur fautif ({@link CancellationFeeSettlement}) : sur un
+ *       PI capturé, {@code Refund.create} du seul montant payé moins le dédommagement du voyageur (même
+ *       clé), puis retenue réglée et {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent} ;
+ *       partout ailleurs, remboursement intégral inchangé et retenue close {@code NOT_APPLICABLE} ;</li>
  *   <li>échec Stripe → alerte admin + exception : la transaction REQUIRES_NEW rollback le claim,
- *       le paiement reste remboursable ;</li>
+ *       le paiement reste remboursable (et la retenue due) ;</li>
  *   <li>RELEASED / REFUNDED / FAILED / CANCELLED → no-op (jamais de refund post-versement).</li>
  * </ul>
  *
@@ -90,19 +98,23 @@ public class RefundProcessor {
      */
     private final TransactionTemplate independentAuditTransaction;
 
+    private final CancellationFeeSettlement cancellationFees;
+
     public RefundProcessor(PaymentRepository paymentRepository,
                            AuditService auditService,
                            AdminAlertService adminAlert,
                            PawapayOperationService pawapayOperations,
                            PawapaySubmissionService pawapaySubmission,
                            AdminAlertEscalator alerts,
-                           PlatformTransactionManager transactionManager) {
+                           PlatformTransactionManager transactionManager,
+                           CancellationFeeSettlement cancellationFees) {
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.adminAlert = adminAlert;
         this.pawapayOperations = pawapayOperations;
         this.pawapaySubmission = pawapaySubmission;
         this.alerts = alerts;
+        this.cancellationFees = cancellationFees;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -179,6 +191,8 @@ public class RefundProcessor {
         }
 
         final String stripeAction;
+        final String piStatus;
+        Optional<CancellationFeeBreakdown> retainedFee = Optional.empty();
         try {
             // Chez Yadony, la capture du PaymentIntent n'a lieu qu'à la livraison
             // (DeliveryConfirmedEvent). Un paiement ESCROW correspond donc, dans la
@@ -188,16 +202,28 @@ public class RefundProcessor {
             // refunding the Charge directly") → il faut annuler l'autorisation.
             // On ne rembourse (Refund) que si le PI a réellement été capturé (succeeded).
             PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-            if ("succeeded".equals(pi.getStatus())) {
-                Refund.create(
-                        RefundCreateParams.builder()
-                                .setPaymentIntent(payment.getStripePaymentIntentId())
-                                .build(),
-                        RequestOptions.builder()
-                                .setIdempotencyKey("refund-" + paymentId)
-                                .build());
-                stripeAction = "remboursement émis (PI capturé)";
-            } else if (!"canceled".equals(pi.getStatus())) {
+            piStatus = pi.getStatus();
+            if ("succeeded".equals(piStatus)) {
+                // Retenue d'annulation due par l'expéditeur fautif : lue ICI, APRÈS le claim
+                // markRefundedIfEscrow ci-dessus, jamais avant. Ce claim garantit un seul remboursement
+                // par paiement, donc un seul règlement de la retenue ; la lecture du taux par le port
+                // est volontairement sans verrou, le claim la sérialise.
+                retainedFee = cancellationFees.settle(payment, metadataId(pi, "sender_id"),
+                        metadataId(pi, "traveler_id"));
+                if (retainedFee.isPresent()) {
+                    refundMinusCancellationFee(payment, paymentId, retainedFee.get());
+                    stripeAction = "remboursement partiel émis (PI capturé, frais d'annulation retenus)";
+                } else {
+                    Refund.create(
+                            RefundCreateParams.builder()
+                                    .setPaymentIntent(payment.getStripePaymentIntentId())
+                                    .build(),
+                            RequestOptions.builder()
+                                    .setIdempotencyKey("refund-" + paymentId)
+                                    .build());
+                    stripeAction = "remboursement émis (PI capturé)";
+                }
+            } else if (!"canceled".equals(piStatus)) {
                 // requires_capture (et autres états pré-capture) → libère le hold.
                 stripeAction = cancelOrRefundIfCapturedMeanwhile(pi, payment.getStripePaymentIntentId(), paymentId);
             } else {
@@ -217,11 +243,58 @@ public class RefundProcessor {
             throw new IllegalStateException("Stripe escrow release failed for payment " + paymentId, e);
         }
 
-        auditService.log("PAYMENT", payment.getId(), auditAction, auditActor,
-                enrich(auditPayload, payment));
+        // Après le succès Stripe, dans la transaction du claim : un échec plus haut a déjà levé, la
+        // retenue reste alors due et rien n'est réglé.
+        Map<String, Object> enriched = enrich(auditPayload, payment);
+        if (retainedFee.isPresent()) {
+            CancellationFeeBreakdown fee = retainedFee.get();
+            paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
+            cancellationFees.retain(payment, fee);
+            enriched.put("refundedAmount", fee.senderRefund().toPlainString());
+            enriched.put("cancellationFee", fee.grossFee().toPlainString());
+        } else {
+            cancellationFees.waiveIfDue(payment, piStatus);
+        }
+        auditService.log("PAYMENT", payment.getId(), auditAction, auditActor, enriched);
         log.info("Escrow libéré pour PI {} — {} ({})",
                 payment.getStripePaymentIntentId(), stripeAction, auditAction);
         return true;
+    }
+
+    /**
+     * Rend à l'expéditeur le montant payé moins la retenue ({@code senderRefund}), en unités mineures de la
+     * devise du paiement. Même clé d'idempotence que le remboursement intégral : un paiement n'a jamais
+     * qu'un remboursement par ce chemin, et un rejeu Stripe rend le même objet.
+     */
+    private static void refundMinusCancellationFee(PaymentEntity payment, UUID paymentId,
+                                                   CancellationFeeBreakdown fee) throws StripeException {
+        long amountMinor = CurrencyAmount.of(fee.senderRefund(),
+                SupportedCurrency.fromCodeOrDefault(payment.getCurrency())).minor();
+        Refund.create(
+                RefundCreateParams.builder()
+                        .setPaymentIntent(payment.getStripePaymentIntentId())
+                        .setAmount(amountMinor)
+                        .build(),
+                RequestOptions.builder()
+                        .setIdempotencyKey("refund-" + paymentId)
+                        .build());
+    }
+
+    /**
+     * Expéditeur ou voyageur posé en métadonnée du PaymentIntent à sa création ({@code PaymentService}, bid
+     * comme fil de négociation), ou null. Ne sert qu'au repli du taux de commission de la retenue.
+     */
+    private static UUID metadataId(PaymentIntent pi, String key) {
+        Map<String, String> metadata = pi.getMetadata();
+        String value = metadata == null ? null : metadata.get(key);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**
