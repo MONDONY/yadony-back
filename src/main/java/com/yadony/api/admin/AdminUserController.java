@@ -75,6 +75,17 @@ public class AdminUserController {
         this.individualFrequencyAdminService = individualFrequencyAdminService;
     }
 
+    /** Validation d'un numéro déclaré et niveau exposé ; injectés par setter (constructeur inchangé). */
+    private AdminDeclaredPhoneService declaredPhoneService;
+    private com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeclaredPhone(AdminDeclaredPhoneService declaredPhoneService,
+                          com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver) {
+        this.declaredPhoneService = declaredPhoneService;
+        this.declaredPhoneResolver = declaredPhoneResolver;
+    }
+
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
                                FirebaseContactService firebaseContact,
@@ -234,6 +245,13 @@ public class AdminUserController {
         return detail(userService.setMonthlyTripLimit(userId, request.limit(), adminId(authentication)));
     }
 
+    /** Valide à la main le numéro déclaré du compte (« Vérifié par Yadony ») ; jamais le numéro Firebase officiel. */
+    @PreAuthorize("hasAuthority('USER_PHONE_VERIFY')")
+    @PostMapping("/{userId}/declared-phone/verify")
+    public AdminUserDetailResponse verifyDeclaredPhone(@PathVariable UUID userId, Authentication authentication) {
+        return detail(declaredPhoneService.verify(userId, adminId(authentication)));
+    }
+
     // Lot B — Coupure de messagerie. SUPPORT ne détient plus USER_SUSPEND, USER_BAN ni
     // USER_MESSAGE_MUTE (retirés pour la fiche utilisateur de l'admin) : ces gestes sont réservés
     // à ADMIN. Voir AdminRole.SUPPORT.
@@ -330,14 +348,16 @@ public class AdminUserController {
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
+        FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
         return AdminUserDetailResponse.from(
                 user,
-                firebaseContact.getContact(user.getFirebaseUid()),
+                contact,
                 proSubscriptionRepository.findByUserId(user.getId()).orElse(null),
                 payoutHoldService.summaryOf(user.getId()),
                 publishingEligibilityService == null ? 0 : publishingEligibilityService.usedThisMonth(user),
                 individualFrequencyAdminService == null ? null
-                        : individualFrequencyAdminService.openAlertFor(user.getId()));
+                        : individualFrequencyAdminService.openAlertFor(user.getId()),
+                declaredPhoneResolver == null ? null : declaredPhoneResolver.resolve(user, contact));
     }
 
     /** Résout l'utilisateur ou lève le 404 métier standard — réutilisé partout où

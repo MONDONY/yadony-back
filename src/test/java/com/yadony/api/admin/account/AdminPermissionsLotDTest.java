@@ -73,6 +73,7 @@ class AdminPermissionsLotDTest {
         // TOPUP_CODE_MANAGE (codes de recharge du solde) — 36 → 37.
         // ASSISTANT_MANAGE (fournisseurs d'IA de l'assistant) — 37 → 38.
         // GP_PRO_REVIEW — 38 → 39. DAC7_REPORT (déclaration DAC7, lot 3b) — 39 → 40.
-        assertThat(AdminPermission.values()).hasSize(40);
+        // USER_PHONE_VERIFY (validation d'un numéro déclaré) — 40 → 41.
+        assertThat(AdminPermission.values()).hasSize(41);
     }
 }
