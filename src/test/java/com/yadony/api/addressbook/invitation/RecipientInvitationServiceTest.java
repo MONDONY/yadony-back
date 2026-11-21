@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -52,6 +53,7 @@ class RecipientInvitationServiceTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock UsernameLookupService usernameLookup;
 
     private RecipientInvitationService service;
 
@@ -62,7 +64,7 @@ class RecipientInvitationServiceTest {
     @BeforeEach
     void setUp() {
         service = new RecipientInvitationService(repository, recipientRepository, userRepository, firebaseContact,
-                blockVisibility, notificationDispatcher, auditService, eventPublisher);
+                blockVisibility, notificationDispatcher, auditService, eventPublisher, usernameLookup);
         lenient().when(userRepository.findByFirebaseUid("uid-inviter")).thenReturn(Optional.of(inviter));
         lenient().when(userRepository.findByFirebaseUid("uid-invitee")).thenReturn(Optional.of(invitee));
         lenient().when(userRepository.findById(inviter.getId())).thenReturn(Optional.of(inviter));
@@ -212,6 +214,116 @@ class RecipientInvitationServiceTest {
     void send_unknownUser_404() {
         assertThatThrownBy(() -> service.send("uid-ghost", new CreateRecipientInvitationRequest(PHONE, null)))
                 .isInstanceOf(YadonyNotFoundException.class);
+    }
+
+    // ── send : canal USERNAME ───────────────────────────────────────────────
+
+    private static CreateRecipientInvitationRequest byUsername(String username) {
+        return new CreateRecipientInvitationRequest(null, null, null, username);
+    }
+
+    @Test
+    void send_username_createsPendingWithInviteeAndPublishesEvent() {
+        invitee.setUsername("fatou.sow");
+        when(usernameLookup.resolveVisible(inviter, "Fatou.Sow")).thenReturn(Optional.of(invitee));
+
+        assertThat(service.send("uid-inviter", byUsername("Fatou.Sow"))).isEqualTo(InvitationSentResponse.SENT);
+
+        ArgumentCaptor<RecipientInvitationEntity> saved = ArgumentCaptor.forClass(RecipientInvitationEntity.class);
+        verify(repository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getInviteeUserId()).isEqualTo(invitee.getId());
+        assertThat(saved.getValue().getChannel()).isEqualTo(InvitationChannel.USERNAME);
+        assertThat(saved.getValue().getTargetHash()).isEqualTo(InvitationTargets.hash("u:" + invitee.getId()));
+        assertThat(saved.getValue().getMaskedTarget()).isEqualTo("@fatou.sow");
+        verify(eventPublisher).publishEvent(any(RecipientInvitationCreatedEvent.class));
+        verify(auditService).log(eq("RECIPIENT_INVITATION"), any(), eq("RECIPIENT_INVITATION_SENT"),
+                eq(inviter.getId()), eq(Map.of("channel", "USERNAME")));
+        verify(firebaseContact, never()).findUidByPhone(any());
+        verify(firebaseContact, never()).findUidByEmail(any());
+    }
+
+    @Test
+    void send_unknownOrHiddenUsername_404_nothingWritten() {
+        when(usernameLookup.resolveVisible(inviter, "inconnu")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.send("uid-inviter", byUsername("inconnu")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getErrorCode()).isEqualTo("user-not-found");
+                });
+        verify(repository, never()).saveAndFlush(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void send_ownUsername_422() {
+        when(usernameLookup.resolveVisible(inviter, "moi")).thenReturn(Optional.of(inviter));
+
+        assertThatThrownBy(() -> service.send("uid-inviter", byUsername("moi")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(e.getErrorCode()).isEqualTo("recipient-invitation-self");
+                });
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void send_username_liveInvitationAlreadyThere_createsNothing() {
+        when(usernameLookup.resolveVisible(inviter, "fatou.sow")).thenReturn(Optional.of(invitee));
+        when(repository.existsByInviterUserIdAndInviteeUserIdAndStatusIn(eq(inviter.getId()), eq(invitee.getId()),
+                anySet())).thenReturn(true);
+
+        assertThat(service.send("uid-inviter", byUsername("fatou.sow"))).isEqualTo(InvitationSentResponse.SENT);
+        verify(repository, never()).saveAndFlush(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void send_username_raceOnUniqueIndex_stillAnswersSent() {
+        when(usernameLookup.resolveVisible(inviter, "fatou.sow")).thenReturn(Optional.of(invitee));
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
+
+        assertThat(service.send("uid-inviter", byUsername("fatou.sow"))).isEqualTo(InvitationSentResponse.SENT);
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void send_username_quotaReached_429_beforeAnyLookup() {
+        when(repository.countByInviterUserIdAndCreatedAtAfter(eq(inviter.getId()), any())).thenReturn(20L);
+
+        assertThatThrownBy(() -> service.send("uid-inviter", byUsername("fatou.sow")))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS));
+        verify(usernameLookup, never()).resolveVisible(any(), any());
+    }
+
+    @Test
+    void send_usernameWithAnotherField_422() {
+        for (CreateRecipientInvitationRequest bad : List.of(
+                new CreateRecipientInvitationRequest(PHONE, null, null, "fatou.sow"),
+                new CreateRecipientInvitationRequest(null, "a@b.co", null, "fatou.sow"),
+                new CreateRecipientInvitationRequest(PHONE, "a@b.co", null, "fatou.sow"),
+                new CreateRecipientInvitationRequest(null, null, null, " "))) {
+            assertThatThrownBy(() -> service.send("uid-inviter", bad))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+        }
+    }
+
+    @Test
+    void sent_usernameInvitation_showsInviteeCurrentUsername() {
+        invitee.setUsername("fatou.renamed");
+        RecipientInvitationEntity byName = withId(new RecipientInvitationEntity(inviter.getId(), invitee.getId(),
+                InvitationChannel.USERNAME, InvitationTargets.hash("u:" + invitee.getId()), "@fatou.sow"));
+        when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
+                .thenReturn(List.of(byName, pendingFor(null)));
+        when(userRepository.findAllById(anyCollection())).thenReturn(List.of(invitee));
+
+        var sent = service.sent("uid-inviter");
+
+        assertThat(sent.get(0).channel()).isEqualTo("USERNAME");
+        assertThat(sent.get(0).maskedTarget()).isEqualTo("@fatou.renamed");
+        assertThat(sent.get(1).maskedTarget()).isEqualTo("+221 •• •• •• 12");
     }
 
     // ── sent ────────────────────────────────────────────────────────────────

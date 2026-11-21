@@ -66,8 +66,12 @@ class RecipientInvitationControllerIntegrationTest {
     void seed() {
         invitationRepository.deleteAll();
         recipientRepository.deleteAll();
-        userRepository.findByFirebaseUid(INVITER_UID).ifPresent(userRepository::delete);
-        userRepository.findByFirebaseUid(INVITEE_UID).ifPresent(userRepository::delete);
+        // Suppression physique : un compte supprimé en douceur garderait son identifiant (unique).
+        jdbc.update("DELETE FROM user_blocks WHERE blocker_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
+                INVITER_UID, INVITEE_UID);
+        jdbc.update("DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
+                INVITER_UID, INVITEE_UID);
+        jdbc.update("DELETE FROM users WHERE firebase_uid IN (?, ?)", INVITER_UID, INVITEE_UID);
         inviter = persistUser(INVITER_UID, "Awa", "Diallo");
         invitee = persistUser(INVITEE_UID, "Fatou", "Sow");
         when(firebaseContact.findUidByPhone(anyString())).thenReturn(Optional.empty());
@@ -189,6 +193,104 @@ class RecipientInvitationControllerIntegrationTest {
                 .andExpect(jsonPath("$[?(@.channel == 'PHONE')].maskedTarget").value("+221 •• •• •• 12"))
                 .andExpect(jsonPath("$[?(@.channel == 'PHONE')].status").value("PENDING"))
                 .andExpect(jsonPath("$[?(@.channel == 'EMAIL')].maskedTarget").value("a••••@gmail.com"));
+    }
+
+    // ── Canal USERNAME ──────────────────────────────────────────────────────
+
+    private void giveUsername(UserEntity user, String username) {
+        UserEntity fresh = userRepository.findById(user.getId()).orElseThrow();
+        fresh.setUsername(username);
+        userRepository.save(fresh);
+    }
+
+    @Test
+    void sendByUsername_found_202_onePendingRowWithInvitee() throws Exception {
+        giveUsername(invitee, "fatou.sow");
+
+        mockMvc.perform(invite("{\"username\":\"Fatou.Sow\"}"))
+                .andExpect(status().isAccepted()).andExpect(content().json(SENT_BODY, true));
+
+        RecipientInvitationEntity row = onlyInvitation();
+        assertThat(row.getChannel()).isEqualTo(InvitationChannel.USERNAME);
+        assertThat(row.getStatus()).isEqualTo(InvitationStatus.PENDING);
+        assertThat(row.getInviteeUserId()).isEqualTo(invitee.getId());
+        assertThat(row.getMaskedTarget()).isEqualTo("@fatou.sow");
+    }
+
+    @Test
+    void sendByUsername_unknown_404_nothingWritten() throws Exception {
+        mockMvc.perform(invite("{\"username\":\"personne.ici\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("user-not-found"));
+        mockMvc.perform(invite("{\"username\":\"!!\"}")).andExpect(status().isNotFound());
+        assertThat(invitationRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void sendByUsername_twice_secondCreatesNothing() throws Exception {
+        giveUsername(invitee, "fatou.sow");
+        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());
+        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}"))
+                .andExpect(status().isAccepted()).andExpect(content().json(SENT_BODY, true));
+        assertThat(invitationRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void sendByUsername_severalFieldsOrNone_422() throws Exception {
+        giveUsername(invitee, "fatou.sow");
+        for (String body : List.of("{\"username\":\"fatou.sow\",\"phone\":\"" + INVITEE_PHONE + "\"}",
+                "{\"username\":\"fatou.sow\",\"email\":\"" + INVITEE_EMAIL + "\"}", "{\"username\":\" \"}")) {
+            mockMvc.perform(invite(body)).andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.code").value("recipient-invitation-invalid-target"));
+        }
+        assertThat(invitationRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void sendByUsername_inviteeBlockedInviter_404() throws Exception {
+        giveUsername(invitee, "fatou.sow");
+        jdbc.update("INSERT INTO user_blocks (id, blocker_id, blocked_id, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                UUID.randomUUID(), invitee.getId(), inviter.getId());
+        try {
+            mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isNotFound());
+            assertThat(invitationRepository.findAll()).isEmpty();
+        } finally {
+            jdbc.update("DELETE FROM user_blocks WHERE blocker_id = ?", invitee.getId());
+        }
+    }
+
+    @Test
+    void sendByUsername_self_422() throws Exception {
+        giveUsername(inviter, "awa.diallo");
+        mockMvc.perform(invite("{\"username\":\"awa.diallo\"}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("recipient-invitation-self"));
+        assertThat(invitationRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void sendByUsername_quotaOf20_returns429_andUnknownDoesNotConsumeIt() throws Exception {
+        giveUsername(invitee, "fatou.sow");
+        for (int i = 0; i < RecipientInvitationService.DAILY_QUOTA - 1; i++) {
+            mockMvc.perform(invite("{\"phone\":\"+2217000000" + String.format("%02d", i) + "\"}"))
+                    .andExpect(status().isAccepted());
+        }
+        mockMvc.perform(invite("{\"username\":\"inconnu.total\"}")).andExpect(status().isNotFound());
+        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());
+        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("recipient-invitation-quota"));
+    }
+
+    @Test
+    void sent_usernameInvitation_showsCurrentUsernameAfterRename() throws Exception {
+        giveUsername(invitee, "fatou.sow");
+        mockMvc.perform(invite("{\"username\":\"fatou.sow\"}")).andExpect(status().isAccepted());
+        giveUsername(invitee, "fatou.nouveau");
+
+        mockMvc.perform(get("/recipient-invitations/sent").with(authentication(as(INVITER_UID))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].channel").value("USERNAME"))
+                .andExpect(jsonPath("$[0].maskedTarget").value("@fatou.nouveau"));
     }
 
     // ── Côté invité : rattrapage, accept, 409, revoke ───────────────────────
