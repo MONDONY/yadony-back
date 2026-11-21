@@ -41,6 +41,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -664,14 +665,58 @@ class RecipientInvitationServiceTest {
     // ── decline / revoke ────────────────────────────────────────────────────
 
     @Test
-    void decline_marksDeclinedWithoutNotifyingInviter() {
+    void decline_marksDeclinedAndNotifiesInviterOnceWithMaskedTarget() {
         RecipientInvitationEntity invitation = pendingFor(invitee.getId());
         when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
 
         assertThat(service.decline(invitation.getId(), "uid-invitee").status()).isEqualTo("DECLINED");
-        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(notificationDispatcher).notifyUser(eq(inviter.getId()), eq("Invitation non acceptée"), body.capture(),
+                eq(Map.of("type", "RECIPIENT_INVITATION_DECLINED", "invitationId", invitation.getId().toString())));
+        assertThat(body.getValue()).isEqualTo(InvitationTargets.maskPhone(PHONE) + " n'a pas accepté votre invitation.")
+                .doesNotContain(PHONE);
         verify(auditService).log(eq("RECIPIENT_INVITATION"), eq(invitation.getId()),
                 eq("RECIPIENT_INVITATION_DECLINED"), eq(invitee.getId()), any());
+    }
+
+    @Test
+    void decline_twice_notifiesOnlyOnce() {
+        RecipientInvitationEntity invitation = pendingFor(invitee.getId());
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+
+        service.decline(invitation.getId(), "uid-invitee");
+        assertThatThrownBy(() -> service.decline(invitation.getId(), "uid-invitee"))
+                .isInstanceOf(YadonyNotFoundException.class);
+
+        verify(notificationDispatcher, times(1)).notifyUser(any(), any(), any(), any());
+    }
+
+    @Test
+    void decline_usernameInvitation_showsInviteesCurrentUsername() {
+        invitee.setUsername("fatou.neuf");
+        RecipientInvitationEntity invitation = usernameInvitation();
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+
+        service.decline(invitation.getId(), "uid-invitee");
+
+        verify(notificationDispatcher).notifyUser(eq(inviter.getId()), any(),
+                eq("@fatou.neuf n'a pas accepté votre invitation."), any());
+    }
+
+    @Test
+    void decline_usernameInvitation_hiddenByBlock_usesStoredLabel() {
+        invitee.setUsername("fatou.neuf");
+        RecipientInvitationEntity invitation = usernameInvitation();
+        when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
+        // L'invité ne voit pas de blocage de son côté, mais l'inviteur n'a plus le droit de le suivre.
+        lenient().when(blockVisibility.isHidden(invitee.getId(), inviter.getId())).thenReturn(false);
+        when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
+
+        service.decline(invitation.getId(), "uid-invitee");
+
+        verify(notificationDispatcher).notifyUser(eq(inviter.getId()), any(),
+                eq("@fatou.sow n'a pas accepté votre invitation."), any());
     }
 
     @Test

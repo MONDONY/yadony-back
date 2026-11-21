@@ -300,7 +300,11 @@ public class RecipientInvitationService {
         return toIncoming(invitation);
     }
 
-    /** Refuse, sans rien dire à l'inviteur (il continue de voir « en attente »). */
+    /**
+     * Refuse et prévient l'inviteur, une seule fois (un second refus lève {@code requirePending}). Une
+     * invitation envoyée à un numéro ou un e-mail dont le titulaire refuse l'en informe aussi : c'est voulu
+     * par le propriétaire du produit. Le message ne cite que la cible masquée.
+     */
     @Transactional
     public IncomingInvitationDto decline(UUID invitationId, String firebaseUid) {
         UserEntity me = currentUser(firebaseUid);
@@ -310,7 +314,22 @@ public class RecipientInvitationService {
         repository.save(invitation);
         auditService.log("RECIPIENT_INVITATION", invitation.getId(), "RECIPIENT_INVITATION_DECLINED", me.getId(),
                 Map.of("inviterUserId", invitation.getInviterUserId().toString()));
+
+        var text = NotificationTexts.recipientInvitationDeclined(
+                notificationDispatcher.messagesFor(invitation.getInviterUserId()), declinedTarget(invitation, me));
+        notificationDispatcher.notifyUser(invitation.getInviterUserId(), text.title(), text.body(),
+                Map.of("type", RecipientInvitationNotifications.DECLINED,
+                        "invitationId", invitation.getId().toString()));
         return toIncoming(invitation);
+    }
+
+    /** Pseudo actuel de l'invité s'il n'est pas masqué par un blocage, sinon le libellé masqué stocké. */
+    private String declinedTarget(RecipientInvitationEntity invitation, UserEntity invitee) {
+        if (invitation.getChannel() == InvitationChannel.USERNAME && invitee.getUsername() != null
+                && !blockVisibility.isHidden(invitation.getInviterUserId(), invitee.getId())) {
+            return "@" + invitee.getUsername();
+        }
+        return invitation.getMaskedTarget();
     }
 
     /**
