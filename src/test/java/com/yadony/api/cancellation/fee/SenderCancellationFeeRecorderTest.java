@@ -160,6 +160,42 @@ class SenderCancellationFeeRecorderTest {
         verifyNoInteractions(auditService);
     }
 
+    // --- report du trajet en attente de la réponse de l'expéditeur ---
+
+    @Test
+    void bidCancelledBySender_rescheduleDecisionOpen_noFee() {
+        BidEntity bid = givenBid(BidStatus.CANCELLED, PaymentMethod.STRIPE, "EUR", Duration.ofHours(36));
+        bid.setPendingRescheduleId(UUID.randomUUID());
+        bid.setHandoverDeadline(LocalDateTime.ofInstant(NOW.plus(Duration.ofHours(6)), ZoneOffset.UTC));
+
+        // Annulation ordinaire (PUT /bids/{id}/cancel) au lieu du bouton « Me retirer » du report : même exemption.
+        recorder.onBidCancelledByParticipant(senderCancel(BidStatus.ACCEPTED, PaymentMethod.STRIPE));
+        recorder.record(BID_ID, CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER);
+
+        verifyNothingRecorded();
+    }
+
+    @Test
+    void bidCancelledBySender_rescheduleDecisionExpired_recordsDue() {
+        BidEntity bid = givenBid(BidStatus.CANCELLED, PaymentMethod.STRIPE, "EUR", Duration.ofHours(36));
+        bid.setPendingRescheduleId(UUID.randomUUID());
+        bid.setHandoverDeadline(LocalDateTime.ofInstant(NOW.minus(Duration.ofHours(1)), ZoneOffset.UTC));
+
+        recorder.onBidCancelledByParticipant(senderCancel(BidStatus.ACCEPTED, PaymentMethod.STRIPE));
+
+        assertThat(savedFee().getRate()).isEqualByComparingTo("0.20");
+    }
+
+    @Test
+    void statusAtFault_isTheStatusTheCancellationLeft() {
+        assertThat(SenderCancellationFeeRecorder.statusAtFault(CancellationFeeReason.SENDER_CANCEL))
+                .isEqualTo(BidStatus.ACCEPTED);
+        assertThat(SenderCancellationFeeRecorder.statusAtFault(CancellationFeeReason.SENDER_NO_SHOW))
+                .isEqualTo(BidStatus.ACCEPTED);
+        assertThat(SenderCancellationFeeRecorder.statusAtFault(CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER))
+                .isEqualTo(BidStatus.HANDED_OVER);
+    }
+
     // --- absence de l'expéditeur confirmée (SenderNoShowBidCancelListener) ---
 
     @Test

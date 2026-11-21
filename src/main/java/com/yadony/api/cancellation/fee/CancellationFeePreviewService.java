@@ -27,8 +27,8 @@ import java.util.UUID;
  * nette du voyageur.
  *
  * <p>Aucun frais (taux 0, frais 0, tout le payé rendu, aucune hausse annoncée) quand l'interrupteur est éteint, que le
- * colis précède la date d'effet, qu'il est payé en espèces, pas encore accepté, ou que son paiement ne peut pas porter
- * de retenue. Dans la fenêtre gratuite, le taux est 0 mais la hausse à venir est annoncée ({@code nextTierAt}).
+ * colis précède la date d'effet, qu'il est payé en espèces, pas encore accepté, qu'un report du trajet attend sa
+ * réponse, ou que son paiement ne peut pas porter de retenue. Dans la fenêtre gratuite, le taux est 0 mais la hausse à venir est annoncée ({@code nextTierAt}).
  */
 @Service
 public class CancellationFeePreviewService {
@@ -69,7 +69,7 @@ public class CancellationFeePreviewService {
         Instant now = clock.instant();
         Optional<CancellationFeeEligibility.Assessment> assessed =
                 SenderCancellationFeeRecorder.senderCancellationReason(bid.getStatus()).isPresent()
-                        ? eligibility.assess(bid, now)
+                        ? eligibility.assess(bid, bid.getStatus(), now)
                         : Optional.empty();
         BigDecimal rate = assessed.map(CancellationFeeEligibility.Assessment::rate).orElse(BigDecimal.ZERO);
 

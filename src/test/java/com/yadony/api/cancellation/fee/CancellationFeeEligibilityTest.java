@@ -3,6 +3,7 @@ package com.yadony.api.cancellation.fee;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidStatus;
 import com.yadony.api.payments.cash.PaymentMethod;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,7 +48,7 @@ class CancellationFeeEligibilityTest {
         CancellationFeeEligibility eligibility = eligibility(false, EFFECTIVE_FROM);
 
         assertThat(eligibility.active()).isFalse();
-        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.plus(Duration.ofDays(1)), PaymentMethod.STRIPE), NOW))
+        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.plus(Duration.ofDays(1)), PaymentMethod.STRIPE), BidStatus.ACCEPTED, NOW))
                 .isEmpty();
         // Éteint volontairement : aucune alerte de configuration.
         assertThat(output).doesNotContain("yadony.cancellation-fee.effective-from");
@@ -58,7 +59,7 @@ class CancellationFeeEligibilityTest {
         CancellationFeeEligibility eligibility = eligibility(true, null);
 
         assertThat(eligibility.active()).isFalse();
-        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.plus(Duration.ofDays(1)), PaymentMethod.STRIPE), NOW))
+        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.plus(Duration.ofDays(1)), PaymentMethod.STRIPE), BidStatus.ACCEPTED, NOW))
                 .isEmpty();
         assertThat(output).contains("WARN").contains("yadony.cancellation-fee.effective-from");
     }
@@ -84,13 +85,13 @@ class CancellationFeeEligibilityTest {
         CancellationFeeEligibility eligibility = eligibility(true, EFFECTIVE_FROM);
 
         assertThat(eligibility.active()).isTrue();
-        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.minusSeconds(1), PaymentMethod.STRIPE), NOW)).isEmpty();
+        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.minusSeconds(1), PaymentMethod.STRIPE), BidStatus.ACCEPTED, NOW)).isEmpty();
     }
 
     @Test
     void parcelCreatedAtActivation_isCovered() {
         Optional<CancellationFeeEligibility.Assessment> assessed =
-                eligibility(true, EFFECTIVE_FROM).assess(bid(EFFECTIVE_FROM, PaymentMethod.STRIPE), NOW);
+                eligibility(true, EFFECTIVE_FROM).assess(bid(EFFECTIVE_FROM, PaymentMethod.STRIPE), BidStatus.ACCEPTED, NOW);
 
         assertThat(assessed).isPresent();
         assertThat(assessed.get().rate()).isEqualByComparingTo("0.20");
@@ -101,7 +102,7 @@ class CancellationFeeEligibilityTest {
     @Test
     void parcelCreatedAfterActivation_mobileMoney_isCovered() {
         assertThat(eligibility(true, EFFECTIVE_FROM)
-                .assess(bid(EFFECTIVE_FROM.plus(Duration.ofDays(3)), PaymentMethod.MOBILE_MONEY), NOW))
+                .assess(bid(EFFECTIVE_FROM.plus(Duration.ofDays(3)), PaymentMethod.MOBILE_MONEY), BidStatus.ACCEPTED, NOW))
                 .isPresent();
     }
 
@@ -109,14 +110,14 @@ class CancellationFeeEligibilityTest {
     void parcelWithoutCreationDate_isNotCovered() {
         BidEntity unsaved = bid(null, PaymentMethod.STRIPE);
 
-        assertThat(eligibility(true, EFFECTIVE_FROM).assess(unsaved, NOW)).isEmpty();
+        assertThat(eligibility(true, EFFECTIVE_FROM).assess(unsaved, BidStatus.ACCEPTED, NOW)).isEmpty();
     }
 
     @ParameterizedTest
     @NullSource
     @EnumSource(value = PaymentMethod.class, names = {"CASH", "WAVE", "ORANGE_MONEY"})
     void notPaidOnline_noFee(PaymentMethod method) {
-        assertThat(eligibility(true, EFFECTIVE_FROM).assess(bid(EFFECTIVE_FROM.plusSeconds(60), method), NOW))
+        assertThat(eligibility(true, EFFECTIVE_FROM).assess(bid(EFFECTIVE_FROM.plusSeconds(60), method), BidStatus.ACCEPTED, NOW))
                 .isEmpty();
     }
 
@@ -125,7 +126,7 @@ class CancellationFeeEligibilityTest {
         CancellationFeeEligibility eligibility = eligibility(true, EFFECTIVE_FROM);
         when(announcements.findById(ANN_ID)).thenReturn(Optional.empty());
 
-        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.STRIPE), NOW)).isEmpty();
+        assertThat(eligibility.assess(bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.STRIPE), BidStatus.ACCEPTED, NOW)).isEmpty();
     }
 
     @Test
@@ -134,11 +135,43 @@ class CancellationFeeEligibilityTest {
         givenTrip(NOW.plus(Duration.ofDays(9)));
 
         Optional<CancellationFeeEligibility.Assessment> assessed =
-                eligibility.assess(bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.STRIPE), NOW);
+                eligibility.assess(bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.STRIPE), BidStatus.ACCEPTED, NOW);
 
         assertThat(assessed).isPresent();
         assertThat(assessed.get().rate()).isEqualByComparingTo("0");
         assertThat(assessed.get().nextIncreaseAt()).isEqualTo(NOW.plus(Duration.ofDays(9)).minus(Duration.ofHours(121)));
+    }
+
+    // --- report du trajet en attente de la réponse de l'expéditeur ---
+
+    @Test
+    void rescheduleDecisionOpen_noFee_whateverThePathOfTheCancellation() {
+        CancellationFeeEligibility eligibility = eligibility(true, EFFECTIVE_FROM);
+        BidEntity accepted = bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.STRIPE);
+        accepted.setPendingRescheduleId(UUID.randomUUID());
+        accepted.setHandoverDeadline(LocalDateTime.ofInstant(NOW.plus(Duration.ofHours(6)), ZoneOffset.UTC));
+        BidEntity handedOver = bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.MOBILE_MONEY);
+        handedOver.setPendingRescheduleId(UUID.randomUUID());
+
+        // Statut d'avant l'annulation : l'entité, elle, est déjà annulée quand la retenue s'enregistre.
+        accepted.setStatus(BidStatus.CANCELLED);
+        assertThat(eligibility.assess(accepted, BidStatus.ACCEPTED, NOW)).isEmpty();
+        // Colis remis : la réponse reste ouverte jusqu'au départ (36 h).
+        assertThat(eligibility.assess(handedOver, BidStatus.HANDED_OVER, NOW)).isEmpty();
+    }
+
+    @Test
+    void rescheduleDecisionClosed_feeAsBefore() {
+        CancellationFeeEligibility eligibility = eligibility(true, EFFECTIVE_FROM);
+        BidEntity bid = bid(EFFECTIVE_FROM.plusSeconds(60), PaymentMethod.STRIPE);
+        bid.setPendingRescheduleId(UUID.randomUUID());
+        // Date limite de la réponse (nouvelle date de remise) dépassée : l'expéditeur devait remettre son colis.
+        bid.setHandoverDeadline(LocalDateTime.ofInstant(NOW.minusSeconds(1), ZoneOffset.UTC));
+
+        Optional<CancellationFeeEligibility.Assessment> assessed = eligibility.assess(bid, BidStatus.ACCEPTED, NOW);
+
+        assertThat(assessed).isPresent();
+        assertThat(assessed.get().rate()).isEqualByComparingTo("0.20");
     }
 
     // --- helpers ---

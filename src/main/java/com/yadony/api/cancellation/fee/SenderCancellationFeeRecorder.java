@@ -35,7 +35,9 @@ import java.util.UUID;
  * </ul>
  * Jamais pour le voyageur (annulation, trajet, absence), un colis pas encore accepté
  * ({@code PAYMENT_ESCROWED}), les espèces, l'annulation avant paiement, l'annulation par l'équipe, le
- * retrait après report du trajet, la suppression de compte : aucun de ces chemins n'appelle ce composant.
+ * retrait après report du trajet, la suppression de compte : aucun de ces chemins n'appelle ce composant. Tant que la
+ * réponse de l'expéditeur à un report du trajet est ouverte, ses annulations ordinaires n'en portent pas non plus
+ * ({@link CancellationFeeEligibility#assess}).
  *
  * <p><b>Même transaction que l'annulation (MANDATORY), écouteur synchrone</b> : le remboursement part
  * après le commit, sur un fil asynchrone ({@code BidRejectedEventListener},
@@ -107,10 +109,19 @@ public class SenderCancellationFeeRecorder {
     }
 
     /**
+     * Statut du colis au moment de la faute, que l'annulation vient de remplacer sur l'entité : accepté (annulation ou
+     * absence à la remise), remis (annulation après la remise). Inverse de {@link #senderCancellationReason}.
+     */
+    static BidStatus statusAtFault(CancellationFeeReason reason) {
+        return reason == CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER ? BidStatus.HANDED_OVER : BidStatus.ACCEPTED;
+    }
+
+    /**
      * Crée la ligne {@code DUE} au taux du barème ({@link CancellationFeeTiers}, temps restant avant le
      * départ à cet instant). Sans effet si une ligne existe déjà, si le colis n'est pas couvert
      * ({@link CancellationFeeEligibility#assess} : frais éteints ou sans date d'effet, colis créé avant elle, ni carte
-     * ni mobile money), ou si le taux est nul (annulation assez tôt). Les montants restent à zéro jusqu'au
+     * ni mobile money, report du trajet en attente de la réponse de l'expéditeur), ou si le taux est nul (annulation
+     * assez tôt). Les montants restent à zéro jusqu'au
      * règlement par le paquet {@code payments} ({@link CancellationFeeRatePortAdapter#markRetained}) :
      * seul ce dernier connaît le montant payé, les frais et la commission.
      */
@@ -123,7 +134,8 @@ public class SenderCancellationFeeRecorder {
         if (bid.isEmpty()) {
             return;
         }
-        Optional<CancellationFeeEligibility.Assessment> assessed = eligibility.assess(bid.get(), Instant.now(clock));
+        Optional<CancellationFeeEligibility.Assessment> assessed =
+                eligibility.assess(bid.get(), statusAtFault(reason), Instant.now(clock));
         if (assessed.isEmpty() || assessed.get().rate().signum() <= 0) {
             return;
         }

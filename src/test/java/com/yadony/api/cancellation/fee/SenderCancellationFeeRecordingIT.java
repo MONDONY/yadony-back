@@ -263,6 +263,39 @@ class SenderCancellationFeeRecordingIT {
     }
 
     @Test
+    @DisplayName("report du trajet en attente : l'annulation ordinaire par l'expéditeur ne porte aucune retenue")
+    void tripReschedulePending_senderCancelsViaGenericPath_noFee() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        UserEntity sender = persistUser(Role.SENDER);
+        AnnouncementEntity trip = persistTrip(traveler, OffsetDateTime.now(ZoneOffset.UTC).plusHours(30));
+        BidEntity bid = persistBid(trip, sender, BidStatus.ACCEPTED, PaymentMethod.STRIPE);
+        pendingReschedule(trip, traveler, bid, LocalDateTime.now(ZoneOffset.UTC).plusHours(6));
+
+        // PUT /bids/{id}/cancel au lieu du bouton « Me retirer » du report.
+        bidService.cancelBid(bid.getId(), sender.getFirebaseUid());
+
+        assertThat(bidRepository.findById(bid.getId()).orElseThrow().getStatus()).isEqualTo(BidStatus.CANCELLED);
+        assertThat(feeRows(bid.getId())).isZero();
+        assertThat(auditCount(bid.getId(), SenderCancellationFeeRecorder.AUDIT_FEE_DUE)).isZero();
+    }
+
+    @Test
+    @DisplayName("report du trajet dont la réponse a expiré : l'annulation par l'expéditeur porte la retenue")
+    void tripRescheduleDecisionExpired_senderCancels_recordsDue() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        UserEntity sender = persistUser(Role.SENDER);
+        AnnouncementEntity trip = persistTrip(traveler, OffsetDateTime.now(ZoneOffset.UTC).plusHours(30));
+        BidEntity bid = persistBid(trip, sender, BidStatus.ACCEPTED, PaymentMethod.STRIPE);
+        pendingReschedule(trip, traveler, bid, LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+        bidService.cancelBid(bid.getId(), sender.getFirebaseUid());
+
+        Map<String, Object> row = feeRow(bid.getId());
+        assertThat(row.get("status")).isEqualTo("DUE");
+        assertThat((BigDecimal) row.get("rate")).isEqualByComparingTo("0.20");
+    }
+
+    @Test
     @DisplayName("deux enregistrements pour le même colis : une seule ligne ; jamais hors d'une transaction")
     void recordTwice_singleRow() {
         UserEntity sender = persistUser(Role.SENDER);
@@ -291,6 +324,20 @@ class SenderCancellationFeeRecordingIT {
         CancellationEntity reported = cancellationService.reportSenderNoShow(bid.getId(), traveler.getId());
         assertThat(reported.getId()).isNotNull();
         return bid;
+    }
+
+    /** Report du trajet posé sur le colis, réponse attendue jusqu'à {@code decisionDeadline} (date de remise). */
+    private void pendingReschedule(AnnouncementEntity trip, UserEntity traveler, BidEntity bid,
+                                   LocalDateTime decisionDeadline) {
+        UUID rescheduleId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO trip_reschedules (id, announcement_id, traveler_id, reason, previous_departure_date,
+                                              new_departure_date, created_at)
+                VALUES (?, ?, ?, 'POSTPONED', ?, ?, now())
+                """, rescheduleId, trip.getId(), traveler.getId(), LocalDate.now().plusDays(1),
+                LocalDate.now().plusDays(2));
+        jdbc.update("UPDATE bids SET pending_reschedule_id = ?, handover_deadline = ? WHERE id = ?", rescheduleId,
+                decisionDeadline, bid.getId());
     }
 
     private UUID cancellationId(UUID bidId) {

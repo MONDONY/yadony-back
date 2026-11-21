@@ -3,6 +3,8 @@ package com.yadony.api.cancellation.fee;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.TripRescheduleRules;
 import com.yadony.api.payments.cash.PaymentMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +27,11 @@ import java.util.Optional;
  *   <li>le colis a été CRÉÉ à la date d'effet ou après (« nouveaux colis seulement » : un colis plus ancien a été payé
  *       sous des CGU sans frais, il n'en porte jamais, même annulé plus tard) ;</li>
  *   <li>il est payé en ligne, par carte ou mobile money (jamais espèces, ni les modes legacy) ;</li>
- *   <li>son trajet est connu (le taux dépend du départ).</li>
+ *   <li>son trajet est connu (le taux dépend du départ) ;</li>
+ *   <li>aucun report du trajet n'attend la réponse de l'expéditeur ({@link TripRescheduleRules#decisionOpen}) : le
+ *       voyageur a déplacé son départ, l'expéditeur peut se retirer sans frais tant que sa décision est ouverte, par le
+ *       bouton du report ({@code RescheduleDecisionService}, qui n'enregistre jamais de retenue) comme par l'annulation
+ *       ordinaire du colis.</li>
  * </ul>
  * La faute elle-même (annulation par l'expéditeur d'un colis accepté ou remis, absence confirmée) est l'affaire des
  * appelants.
@@ -70,16 +76,24 @@ public class CancellationFeeEligibility {
     }
 
     /**
+     * @param statusAtFault statut du colis au moment de la faute, avant l'annulation : l'enregistrement de la retenue
+     *                      lit un colis déjà annulé, l'aperçu un colis encore accepté ou remis
      * @return le trajet, le taux du barème à {@code now} et sa prochaine hausse si ce colis est couvert ; vide sinon
-     *         (interrupteur éteint, colis antérieur à la date d'effet ou jamais enregistré, espèces, trajet introuvable)
+     *         (interrupteur éteint, colis antérieur à la date d'effet ou jamais enregistré, espèces, trajet introuvable,
+     *         réponse à un report du trajet encore ouverte)
      */
-    public Optional<Assessment> assess(BidEntity bid, Instant now) {
+    public Optional<Assessment> assess(BidEntity bid, BidStatus statusAtFault, Instant now) {
         if (!active() || !createdSinceActivation(bid) || !paidOnline(bid.getPaymentMethod())) {
             return Optional.empty();
         }
         Optional<AnnouncementEntity> trip = Optional.ofNullable(bid.getAnnouncementId()).flatMap(announcements::findById);
         if (trip.isEmpty()) {
             log.warn("Frais d'annulation non calculables : trajet du colis {} introuvable, aucun frais", bid.getId());
+            return Optional.empty();
+        }
+        if (TripRescheduleRules.decisionOpen(bid, statusAtFault, trip.get(), now)) {
+            log.info("Aucun frais d'annulation sur le colis {} : report du trajet en attente de la réponse de "
+                    + "l'expéditeur", bid.getId());
             return Optional.empty();
         }
         return Optional.of(new Assessment(trip.get(), CancellationFeeTiers.rateFor(trip.get(), now, properties),

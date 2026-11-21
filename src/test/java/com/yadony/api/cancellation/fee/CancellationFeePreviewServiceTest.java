@@ -170,6 +170,23 @@ class CancellationFeePreviewServiceTest {
     }
 
     @Test
+    void rescheduleDecisionOpen_noFee_likeTheRecording() {
+        bid.setPendingRescheduleId(UUID.randomUUID());
+        bid.setHandoverDeadline(LocalDateTime.ofInstant(NOW.plus(Duration.ofHours(6)), ZoneOffset.UTC));
+
+        assertNoFee(service(enabled()).preview(SENDER_UID, BID_ID), "100.00");
+        verify(quotes).quote(eq(BID_ID), argThat(r -> r.signum() == 0));
+    }
+
+    @Test
+    void rescheduleDecisionExpired_feeAsBefore() {
+        bid.setPendingRescheduleId(UUID.randomUUID());
+        bid.setHandoverDeadline(LocalDateTime.ofInstant(NOW.minus(Duration.ofHours(1)), ZoneOffset.UTC));
+
+        assertThat(service(enabled()).preview(SENDER_UID, BID_ID).fee()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
     void paymentThatCannotCarryAFee_noFee_noNextTier() {
         when(quotes.quote(eq(BID_ID), any())).thenReturn(Optional.of(new CancellationFeeQuotePort.Quote(
                 new BigDecimal("100.00"), "EUR", false, BigDecimal.ZERO, new BigDecimal("100.00"))));
