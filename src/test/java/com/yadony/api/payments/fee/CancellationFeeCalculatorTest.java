@@ -105,4 +105,42 @@ class CancellationFeeCalculatorTest {
         assertThatThrownBy(() -> CancellationFeeCalculator.compute(bd("100"), bd("0.3"), bd("-1"), ok, bd("0.05"), 2))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("capInPaymentCurrency");
     }
+
+    // --- brut et remboursé seuls : partagés par le règlement et l'aperçu montré à l'expéditeur ---
+
+    @Test
+    void grossFeeAndSenderRefund_areExactlyThoseOfCompute() {
+        record Case(String paid, String rate, String cap, int scale) {}
+        for (Case c : List.of(new Case("100", "0.30", "30", 2), new Case("400", "0.30", "30", 2),
+                new Case("80", "0.30", "30", 2), new Case("99.99", "0.20", "30", 2), new Case("10", "0.10", "30", 2),
+                new Case("100000", "0.30", "19678", 0), new Case("65600", "0.30", "19678", 0),
+                new Case("50000", "0.20", "19678", 0), new Case("100", "0", "30", 2))) {
+            var full = CancellationFeeCalculator.compute(bd(c.paid()), bd(c.rate()), bd(c.cap()), bd("1.75"),
+                    bd("0.05"), c.scale());
+
+            BigDecimal gross = CancellationFeeCalculator.grossFee(bd(c.paid()), bd(c.rate()), bd(c.cap()), c.scale());
+            BigDecimal refund = CancellationFeeCalculator.senderRefund(bd(c.paid()), gross, c.scale());
+
+            assertThat(gross).as(c.toString()).isEqualTo(full.grossFee());
+            assertThat(refund).as(c.toString()).isEqualTo(full.senderRefund());
+        }
+    }
+
+    @Test
+    void grossFee_rateZero_isZeroAtTheCurrencyScale() {
+        assertAmount(CancellationFeeCalculator.grossFee(bd("100"), bd("0"), bd("30"), 2), "0.00", 2);
+        assertAmount(CancellationFeeCalculator.senderRefund(bd("100"), bd("0.00"), 2), "100.00", 2);
+    }
+
+    @Test
+    void grossFee_invalidInputs_throw() {
+        assertThatThrownBy(() -> CancellationFeeCalculator.grossFee(bd("0"), bd("0.3"), bd("30"), 2))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("paidAmount");
+        assertThatThrownBy(() -> CancellationFeeCalculator.grossFee(bd("100"), bd("1.5"), bd("30"), 2))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("rate");
+        assertThatThrownBy(() -> CancellationFeeCalculator.grossFee(bd("100"), bd("0.3"), bd("-1"), 2))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("capInPaymentCurrency");
+        assertThatThrownBy(() -> CancellationFeeCalculator.grossFee(bd("100"), bd("0.3"), bd("30"), -1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("scale");
+    }
 }

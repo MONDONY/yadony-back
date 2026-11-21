@@ -127,6 +127,8 @@ class RefundProcessorCancellationFeeIT {
     @Autowired ApplicationEvents applicationEvents;
     @Autowired PaymentService paymentService;
     @Autowired TransactionTemplate tx;
+    @Autowired com.yadony.api.cancellation.fee.CancellationFeePreviewService previewService;
+    @Autowired com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder recorder;
     @MockitoBean NotificationDispatcher notificationDispatcher;
     // Import de dizaines de milliers de villes au démarrage, inutile ici.
     @MockitoBean GeoNamesDataLoader geoNamesDataLoader;
@@ -434,6 +436,54 @@ class RefundProcessorCancellationFeeIT {
                 .isNull();
     }
 
+    @Test
+    @DisplayName("aperçu puis vrai règlement, carte EUR : l'expéditeur voit exactement le brut retenu et le remboursé")
+    void preview_thenRealSettlement_card_sameGrossAndRefund() {
+        UserEntity traveler = persistUser(Role.TRAVELER);
+        UserEntity sender = persistUser(Role.SENDER);
+        BidEntity bid = persistCancelledBid(persistTrip(traveler), sender); // départ dans 12 h : 30 %
+        jdbc.update("UPDATE bids SET status = 'ACCEPTED' WHERE id = ?", bid.getId());
+        String pi = "pi_fee_preview_it_" + UUID.randomUUID();
+        PaymentEntity p = new PaymentEntity();
+        p.setBidId(bid.getId());
+        p.setStripePaymentIntentId(pi);
+        p.setAmount(new BigDecimal("80.00"));        // 80 × 30 % = 24 €, sous le plafond
+        p.setCommissionAmount(new BigDecimal("3.81"));
+        p.setCurrency("EUR");
+        p.setStatus(PaymentStatus.ESCROW);
+        p.setCapturedAt(java.time.Instant.now());
+        UUID otherPaymentId = paymentRepository.saveAndFlush(p).getId();
+
+        com.yadony.api.cancellation.dto.CancellationFeePreviewResponse preview =
+                previewService.preview(sender.getFirebaseUid(), bid.getId());
+        assertThat(preview.rate()).isEqualByComparingTo("0.30");
+        assertThat(preview.fee()).isEqualByComparingTo("24.00");
+        assertThat(preview.refundAmount()).isEqualByComparingTo("56.00");
+
+        // Le vrai chemin : retenue enregistrée par la décision partagée, puis remboursement réglé par RefundProcessor.
+        tx.executeWithoutResult(status -> recorder.record(bid.getId(), CancellationFeeReason.SENDER_CANCEL));
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            stubIntent(piStatic, "succeeded", pi);
+            ArgumentCaptor<RefundCreateParams> params = ArgumentCaptor.forClass(RefundCreateParams.class);
+            refundStatic.when(() -> Refund.create(params.capture(), any(RequestOptions.class)))
+                    .thenReturn(mock(Refund.class));
+
+            assertThat(refundProcessor.processRefund(otherPaymentId, "PAYMENT_REFUNDED_BID_REJECTED", bid.getId(),
+                    Map.of("reason", "bid_rejected"))).isTrue();
+
+            assertThat(params.getValue().getAmount()).isEqualTo(5600L);
+        }
+
+        CancellationFeeEntity fee = feeRepository.findByBidId(bid.getId()).orElseThrow();
+        assertThat(fee.getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+        assertThat(fee.getRate()).isEqualByComparingTo(preview.rate());
+        assertThat(fee.getGrossFee()).isEqualByComparingTo(preview.fee());
+        assertThat(fee.getCurrency()).isEqualTo(preview.currency());
+        assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class,
+                otherPaymentId)).isEqualByComparingTo(preview.refundAmount());
+    }
+
     /** Événement Stripe {@code charge.refunded} de ce paiement (montants en unités mineures). */
     private Event chargeRefunded(long amount, long amountRefunded) {
         Charge charge = mock(Charge.class);
@@ -454,6 +504,10 @@ class RefundProcessorCancellationFeeIT {
 
     /** PaymentIntent lu par le remboursement, et sa charge (frais Stripe réels 1,75 €) lue par {@code StripeFeeSource}. */
     private PaymentIntent stubIntent(MockedStatic<PaymentIntent> piStatic, String status) {
+        return stubIntent(piStatic, status, piId);
+    }
+
+    private PaymentIntent stubIntent(MockedStatic<PaymentIntent> piStatic, String status, String piId) {
         PaymentIntent pi = mock(PaymentIntent.class);
         when(pi.getStatus()).thenReturn(status);
         BalanceTransaction balance = mock(BalanceTransaction.class);

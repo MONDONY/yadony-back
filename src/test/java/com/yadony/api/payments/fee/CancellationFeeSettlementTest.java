@@ -360,6 +360,162 @@ class CancellationFeeSettlementTest {
         verify(port, never()).markNotApplicable(any(), any());
     }
 
+    // ── Aperçu montré à l'expéditeur avant d'annuler : même brut, même remboursé que le règlement ─────────────
+
+    @Test
+    void preview_capturedCard_sameGrossAndRefundAsTheSettlement() {
+        PaymentEntity payment = captured(payment("100.00", "4.76", "EUR"));
+        when(stripeFees.fee(PI, "EUR")).thenReturn(new BigDecimal("1.75"));
+
+        CancellationFeeSettlement.Preview preview = settlement.preview(payment, new BigDecimal("0.20"), null);
+        CancellationFeeBreakdown settled = settlement.compute(payment, SENDER, TRAVELER, new BigDecimal("0.20"));
+
+        assertThat(preview.retainable()).isTrue();
+        assertThat(preview.grossFee()).isEqualTo(settled.grossFee()).isEqualByComparingTo("20.00");
+        assertThat(preview.senderRefund()).isEqualTo(settled.senderRefund()).isEqualByComparingTo("80.00");
+    }
+
+    @Test
+    void preview_neverReadsStripeFeesNorTheCommission() {
+        PaymentEntity payment = captured(payment("100.00", "4.76", "EUR"));
+
+        settlement.preview(payment, new BigDecimal("0.30"), null);
+
+        verifyNoInteractions(stripeFees, pawapayFees, commissionRates);
+    }
+
+    @Test
+    void preview_xof_capConvertedDownLikeTheSettlement() {
+        when(rateLookup.unitsPerEur("XOF")).thenReturn(new BigDecimal("655.957"));
+        PaymentEntity payment = captured(payment("100000", "4762", "XOF"));
+
+        CancellationFeeSettlement.Preview preview = settlement.preview(payment, new BigDecimal("0.30"), null);
+
+        assertThat(preview.grossFee()).isEqualByComparingTo("19678");
+        assertThat(preview.grossFee().scale()).isZero();
+        assertThat(preview.senderRefund()).isEqualByComparingTo("80322");
+    }
+
+    @Test
+    void preview_rateZero_retainableButNothingRetained_noExchangeRateRead() {
+        PaymentEntity payment = captured(payment("100000", "4762", "XOF"));
+
+        CancellationFeeSettlement.Preview preview = settlement.preview(payment, BigDecimal.ZERO, null);
+
+        assertThat(preview.retainable()).isTrue();
+        assertThat(preview.grossFee()).isEqualByComparingTo("0");
+        assertThat(preview.senderRefund()).isEqualByComparingTo("100000");
+        verifyNoInteractions(rateLookup);
+    }
+
+    @Test
+    void preview_cardNotCaptured_cannotCarryAFee_likeTheSettlementWhichCancelsTheHold() {
+        assertNotRetainable(settlement.preview(payment("100.00", "4.76", "EUR"), new BigDecimal("0.30"), null), "100.00");
+    }
+
+    @Test
+    void preview_legacyOrAlreadyPartiallyRefunded_cannotCarryAFee() {
+        PaymentEntity legacy = captured(payment("100.00", "4.76", "EUR"));
+        legacy.setLegacyDestinationCharge(true);
+        PaymentEntity partial = captured(payment("100.00", "4.76", "EUR"));
+        partial.setRefundedAmount(new BigDecimal("10.00"));
+
+        assertNotRetainable(settlement.preview(legacy, new BigDecimal("0.30"), null), "100.00");
+        assertNotRetainable(settlement.preview(partial, new BigDecimal("0.30"), null), "100.00");
+    }
+
+    @Test
+    void preview_notInEscrow_cannotCarryAFee() {
+        PaymentEntity released = captured(payment("100.00", "4.76", "EUR"));
+        released.setStatus(PaymentStatus.RELEASED);
+
+        assertNotRetainable(settlement.preview(released, new BigDecimal("0.30"), null), "100.00");
+    }
+
+    @Test
+    void preview_mobileMoney_depositOfThePaymentAmount_sameGrossAsTheSettlement() {
+        when(rateLookup.unitsPerEur("XOF")).thenReturn(new BigDecimal("655.957"));
+        PaymentEntity payment = mobileMoney(payment("65600", "3124", "XOF"));
+        when(pawapayFees.partialRefundFee(eq("ORANGE_SEN"), any(), any(), eq("XOF"))).thenReturn(new BigDecimal("1443"));
+
+        CancellationFeeSettlement.Preview preview = settlement.preview(payment, new BigDecimal("0.30"),
+                new BigDecimal("65600"));
+        CancellationFeeBreakdown settled = settlement.computeMobileMoney(payment, "ORANGE_SEN", new BigDecimal("0.30"));
+
+        assertThat(preview.retainable()).isTrue();
+        assertThat(preview.grossFee()).isEqualTo(settled.grossFee()).isEqualByComparingTo("19678");
+        assertThat(preview.senderRefund()).isEqualTo(settled.senderRefund()).isEqualByComparingTo("45922");
+    }
+
+    @Test
+    void preview_mobileMoney_noCompletedDepositOrAnotherAmount_cannotCarryAFee() {
+        PaymentEntity payment = mobileMoney(payment("65600", "3124", "XOF"));
+
+        assertNotRetainable(settlement.preview(payment, new BigDecimal("0.30"), null), "65600");
+        assertNotRetainable(settlement.preview(payment, new BigDecimal("0.30"), new BigDecimal("65000")), "65600");
+    }
+
+    @Test
+    void preview_computationFails_noFeeShown_likeTheSettlementWhichRefundsInFull() {
+        // Taux de change absent : le règlement rembourserait en entier (échec du calcul jamais bloquant).
+        PaymentEntity payment = captured(payment("100000", "4762", "XOF"));
+        when(rateLookup.unitsPerEur("XOF")).thenThrow(new IllegalStateException("exchange-rate-missing"));
+
+        assertNotRetainable(settlement.preview(payment, new BigDecimal("0.30"), null), "100000");
+    }
+
+    // ── Remboursement intégral par l'administration (rail carte, hors processRefund) ───────────────────────────
+
+    @Test
+    void waiveAfterAdminFullRefund_closesTheDueFeeWithItsReason() {
+        PaymentEntity payment = payment("100.00", "4.76", "EUR");
+        when(port.dueRate(payment.getBidId())).thenReturn(Optional.of(new BigDecimal("0.30")));
+
+        settlement.waiveAfterAdminFullRefund(payment);
+
+        verify(port).markNotApplicable(payment.getBidId(), "ADMIN_FULL_REFUND");
+    }
+
+    @Test
+    void waiveAfterAdminFullRefund_threadPayment_closesTheFeeOfTheMaterializedBid() {
+        UUID threadId = UUID.randomUUID();
+        UUID bidId = UUID.randomUUID();
+        PaymentEntity payment = payment("100.00", "4.76", "EUR");
+        payment.setBidId(null);
+        payment.setNegotiationThreadId(threadId);
+        when(payments.findBidIdLinkedToThread(threadId)).thenReturn(Optional.of(bidId));
+        when(port.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("0.30")));
+
+        settlement.waiveAfterAdminFullRefund(payment);
+
+        verify(port).markNotApplicable(bidId, "ADMIN_FULL_REFUND");
+    }
+
+    @Test
+    void waiveAfterAdminFullRefund_nothingDue_noLockingWrite() {
+        PaymentEntity payment = payment("100.00", "4.76", "EUR");
+
+        settlement.waiveAfterAdminFullRefund(payment);
+
+        verify(port, never()).markNotApplicable(any(), any());
+    }
+
+    private static PaymentEntity captured(PaymentEntity payment) {
+        payment.setCapturedAt(java.time.Instant.parse("2026-11-20T10:00:00Z"));
+        return payment;
+    }
+
+    private static PaymentEntity mobileMoney(PaymentEntity payment) {
+        payment.setRail(com.yadony.api.payments.PaymentRail.PAWAPAY);
+        return payment;
+    }
+
+    private static void assertNotRetainable(CancellationFeeSettlement.Preview preview, String paid) {
+        assertThat(preview.retainable()).isFalse();
+        assertThat(preview.grossFee()).isEqualByComparingTo("0");
+        assertThat(preview.senderRefund()).isEqualByComparingTo(paid);
+    }
+
     private static PaymentEntity payment(String amount, String commission, String currency) {
         PaymentEntity p = new PaymentEntity();
         p.setBidId(UUID.randomUUID());

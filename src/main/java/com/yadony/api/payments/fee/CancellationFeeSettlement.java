@@ -2,11 +2,15 @@ package com.yadony.api.payments.fee;
 
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.payments.PaymentEntity;
+import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
+import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.wallet.fees.PawapayFeeTable;
 import com.yadony.api.payments.wallet.fees.StripeFeeSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +36,8 @@ import java.util.function.Supplier;
 @Component
 public class CancellationFeeSettlement {
 
+    private static final Logger log = LoggerFactory.getLogger(CancellationFeeSettlement.class);
+
     /** Motifs de clôture {@code NOT_APPLICABLE} (audit). */
     static final String NOT_CAPTURED = "PAYMENT_NOT_CAPTURED";
     static final String INTENT_CANCELED = "PAYMENT_INTENT_CANCELED";
@@ -42,6 +48,8 @@ public class CancellationFeeSettlement {
     static final String DEPOSIT_AMOUNT_MISMATCH = "DEPOSIT_AMOUNT_MISMATCH";
     /** Rail mobile money : remboursement d'une tentative précédente déjà en vol, d'un autre montant. */
     static final String REFUND_IN_FLIGHT = "REFUND_ALREADY_IN_FLIGHT";
+    /** Remboursement intégral par l'administration, hors {@code RefundProcessor} (rail carte). */
+    static final String ADMIN_FULL_REFUND = "ADMIN_FULL_REFUND";
 
     private static final String SUCCEEDED = "succeeded";
     private static final String CANCELED = "canceled";
@@ -136,9 +144,8 @@ public class CancellationFeeSettlement {
                                              LostRefundFees lostFees) {
         String currency = payment.getCurrency();
         BigDecimal paid = payment.getAmount();
-        int scale = SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
-        // Vers le bas : le plafond converti ne dépasse jamais son équivalent en euros.
-        BigDecimal cap = exchangeRates.convert(port.capEur(), "EUR", currency, RoundingMode.DOWN);
+        int scale = scaleOf(currency);
+        BigDecimal cap = capIn(currency);
         BigDecimal commissionRate = commissionRate(payment, senderId, travelerId);
         // Le brut, donc le montant rendu à l'expéditeur, ne dépend pas des frais : un premier passage à frais nuls le
         // donne, le rail mobile money facture son remboursement sur ce montant-là. Aucune formule recopiée hors du
@@ -146,6 +153,59 @@ public class CancellationFeeSettlement {
         BigDecimal fees = lostFees.of(paid, () -> CancellationFeeCalculator
                 .compute(paid, rate, cap, BigDecimal.ZERO, commissionRate, scale).senderRefund());
         return CancellationFeeCalculator.compute(paid, rate, cap, fees, commissionRate, scale);
+    }
+
+    /**
+     * Aperçu de la retenue, montré à l'expéditeur avant qu'il annule.
+     *
+     * @param retainable   le paiement peut porter une retenue (mêmes règles que {@link #settle} et
+     *                     {@link #settleMobileMoney}) ; faux : il serait remboursé en entier
+     * @param grossFee     brut retenu, 0 si {@code retainable} est faux ou au taux 0
+     * @param senderRefund rendu à l'expéditeur
+     */
+    public record Preview(boolean retainable, BigDecimal grossFee, BigDecimal senderRefund) {}
+
+    /**
+     * Ce que le remboursement retiendrait si l'expéditeur annulait MAINTENANT au taux donné : MÊME brut que le règlement
+     * ({@link CancellationFeeCalculator#grossFee}, plafond converti par {@link #capIn}), mêmes règles d'aptitude du
+     * paiement. Sans effet de bord ni appel au prestataire : ni frais Stripe, ni barème pawaPay, ni commission (ils ne
+     * changent que la part du voyageur, pas ce que perd l'expéditeur). Un calcul qui échoue (taux de change absent)
+     * montre 0, comme le règlement qui rembourserait alors en entier.
+     *
+     * <p>Aptitude : paiement en séquestre ; ni charge legacy ni remboursement partiel antérieur ; carte CAPTURÉE
+     * ({@code captured_at}, posé après la confirmation de Stripe : une autorisation seule serait annulée en entier par le
+     * remboursement) ; mobile money : dépôt abouti du montant exact du paiement.
+     *
+     * @param mobileMoneyDepositAmount rail mobile money : montant du dépôt {@code COMPLETED}, {@code null} s'il n'y en a
+     *                                 pas ; ignoré sur le rail carte
+     */
+    public Preview preview(PaymentEntity payment, BigDecimal rate, BigDecimal mobileMoneyDepositAmount) {
+        BigDecimal paid = payment.getAmount();
+        int scale = scaleOf(payment.getCurrency());
+        if (previewIneligibility(payment, mobileMoneyDepositAmount) != null) {
+            return new Preview(false, BigDecimal.ZERO.setScale(scale),
+                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale));
+        }
+        try {
+            BigDecimal gross = rate.signum() == 0
+                    ? BigDecimal.ZERO.setScale(scale)
+                    : CancellationFeeCalculator.grossFee(paid, rate, capIn(payment.getCurrency()), scale);
+            return new Preview(true, gross, CancellationFeeCalculator.senderRefund(paid, gross, scale));
+        } catch (RuntimeException e) {
+            log.warn("Aperçu de la retenue incalculable pour le paiement {} : aucun frais montré ({})",
+                    payment.getId(), e.getMessage());
+            return new Preview(false, BigDecimal.ZERO.setScale(scale),
+                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale));
+        }
+    }
+
+    /**
+     * L'administration a remboursé l'expéditeur EN ENTIER hors de {@code RefundProcessor} (rail carte,
+     * {@code POST /admin/payments/{id}/refund}) : une retenue encore due pour ce colis est close {@code NOT_APPLICABLE},
+     * motif {@value #ADMIN_FULL_REFUND}, sans quoi elle resterait due à vie. Sans effet si aucune n'est due.
+     */
+    public void waiveAfterAdminFullRefund(PaymentEntity payment) {
+        closeIfDue(payment, ADMIN_FULL_REFUND);
     }
 
     /**
@@ -243,6 +303,34 @@ public class CancellationFeeSettlement {
             return DEPOSIT_AMOUNT_MISMATCH;
         }
         return null;
+    }
+
+    /**
+     * Aptitude du paiement à porter une retenue, vue de l'aperçu : les règles de {@link #settle} (carte) et de
+     * {@link #settleMobileMoney}, plus ce que le remboursement découvre chez le prestataire et que l'aperçu lit en base
+     * (séquestre, capture carte).
+     */
+    private static String previewIneligibility(PaymentEntity payment, BigDecimal mobileMoneyDepositAmount) {
+        if (payment.getStatus() != PaymentStatus.ESCROW) {
+            return "PAYMENT_" + payment.getStatus();
+        }
+        if (payment.getRail() == PaymentRail.PAWAPAY) {
+            return mobileMoneyIneligibility(payment, mobileMoneyDepositAmount);
+        }
+        String reason = ineligibility(payment);
+        if (reason == null && payment.getCapturedAt() == null) {
+            return NOT_CAPTURED;
+        }
+        return reason;
+    }
+
+    /** Plafond du barème converti dans la devise du paiement, VERS LE BAS : jamais plus que son équivalent en euros. */
+    private BigDecimal capIn(String currency) {
+        return exchangeRates.convert(port.capEur(), "EUR", currency, RoundingMode.DOWN);
+    }
+
+    private static int scaleOf(String currency) {
+        return SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
     }
 
     /** Colis du paiement : le sien, ou celui matérialisé depuis le fil de négociation payé. */

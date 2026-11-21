@@ -88,11 +88,22 @@ public class SenderCancellationFeeRecorder {
         if (event.byTraveler()) {
             return;
         }
-        if (event.previousStatus() == BidStatus.ACCEPTED) {
-            record(event.bidId(), CancellationFeeReason.SENDER_CANCEL);
-        } else if (event.previousStatus() == BidStatus.HANDED_OVER) {
-            record(event.bidId(), CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER);
+        senderCancellationReason(event.previousStatus()).ifPresent(reason -> record(event.bidId(), reason));
+    }
+
+    /**
+     * Motif de la retenue quand l'expéditeur annule un colis depuis ce statut : accepté ({@code SENDER_CANCEL}) ou déjà
+     * remis avant le départ ({@code SENDER_CANCEL_AFTER_HANDOVER}) ; vide pour tout autre statut (pas encore accepté,
+     * en route, terminé). Partagé avec l'aperçu montré à l'expéditeur ({@link CancellationFeePreviewService}).
+     */
+    static Optional<CancellationFeeReason> senderCancellationReason(BidStatus status) {
+        if (status == BidStatus.ACCEPTED) {
+            return Optional.of(CancellationFeeReason.SENDER_CANCEL);
         }
+        if (status == BidStatus.HANDED_OVER) {
+            return Optional.of(CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER);
+        }
+        return Optional.empty();
     }
 
     /**

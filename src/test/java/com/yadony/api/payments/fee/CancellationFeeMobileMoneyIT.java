@@ -137,6 +137,8 @@ class CancellationFeeMobileMoneyIT {
     @Autowired ApplicationEventPublisher events;
     @Autowired TransactionTemplate tx;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.yadony.api.cancellation.fee.CancellationFeePreviewService previewService;
+    @Autowired com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder recorder;
 
     private UUID travelerId;
     private UUID bidId;
@@ -463,6 +465,39 @@ class CancellationFeeMobileMoneyIT {
         Long n = jdbc.queryForObject("SELECT COUNT(*) FROM admin_alerts WHERE type = ? AND resolved = false",
                 Long.class, CancellationFeePayoutService.STOPPED_ALERT_PREFIX + feeId);
         return n == null ? 0 : n;
+    }
+
+    @Test
+    @DisplayName("aperçu puis vrai règlement, mobile money XOF : même brut plafonné, même montant rendu au dépôt")
+    void preview_thenRealSettlement_mobileMoney_sameGrossAndRefund() {
+        UserEntity sender = persistUser(Role.SENDER);
+        BidEntity bid = persistCancelledBid(persistTrip(userRepository.findById(travelerId).orElseThrow()), sender);
+        jdbc.update("UPDATE bids SET status = 'ACCEPTED' WHERE id = ?", bid.getId());
+        bidId = bid.getId();
+        paymentId = persistEscrow();           // 65 600 F
+        depositId = persistCompletedDeposit(); // dépôt abouti du même montant
+
+        com.yadony.api.cancellation.dto.CancellationFeePreviewResponse preview =
+                previewService.preview(sender.getFirebaseUid(), bidId);
+        assertThat(preview.currency()).isEqualTo("XOF");
+        assertThat(preview.rate()).isEqualByComparingTo("0.30");
+        // 65 600 × 30 % = 19 680, plafonné à 30 € convertis vers le bas : 19 678.
+        assertThat(preview.fee()).isEqualByComparingTo("19678");
+        assertThat(preview.refundAmount()).isEqualByComparingTo("45922");
+
+        tx.executeWithoutResult(status -> recorder.record(bidId, CancellationFeeReason.SENDER_CANCEL));
+        assertThat(refund()).isTrue();
+
+        ArgumentCaptor<PawapayRefundRequest> refundRequest = ArgumentCaptor.forClass(PawapayRefundRequest.class);
+        verify(client).initiateRefund(refundRequest.capture());
+        assertThat(refundRequest.getValue().amount()).isEqualByComparingTo(preview.refundAmount());
+        CancellationFeeEntity fee = feeRepository.findByBidId(bidId).orElseThrow();
+        assertThat(fee.getStatus()).isEqualTo(CancellationFeeStatus.RETAINED);
+        assertThat(fee.getRate()).isEqualByComparingTo(preview.rate());
+        assertThat(fee.getGrossFee()).isEqualByComparingTo(preview.fee());
+        assertThat(fee.getCurrency()).isEqualTo(preview.currency());
+        assertThat(jdbc.queryForObject("SELECT refunded_amount FROM payments WHERE id = ?", BigDecimal.class, paymentId))
+                .isEqualByComparingTo(preview.refundAmount());
     }
 
     private boolean refund() {
