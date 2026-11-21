@@ -34,11 +34,12 @@ class AuthControllerRegisterRaceTest {
 
     @Mock AuthService authService;
     @Mock GuestClaimService guestClaimService;
+    @Mock UsernameService usernameService;
 
     private AuthController controller() {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(UID, null, java.util.List.of()));
-        return new AuthController(authService, guestClaimService);
+        return new AuthController(authService, guestClaimService, usernameService);
     }
 
     @AfterEach

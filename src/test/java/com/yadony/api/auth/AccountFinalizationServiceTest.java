@@ -16,10 +16,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.lang.reflect.Field;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,6 +45,9 @@ class AccountFinalizationServiceTest {
     @Mock private FirebaseContactService firebaseContact;
     @Mock private com.yadony.api.common.stripe.AdminAlertService adminAlertService;
     @Mock private TaxInfoRetentionPort taxInfoRetention;
+    @Mock private ReleasedUsernameRepository releasedUsernameRepository;
+    @Mock private UsernameGenerator usernameGenerator;
+    @Spy private Clock clock = Clock.fixed(Instant.parse("2026-11-21T10:00:00Z"), ZoneOffset.UTC);
 
     @InjectMocks private AccountFinalizationService service;
 
@@ -562,5 +570,47 @@ class AccountFinalizationServiceTest {
         }
 
         verify(auditService).log(eq("USER"), eq(userId), eq("USER_GDPR_DELETION"), eq(userId), any());
+    }
+
+    @Test
+    @DisplayName("libère l'identifiant : réservé 30 jours en minuscules, remplacé par un identifiant généré")
+    void releasesUsernameAndReplacesIt() {
+        UserEntity user = makeUser();
+        user.setUsername("Awa.Diallo");
+        when(usernameGenerator.generate()).thenReturn("user1785012345");
+        FirebaseAuth mockAuth = mock(FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getUsername()).isEqualTo("user1785012345");
+        ArgumentCaptor<ReleasedUsernameEntity> released = ArgumentCaptor.forClass(ReleasedUsernameEntity.class);
+        verify(releasedUsernameRepository).save(released.capture());
+        assertThat(released.getValue().getUsername()).isEqualTo("awa.diallo");
+        assertThat(released.getValue().getFormerUserId()).isEqualTo(user.getId());
+        assertThat(released.getValue().getReleasedAt())
+                .isEqualTo(OffsetDateTime.parse("2026-11-21T10:00:00Z"));
+        verify(auditService).log(eq("USER"), eq(user.getId()), eq("USER_GDPR_DELETION"), eq(user.getId()), anyMap());
+    }
+
+    @Test
+    @DisplayName("un second appel ne libère ni ne remplace une seconde fois l'identifiant")
+    void releaseIsIdempotent() {
+        UserEntity user = makeUser();
+        user.setUsername("awa.diallo");
+        when(usernameGenerator.generate()).thenReturn("user1785012345");
+        FirebaseAuth mockAuth = mock(FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getUsername()).isEqualTo("user1785012345");
+        verify(releasedUsernameRepository, times(1)).save(any());
+        verify(usernameGenerator, times(1)).generate();
     }
 }

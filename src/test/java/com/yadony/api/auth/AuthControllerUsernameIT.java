@@ -1,0 +1,212 @@
+package com.yadony.api.auth;
+
+import com.google.firebase.auth.FirebaseAuth;
+import com.yadony.api.admin.account.AdminAuthService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@SpringBootTest
+@ActiveProfiles("test")
+@AutoConfigureMockMvc
+class AuthControllerUsernameIT {
+
+    private static final String UID = "uid-username-it";
+    private static final String OTHER_UID = "uid-username-other";
+
+    @Autowired MockMvc mvc;
+    @Autowired UserRepository userRepository;
+    @Autowired ReleasedUsernameRepository releasedRepository;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @MockitoBean AdminAuthService adminAuthService;
+    @MockitoBean FirebaseAuth firebaseAuth;
+    @MockitoBean FirebaseContactService firebaseContact;
+
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean UserRepository spiedUsers;
+
+    UserEntity me;
+    UserEntity other;
+
+    @BeforeEach
+    void setUp() {
+        purge();
+        me = seed(UID, "usr.awa.old");
+        other = seed(OTHER_UID, "usr.moussa.k");
+        when(adminAuthService.resolve(any())).thenReturn(Optional.empty());
+        when(firebaseContact.getContact(any()))
+                .thenReturn(new FirebaseContactService.Contact("+33612000009", null));
+    }
+
+    @AfterEach
+    void purge() {
+        // Suppression ciblée (comptes de cette classe, identifiants préfixés « usr. ») : la base de test est
+        // partagée avec d'autres classes, on ne la vide pas.
+        jdbc.update("DELETE FROM released_usernames WHERE username LIKE 'usr.%' OR former_user_id IN "
+                + "(SELECT id FROM users WHERE firebase_uid IN (?, ?))", UID, OTHER_UID);
+        jdbc.update("DELETE FROM user_roles WHERE user_id IN (SELECT id FROM users WHERE firebase_uid IN (?, ?))",
+                UID, OTHER_UID);
+        jdbc.update("DELETE FROM users WHERE firebase_uid IN (?, ?) OR lower(username) LIKE 'usr.%'", UID, OTHER_UID);
+    }
+
+    private UserEntity seed(String uid, String username) {
+        UserEntity u = new UserEntity();
+        u.setFirebaseUid(uid);
+        u.setUsername(username);
+        u.setStatus(UserStatus.ACTIVE);
+        u.setKycStatus(KycStatus.PENDING);
+        u.setRoles(Set.of(Role.SENDER));
+        u.setStripeAccountStatus(StripeAccountStatus.NOT_CREATED);
+        return userRepository.save(u);
+    }
+
+    private UsernamePasswordAuthenticationToken auth(String uid, String role) {
+        return new UsernamePasswordAuthenticationToken(uid, null, List.of(new SimpleGrantedAuthority(role)));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions putUsername(String value) throws Exception {
+        return mvc.perform(put("/auth/me/username").with(authentication(auth(UID, "ROLE_SENDER")))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"" + value + "\"}"));
+    }
+
+    @Test
+    void put_valide_200_puisGetMeRenvoieLeNouvelIdentifiant() throws Exception {
+        putUsername("Usr.Awa.New").andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("usr.awa.new"));
+
+        mvc.perform(get("/auth/me").with(authentication(auth(UID, "ROLE_SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("usr.awa.new"));
+
+        UserEntity reloaded = userRepository.findById(me.getId()).orElseThrow();
+        assertThat(reloaded.getUsernameChangedAt()).isNotNull();
+        assertThat(releasedRepository.existsByUsernameAndReleasedAtAfter("usr.awa.old",
+                OffsetDateTime.now().minusDays(1))).isTrue();
+        // Lecture en SQL : le mappage JSON du payload n'est pas relisible sous H2.
+        List<String> payloads = jdbc.queryForList(
+                "SELECT CAST(payload AS VARCHAR) FROM audit_log WHERE entity_id = ? AND action = 'USERNAME_CHANGED'",
+                String.class, me.getId());
+        assertThat(payloads).hasSize(1);
+        assertThat(payloads.get(0)).contains("usr.awa.old").contains("usr.awa.new");
+    }
+
+    @Test
+    void put_dixJoursApresUnPrecedent_409TooSoonAvecNextChangeAt() throws Exception {
+        me.setUsernameChangedAt(OffsetDateTime.now().minusDays(10));
+        userRepository.save(me);
+
+        putUsername("usr.awa.new").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("username-change-too-soon")))
+                .andExpect(jsonPath("$.nextChangeAt", notNullValue()));
+    }
+
+    @Test
+    void put_pris_409AvecSuggestions() throws Exception {
+        putUsername("Usr.Moussa.K").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("username-taken")))
+                .andExpect(jsonPath("$.suggestions", org.hamcrest.Matchers.not(hasSize(0))));
+    }
+
+    @Test
+    void put_invalide_422_reserve_422() throws Exception {
+        putUsername("a b").andExpect(status().isUnprocessableEntity());
+        putUsername("yadony.awa").andExpect(status().isUnprocessableEntity());
+        putUsername("0612345678").andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("username-looks-like-phone")));
+        mvc.perform(put("/auth/me/username").with(authentication(auth(UID, "ROLE_SENDER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"\"}"))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void put_invite_403() throws Exception {
+        mvc.perform(put("/auth/me/username").with(authentication(auth(UID, "ROLE_GUEST")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"usr.awa.new\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.awa.new")
+                        .with(authentication(auth(UID, "ROLE_GUEST"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void availability_reponsesSelonLeCas() throws Exception {
+        var a = authentication(auth(UID, "ROLE_SENDER"));
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.awa.free").with(a))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.available").value(true))
+                .andExpect(jsonPath("$.reason").doesNotExist());
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.moussa.k").with(a))
+                .andExpect(jsonPath("$.reason").value("TAKEN"));
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.awa.old").with(a))
+                .andExpect(jsonPath("$.reason").value("UNCHANGED"));
+        mvc.perform(get("/auth/me/username/availability").param("value", "x").with(a))
+                .andExpect(jsonPath("$.reason").value("INVALID_FORMAT"));
+        mvc.perform(get("/auth/me/username/availability").param("value", "0612345678").with(a))
+                .andExpect(jsonPath("$.reason").value("LOOKS_LIKE_PHONE"));
+        releasedRepository.save(new ReleasedUsernameEntity("usr.old.name", OffsetDateTime.now().minusDays(10),
+                other.getId()));
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.old.name").with(a))
+                .andExpect(jsonPath("$.reason").value("RECENTLY_RELEASED"));
+    }
+
+    /**
+     * Course réelle : la pré-vérification passe (simulée) alors qu'un autre compte détient déjà le
+     * nom ; c'est la contrainte d'unicité de la base qui refuse l'écriture. Sous H2 la contrainte
+     * est celle de la colonne (sensible à la casse, d'où le nom saisi en minuscules) ; l'index
+     * insensible à la casse est couvert par UsernameMigrationIT sur PostgreSQL.
+     */
+    @Test
+    void put_courseSurContrainteUnique_409TakenSansReservationNiAudit() throws Exception {
+        org.mockito.Mockito.doReturn(false).when(spiedUsers).existsByUsernameIgnoreCase("usr.moussa.k");
+
+        putUsername("Usr.Moussa.K").andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("username-taken")));
+
+        assertThat(userRepository.findById(me.getId()).orElseThrow().getUsername()).isEqualTo("usr.awa.old");
+        assertThat(releasedRepository.count()).isZero();
+        Integer audits = jdbc.queryForObject(
+                "SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = 'USERNAME_CHANGED'",
+                Integer.class, me.getId());
+        assertThat(audits).isZero();
+    }
+
+    @Test
+    void availability_121stCallInTheHour_429_andRespectsOtherUser() throws Exception {
+        var a = authentication(auth(UID, "ROLE_SENDER"));
+        for (int i = 0; i < 120; i++) {
+            mvc.perform(get("/auth/me/username/availability").param("value", "usr.awa.free").with(a))
+                    .andExpect(status().isOk());
+        }
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.awa.free").with(a))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.type").value(org.hamcrest.Matchers.endsWith("username-availability-quota")));
+        mvc.perform(get("/auth/me/username/availability").param("value", "usr.awa.free")
+                        .with(authentication(auth(OTHER_UID, "ROLE_SENDER"))))
+                .andExpect(status().isOk());
+    }
+}

@@ -16,10 +16,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -37,6 +40,9 @@ public class AccountFinalizationService {
     private final AdminAlertService adminAlertService;
     /** Réalisé par le paquet dac7 ; nul (tests) = aucune conservation, effacement comme avant. */
     private final TaxInfoRetentionPort taxInfoRetention;
+    private final ReleasedUsernameRepository releasedUsernameRepository;
+    private final UsernameGenerator usernameGenerator;
+    private final Clock clock;
 
     public AccountFinalizationService(UserRepository userRepository,
                                       KycRepository kycRepository,
@@ -45,7 +51,10 @@ public class AccountFinalizationService {
                                       AuditService auditService,
                                       FirebaseContactService firebaseContact,
                                       AdminAlertService adminAlertService,
-                                      TaxInfoRetentionPort taxInfoRetention) {
+                                      TaxInfoRetentionPort taxInfoRetention,
+                                      ReleasedUsernameRepository releasedUsernameRepository,
+                                      UsernameGenerator usernameGenerator,
+                                      Clock clock) {
         this.userRepository = userRepository;
         this.kycRepository = kycRepository;
         this.storageService = storageService;
@@ -54,6 +63,9 @@ public class AccountFinalizationService {
         this.firebaseContact = firebaseContact;
         this.adminAlertService = adminAlertService;
         this.taxInfoRetention = taxInfoRetention;
+        this.releasedUsernameRepository = releasedUsernameRepository;
+        this.usernameGenerator = usernameGenerator;
+        this.clock = clock;
     }
 
     /**
@@ -95,6 +107,7 @@ public class AccountFinalizationService {
         // 1. Pseudonymise personal data
         // Téléphone et email ne sont plus stockés ici : ils disparaissent avec le
         // compte Firebase supprimé à l'étape 5.
+        releaseUsername(user);
         user.setFirstName("Utilisateur");
         user.setLastName("supprimé");
         user.setBirthDate(null);
@@ -221,6 +234,23 @@ public class AccountFinalizationService {
         auditService.log("USER", userId, "USER_GDPR_DELETION", userId,
                 Map.of("reason", reason.name(), "pseudonymized", true, "taxInfoRetained", retainTaxInfo));
         log.info("Account finalized for user {} (reason: {})", uid, reason);
+    }
+
+    /**
+     * L'identifiant est choisi par l'utilisateur (ex. awa.diallo) : donnée personnelle à effacer. L'ancien est
+     * réservé 30 jours (comme après un changement) et la ligne reçoit un identifiant généré, ce qui libère aussi
+     * l'index unique. Sans effet sur un compte déjà finalisé (second appel).
+     */
+    private void releaseUsername(UserEntity user) {
+        String previous = user.getUsername();
+        if (user.getDeletedAt() != null || previous == null || previous.isBlank()) {
+            return;
+        }
+        String lower = previous.toLowerCase(Locale.ROOT);
+        if (!releasedUsernameRepository.existsById(lower)) {
+            releasedUsernameRepository.save(new ReleasedUsernameEntity(lower, OffsetDateTime.now(clock), user.getId()));
+        }
+        user.setUsername(usernameGenerator.generate());
     }
 
     private void purgePrefixes(List<String> prefixes) {

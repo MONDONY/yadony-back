@@ -12,4 +12,4 @@ routes:
   - path: /profile/addresses
     label: My addresses
 ---
-You are on My recipients, your list of loved ones. "Add a Yadony recipient" finds a person by phone number or email so their parcels are linked to them, and your "Sent invitations" show at the top of the list. Find someone with the search bar, and use each recipient's menu to "Edit", "Set as default" or "Delete". You can also add a new recipient when you choose the recipient of a shipment.
+You are on My recipients, your list of loved ones. "Add a Yadony recipient" finds a person by phone number, email or Yadony identifier (three choices: Number, Email, Identifier) so their parcels are linked to them. Your "Sent invitations" show at the top of the list; if the person declines, you are notified and the invitation disappears from the list. Each recipient's menu lets you "Edit", "Set as default" or "Delete".

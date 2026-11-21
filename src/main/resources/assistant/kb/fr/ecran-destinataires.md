@@ -12,4 +12,4 @@ routes:
   - path: /profile/addresses
     label: Mes adresses
 ---
-Vous êtes sur Mes destinataires, votre carnet de proches. « Ajouter un destinataire Yadony » retrouve une personne par son numéro ou son e-mail pour lui rattacher ses colis, et vos « Invitations envoyées » s'affichent en tête de liste. Cherchez un proche avec la barre de recherche, et utilisez le menu de chaque destinataire pour « Modifier », « Définir par défaut » ou « Supprimer ». Un nouveau destinataire peut aussi s'ajouter au moment de choisir le destinataire d'un envoi.
+Vous êtes sur Mes destinataires, votre carnet de proches. « Ajouter un destinataire Yadony » retrouve une personne par son numéro, son e-mail ou son identifiant Yadony (trois choix : Numéro, E-mail, Identifiant) pour lui rattacher ses colis. Vos « Invitations envoyées » s'affichent en tête de liste ; si la personne refuse, vous êtes prévenu et l'invitation disparaît de la liste. Le menu de chaque destinataire permet de « Modifier », « Définir par défaut » ou « Supprimer ».
