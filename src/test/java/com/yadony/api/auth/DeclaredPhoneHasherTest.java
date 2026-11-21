@@ -31,12 +31,18 @@ class DeclaredPhoneHasherTest {
     }
 
     @Test
-    void constructor_rejectsBlankKey() {
-        assertThatThrownBy(() -> new DeclaredPhoneHasher(" "))
+    void isConfigured_trueWithKey_falseWhenBlankOrNull() {
+        assertThat(new DeclaredPhoneHasher("cle").isConfigured()).isTrue();
+        assertThat(new DeclaredPhoneHasher("").isConfigured()).isFalse();
+        assertThat(new DeclaredPhoneHasher("  ").isConfigured()).isFalse();
+        assertThat(new DeclaredPhoneHasher(null).isConfigured()).isFalse();
+    }
+
+    @Test
+    void hash_throwsClearlyWhenNotConfigured() {
+        assertThatThrownBy(() -> new DeclaredPhoneHasher(" ").hash(PHONE))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DECLARED_PHONE_HASH_KEY");
-        assertThatThrownBy(() -> new DeclaredPhoneHasher(null))
-                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

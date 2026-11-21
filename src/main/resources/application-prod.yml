@@ -38,7 +38,7 @@ stripe:
 
 yadony:
   declared-phone:
-    hash-key: ${DECLARED_PHONE_HASH_KEY:?DECLARED_PHONE_HASH_KEY is required}
+    hash-key: ${DECLARED_PHONE_HASH_KEY:}
   kyc:
     enforce: true
   stripe:

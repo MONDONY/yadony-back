@@ -172,7 +172,7 @@ sentry:
 # (${VAR:défaut}) — provisioning prod sans rebuild.
 yadony:
   # Numéro déclaré sans SMS : clé de l'empreinte HMAC stockée en base (jamais le numéro). Vide au
-  # défaut : le démarrage échoue, sauf profils dev/test qui posent une valeur factice.
+  # défaut : fonction désactivée (le démarrage n'échoue pas) ; dev/test posent une valeur factice.
   declared-phone:
     hash-key: ${DECLARED_PHONE_HASH_KEY:}
   # Coûts des prestataires, pour le simulateur de marge de l'onglet Tarification UNIQUEMENT (jamais

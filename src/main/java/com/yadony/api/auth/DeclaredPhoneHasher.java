@@ -1,5 +1,7 @@
 package com.yadony.api.auth;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -22,18 +24,31 @@ public class DeclaredPhoneHasher {
 
     private static final String ALGORITHM = "HmacSHA256";
 
+    private static final Logger log = LoggerFactory.getLogger(DeclaredPhoneHasher.class);
+
+    /** Nul quand la clé est absente : la fonction « numéro déclaré » est alors désactivée. */
     private final SecretKeySpec key;
 
     public DeclaredPhoneHasher(@Value("${yadony.declared-phone.hash-key:}") String hashKey) {
         if (hashKey == null || hashKey.isBlank()) {
-            throw new IllegalStateException(
-                    "yadony.declared-phone.hash-key (DECLARED_PHONE_HASH_KEY) est obligatoire");
+            this.key = null;
+            log.warn("DECLARED_PHONE_HASH_KEY absente : numéro déclaré sans SMS désactivé");
+        } else {
+            this.key = new SecretKeySpec(hashKey.getBytes(StandardCharsets.UTF_8), ALGORITHM);
         }
-        this.key = new SecretKeySpec(hashKey.getBytes(StandardCharsets.UTF_8), ALGORITHM);
+    }
+
+    /** Faux si la clé est absente ou blanche : l'appelant doit alors désactiver la fonction. */
+    public boolean isConfigured() {
+        return key != null;
     }
 
     /** HMAC-SHA256 en hexadécimal (64 caractères) du numéro E.164. */
     public String hash(String e164) {
+        if (key == null) {
+            throw new IllegalStateException(
+                    "numéro déclaré désactivé : DECLARED_PHONE_HASH_KEY n'est pas configurée");
+        }
         if (e164 == null || e164.isBlank()) {
             throw new IllegalArgumentException("numéro vide");
         }

@@ -48,7 +48,7 @@ spring:
 # vers le deep link yadony:// pour revenir dans l'app.
 yadony:
   declared-phone:
-    hash-key: ${DECLARED_PHONE_HASH_KEY:?DECLARED_PHONE_HASH_KEY is required}
+    hash-key: ${DECLARED_PHONE_HASH_KEY:}
   # Diagnostic de la recherche de vols : une ligne WARN [FlightSearchDiag] par recherche aller-retour
   # à jours précis qui rend moins de 5 offres (Sentry Logs ne garde que warn/error).
   flights:
