@@ -355,6 +355,19 @@ yadony:
   delivery-no-show:
     min-wait-minutes: ${YADONY_DELIVERY_NO_SHOW_MIN_WAIT_MINUTES:120}
     hold-days: ${YADONY_DELIVERY_NO_SHOW_HOLD_DAYS:7}
+  # Frais retenus sur le remboursement d'un expéditeur qui annule (voir CancellationFeeProperties).
+  # Palier le plus lointain = strictement plus de N jours ; les autres = au moins N jours.
+  cancellation-fee:
+    cap-eur: 30
+    tiers:
+      - min-days-before: 5
+        rate: 0
+      - min-days-before: 3
+        rate: 0.10
+      - min-days-before: 1
+        rate: 0.20
+      - min-days-before: 0
+        rate: 0.30
   # Classement des annonces de trajet (poids du score de confiance, voir spec classement-annonces).
   ranking:
     weights:
