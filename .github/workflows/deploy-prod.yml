@@ -109,6 +109,11 @@ jobs:
           # Clé HMAC des codes de recharge du solde (stockés hachés). Obligatoire hors dev/test :
           # le back refuse de démarrer sans elle. La changer rend tous les codes en cours inutilisables.
           TOPUP_CODE_HMAC_KEY=${{ secrets.TOPUP_CODE_HMAC_KEY }}
+          # Clé HMAC de l'empreinte des numéros déclarés sans SMS (openssl rand -base64 32), secret propre
+          # à l'environnement `production`, jamais celui de staging. Absente : la valeur part vide, le back
+          # démarre et la déclaration répond 503 declared-phone-unavailable (voulu, aucun échec ici). Ne
+          # jamais la changer sans recalculer les empreintes existantes.
+          DECLARED_PHONE_HASH_KEY=${{ secrets.DECLARED_PHONE_HASH_KEY }}
           TWILIO_ACCOUNT_SID=${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN=${{ secrets.TWILIO_AUTH_TOKEN }}
           AT_API_KEY=${{ secrets.AT_API_KEY }}
