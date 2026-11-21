@@ -177,7 +177,7 @@ class RecipientInvitationControllerIntegrationTest {
     // ── Côté inviteur : liste envoyée ───────────────────────────────────────
 
     @Test
-    void sent_showsMaskedTargetAndPendingEvenWhenDeclined() throws Exception {
+    void sent_omitsDeclinedInvitation() throws Exception {
         mockMvc.perform(invite("{\"phone\":\"" + INVITEE_PHONE + "\"}")).andExpect(status().isAccepted());
         mockMvc.perform(invite("{\"email\":\"awa.k@gmail.com\"}")).andExpect(status().isAccepted());
         RecipientInvitationEntity phoneInvitation = invitationRepository.findAll().stream()
@@ -189,9 +189,8 @@ class RecipientInvitationControllerIntegrationTest {
 
         mockMvc.perform(get("/recipient-invitations/sent").with(authentication(as(INVITER_UID))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[?(@.channel == 'PHONE')].maskedTarget").value("+221 •• •• •• 12"))
-                .andExpect(jsonPath("$[?(@.channel == 'PHONE')].status").value("PENDING"))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[?(@.channel == 'PHONE')]").isEmpty())
                 .andExpect(jsonPath("$[?(@.channel == 'EMAIL')].maskedTarget").value("a••••@gmail.com"));
     }
 

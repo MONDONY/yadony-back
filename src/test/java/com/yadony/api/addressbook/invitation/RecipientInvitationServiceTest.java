@@ -25,11 +25,13 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -395,13 +397,16 @@ class RecipientInvitationServiceTest {
     // ── sent ────────────────────────────────────────────────────────────────
 
     @Test
-    void sent_neverRevealsDecline() {
+    void sent_listsOnlyPendingAndAccepted_notDeclined() {
         RecipientInvitationEntity declined = pendingFor(invitee.getId());
         declined.respond(InvitationStatus.DECLINED, null);
         RecipientInvitationEntity accepted = pendingFor(invitee.getId());
         accepted.respond(InvitationStatus.ACCEPTED, null);
+        RecipientInvitationEntity pending = pendingFor(invitee.getId());
+        // Le dépôt filtre sur les statuts demandés : seuls PENDING et ACCEPTED doivent être réclamés.
         when(repository.findByInviterUserIdAndStatusInOrderByCreatedAtDesc(eq(inviter.getId()), anyCollection()))
-                .thenReturn(List.of(declined, accepted));
+                .thenAnswer(inv -> Stream.of(declined, pending, accepted)
+                        .filter(i -> ((Collection<?>) inv.getArgument(1)).contains(i.getStatus())).toList());
 
         var sent = service.sent("uid-inviter");
 
@@ -710,6 +715,7 @@ class RecipientInvitationServiceTest {
         RecipientInvitationEntity invitation = usernameInvitation();
         when(repository.findById(invitation.getId())).thenReturn(Optional.of(invitation));
         // L'invité ne voit pas de blocage de son côté, mais l'inviteur n'a plus le droit de le suivre.
+        // Nécessaire : sans ce stub, Mockito strict rejette l'appel isHidden(invitee, inviter) de incomingInvitation.
         lenient().when(blockVisibility.isHidden(invitee.getId(), inviter.getId())).thenReturn(false);
         when(blockVisibility.isHidden(inviter.getId(), invitee.getId())).thenReturn(true);
 

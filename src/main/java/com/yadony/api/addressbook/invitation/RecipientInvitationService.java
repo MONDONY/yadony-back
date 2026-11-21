@@ -59,8 +59,10 @@ public class RecipientInvitationService {
 
     static final int DAILY_QUOTA = 20;
 
+    /** Ce que {@code sent()} liste, et ce qui lie les deux comptes : un refus en est absent. */
     private static final Set<InvitationStatus> LIVE =
             EnumSet.of(InvitationStatus.PENDING, InvitationStatus.ACCEPTED);
+    /** Ce que l'inviteur peut retirer (revoke) : un refus reste retirable même s'il n'est plus listé. */
     private static final Set<InvitationStatus> SENT_VISIBLE =
             EnumSet.of(InvitationStatus.PENDING, InvitationStatus.ACCEPTED, InvitationStatus.DECLINED);
 
@@ -185,7 +187,7 @@ public class RecipientInvitationService {
     }
 
     /**
-     * Invitations envoyées et non retirées ; une invitation non acceptée reste « PENDING ».
+     * Invitations envoyées en attente ou acceptées ; un refus n'y figure plus (l'inviteur en est prévenu par notification).
      * Pour le canal identifiant, le libellé est l'identifiant COURANT de l'invité (il peut en changer),
      * sauf si un blocage masque le compte : le libellé stocké est alors conservé.
      */
@@ -193,7 +195,7 @@ public class RecipientInvitationService {
     public List<SentInvitationDto> sent(String firebaseUid) {
         UserEntity inviter = currentUser(firebaseUid);
         List<RecipientInvitationEntity> invitations = repository
-                .findByInviterUserIdAndStatusInOrderByCreatedAtDesc(inviter.getId(), SENT_VISIBLE);
+                .findByInviterUserIdAndStatusInOrderByCreatedAtDesc(inviter.getId(), LIVE);
         Set<UUID> byUsernameIds = invitations.stream()
                 .filter(i -> i.getChannel() == InvitationChannel.USERNAME && i.getInviteeUserId() != null)
                 .map(RecipientInvitationEntity::getInviteeUserId)

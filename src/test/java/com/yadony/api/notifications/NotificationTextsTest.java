@@ -328,8 +328,9 @@ class NotificationTextsTest {
         map.put("recipientInvitationAccepted", NotificationTexts.recipientInvitationAccepted(m, NOM));
         map.put("recipientInvitationAccepted sans prénom", NotificationTexts.recipientInvitationAccepted(m, null));
         map.put("recipientInvitationRemoved", NotificationTexts.recipientInvitationRemoved(m, NOM));
-        map.put("recipientInvitationDeclined", NotificationTexts.recipientInvitationDeclined(m, "@awa.diallo"));
         map.put("recipientInvitationRemoved sans prénom", NotificationTexts.recipientInvitationRemoved(m, null));
+        // Pseudo de 20 caractères au maximum, préfixé de « @ ».
+        map.put("recipientInvitationDeclined", NotificationTexts.recipientInvitationDeclined(m, "@awa.diallo.longname1"));
         return map;
     }
 
