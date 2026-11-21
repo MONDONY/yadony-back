@@ -24,7 +24,7 @@ class DeclaredPhoneColumnsIT {
     @Autowired DeclaredPhoneHasher hasher;
 
     @Test
-    void findAllByDeclaredPhoneHash_returnsAccountsDeclaringTheNumber() {
+    void findTop10ByDeclaredPhoneHash_returnsAccountsDeclaringTheNumber() {
         String hash = hasher.hash("+2250707070707");
         UUID admin = UUID.randomUUID();
         LocalDateTime now = LocalDateTime.now().withNano(0);
@@ -40,7 +40,7 @@ class DeclaredPhoneColumnsIT {
         user.setDeclaredPhoneVerifiedBy(admin);
         userRepository.saveAndFlush(user);
 
-        List<UserEntity> found = userRepository.findAllByDeclaredPhoneHash(hash);
+        List<UserEntity> found = userRepository.findTop10ByDeclaredPhoneHash(hash);
 
         assertThat(found).hasSize(1);
         UserEntity u = found.get(0);
@@ -48,6 +48,6 @@ class DeclaredPhoneColumnsIT {
         assertThat(u.getDeclaredPhoneLevel()).isEqualTo(DeclaredPhoneLevel.YADONY_VERIFIED);
         assertThat(u.getDeclaredPhoneVerifiedAt()).isEqualTo(now);
         assertThat(u.getDeclaredPhoneVerifiedBy()).isEqualTo(admin);
-        assertThat(userRepository.findAllByDeclaredPhoneHash(hasher.hash("+2250101010101"))).isEmpty();
+        assertThat(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash("+2250101010101"))).isEmpty();
     }
 }

@@ -107,7 +107,7 @@ public class ReceptionLinker {
         // Seuls un numéro vérifié par SMS ou validé par Yadony rattachent un colis : numéro
         // simplement déclaré, ambigu ou inconnu, aucun rattachement.
         Optional<UserEntity> recipient = phoneLookup.findByPhone(e164.get()) instanceof PhoneMatch.Found found
-                && found.trust() != PhoneMatch.Trust.DECLARED
+                && (found.trust() == PhoneMatch.Trust.SMS || found.trust() == PhoneMatch.Trust.YADONY)
                 ? Optional.of(found.user())
                 : Optional.empty();
         if (recipient.isEmpty()) {

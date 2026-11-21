@@ -148,7 +148,7 @@ public class RecipientInvitationService {
      * déclaré, ambigu ou inconnu donne le même résultat vide : rien ne fuit, aucun compte n'est choisi.
      */
     private static Optional<String> uidOf(PhoneMatch match) {
-        return match instanceof PhoneMatch.Found found && found.trust() != PhoneMatch.Trust.DECLARED
+        return match instanceof PhoneMatch.Found found && (found.trust() == PhoneMatch.Trust.SMS || found.trust() == PhoneMatch.Trust.YADONY)
                 ? Optional.of(found.user().getFirebaseUid())
                 : Optional.empty();
     }

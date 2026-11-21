@@ -20,14 +20,19 @@ import java.util.Optional;
  * un colis ou résolvent un invité n'acceptent que SMS et YADONY. Un numéro revendiqué par
  * plusieurs comptes confirmés (déclarés ou validés) est {@link PhoneMatch.Ambiguous}.
  *
- * <p>Coût Firebase : une recherche de propriétaire, puis au plus une lecture groupée
- * ({@code getContacts}) des au plus {@value #MAX_CANDIDATES} candidats. Reste une différence de
- * durée entre « aucun candidat » (pas de lecture groupée) et « candidats » (une lecture) ; elle
- * ne change jamais l'issue visible des appelants pour un simple déclarant.
+ * <p>Coût Firebase, et ce qu'il laisse deviner : une recherche de propriétaire, puis, pour
+ * {@link #findByPhone}, UNE lecture groupée ({@code getContacts}) seulement si au moins un candidat
+ * est au niveau YADONY_VERIFIED (le seul cas où le claim peut changer l'issue d'un appelant). Un
+ * numéro simplement déclaré ou inconnu ne déclenche aucune lecture. Différence résiduelle : un compte
+ * validé par Yadony ajoute une lecture groupée (le cache Caffeine de 5 min de
+ * {@link FirebaseContactService} l'atténue sans l'effacer). {@link #findAllByPhone}, réservé à
+ * l'admin, lit toujours les candidats.
+ *
  */
 @Component
 public class PhoneLookupService {
 
+    /** Plafond de lignes lues ; couplé au nom de {@link UserRepository#findTop10ByDeclaredPhoneHash}. */
     static final int MAX_CANDIDATES = 10;
 
     private final FirebaseContactService firebaseContact;
@@ -58,17 +63,27 @@ public class PhoneLookupService {
                     .<PhoneMatch>map(u -> new PhoneMatch.Found(u, PhoneMatch.Trust.SMS))
                     .orElseGet(PhoneMatch.None::new);
         }
-        List<PhoneMatch.Found> declared = declaredCandidates(e164);
-        return switch (declared.size()) {
+        // Un simple déclarant n'a jamais d'effet sur les appelants : sans compte validé par Yadony,
+        // aucune lecture Firebase (voir la Javadoc de classe).
+        List<UserEntity> rows = candidateRows(e164);
+        if (rows.stream().noneMatch(u -> u.getDeclaredPhoneLevel() == DeclaredPhoneLevel.YADONY_VERIFIED)) {
+            return new PhoneMatch.None();
+        }
+        // Le compte validé par Yadony l'emporte sur les simples déclarants, comme le propriétaire SMS.
+        List<PhoneMatch.Found> yadony = confirm(rows, e164).stream()
+                .filter(f -> f.trust() == PhoneMatch.Trust.YADONY)
+                .toList();
+        return switch (yadony.size()) {
             case 0 -> new PhoneMatch.None();
-            case 1 -> declared.get(0);
+            case 1 -> yadony.get(0);
             default -> new PhoneMatch.Ambiguous();
         };
     }
 
     /**
      * Tous les comptes que ce numéro désigne, pour la recherche admin : le propriétaire vérifié
-     * par SMS ET les déclarants confirmés (le support doit pouvoir retrouver un squatteur).
+     * par SMS ET les déclarants confirmés (le support doit pouvoir retrouver un squatteur). Le plafond
+     * {@value #MAX_CANDIDATES} de lignes s'applique aussi ici.
      */
     public List<UserEntity> findAllByPhone(String e164) {
         if (e164 == null || e164.isBlank()) {
@@ -83,7 +98,8 @@ public class PhoneLookupService {
             Optional<UserEntity> ownerUser = userRepository.findByFirebaseUid(owner.uid());
             ownerUser.ifPresent(all::add);
         }
-        for (PhoneMatch.Found declared : declaredCandidates(e164)) {
+        List<UserEntity> rows = candidateRows(e164);
+        for (PhoneMatch.Found declared : rows.isEmpty() ? List.<PhoneMatch.Found>of() : confirm(rows, e164)) {
             if (all.stream().noneMatch(u -> u.getId() != null && u.getId().equals(declared.user().getId()))) {
                 all.add(declared.user());
             }
@@ -91,18 +107,19 @@ public class PhoneLookupService {
         return all;
     }
 
-    /** Comptes dont l'empreinte et le claim confirment ce numéro, en une seule lecture Firebase. */
-    private List<PhoneMatch.Found> declaredCandidates(String e164) {
+    /** Lignes en base portant l'empreinte du numéro, plafonnées et hors comptes supprimés ; aucun appel Firebase. */
+    private List<UserEntity> candidateRows(String e164) {
         if (!hasher.isConfigured()) {
             return List.of();
         }
-        List<UserEntity> rows = userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(e164)).stream()
+        return userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(e164)).stream()
                 .filter(u -> u.getDeletedAt() == null)
                 .limit(MAX_CANDIDATES)
                 .toList();
-        if (rows.isEmpty()) {
-            return List.of();
-        }
+    }
+
+    /** Garde les lignes que le claim Firebase confirme encore, en une seule lecture groupée. */
+    private List<PhoneMatch.Found> confirm(List<UserEntity> rows, String e164) {
         Map<String, FirebaseContactService.Contact> contacts = firebaseContact.getContacts(
                 rows.stream().map(UserEntity::getFirebaseUid).toList());
         List<PhoneMatch.Found> confirmed = new ArrayList<>();

@@ -89,16 +89,6 @@ class PhoneLookupServiceTest {
     }
 
     @Test
-    void findByPhone_oneDeclaredAccount_foundWithDeclaredTrust() {
-        UserEntity u = declaredUser("uid-d1");
-        ownerNotFound();
-        candidates(u);
-        claims(Map.of("uid-d1", PHONE));
-
-        assertThat(service.findByPhone(PHONE)).isEqualTo(new PhoneMatch.Found(u, PhoneMatch.Trust.DECLARED));
-    }
-
-    @Test
     void findByPhone_yadonyVerifiedAccount_foundWithYadonyTrust() {
         UserEntity u = yadonyVerified("uid-y");
         ownerNotFound();
@@ -109,25 +99,76 @@ class PhoneLookupServiceTest {
     }
 
     @Test
-    void findByPhone_twoDeclaredAccounts_ambiguous() {
+    void findByPhone_onlyDeclaredCandidates_noneAndNoFirebaseRead() {
         UserEntity a = declaredUser("uid-a");
         UserEntity b = declaredUser("uid-b");
         ownerNotFound();
         candidates(a, b);
-        claims(Map.of("uid-a", PHONE, "uid-b", PHONE));
 
-        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.Ambiguous.class);
+        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
+        verify(firebaseContact, never()).getContacts(any());
     }
 
     @Test
-    void findByPhone_yadonyPlusDeclaredSquatter_ambiguous() {
+    void findByPhone_yadonyBeatsDeclaredSquatter_foundYadony() {
         UserEntity y = yadonyVerified("uid-y");
         UserEntity d = declaredUser("uid-d");
         ownerNotFound();
         candidates(y, d);
         claims(Map.of("uid-y", PHONE, "uid-d", PHONE));
 
+        assertThat(service.findByPhone(PHONE)).isEqualTo(new PhoneMatch.Found(y, PhoneMatch.Trust.YADONY));
+    }
+
+    @Test
+    void findByPhone_twoYadonyAccounts_ambiguous() {
+        UserEntity y1 = yadonyVerified("uid-y1");
+        UserEntity y2 = yadonyVerified("uid-y2");
+        ownerNotFound();
+        candidates(y1, y2);
+        claims(Map.of("uid-y1", PHONE, "uid-y2", PHONE));
+
         assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.Ambiguous.class);
+    }
+
+    @Test
+    void findByPhone_yadonyRowWithStaleClaim_noneAndSingleBatchedRead() {
+        UserEntity y = yadonyVerified("uid-y");
+        UserEntity d = declaredUser("uid-d");
+        ownerNotFound();
+        candidates(y, d);
+        claims(Map.of("uid-y", "+224629999999", "uid-d", PHONE));
+
+        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
+        verify(firebaseContact, times(1)).getContacts(any());
+        verify(firebaseContact, never()).getContact(anyString());
+    }
+
+    @Test
+    void findByPhone_yadonyRowWithSmsNumber_dropped() {
+        UserEntity y = yadonyVerified("uid-y");
+        ownerNotFound();
+        candidates(y);
+        when(firebaseContact.getContacts(any())).thenReturn(
+                Map.of("uid-y", new FirebaseContactService.Contact("+33612345678", null, PHONE)));
+
+        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
+    }
+
+    @Test
+    void findAllByPhone_staleAndSmsNumberCandidates_dropped_validKept() {
+        UserEntity stale = declaredUser("uid-stale");
+        UserEntity sms = declaredUser("uid-sms2");
+        UserEntity ok = declaredUser("uid-ok");
+        ownerNotFound();
+        candidates(stale, sms, ok);
+        when(firebaseContact.getContacts(any())).thenReturn(Map.of(
+                "uid-stale", new FirebaseContactService.Contact(null, null, "+224629999999"),
+                "uid-sms2", new FirebaseContactService.Contact("+33612345678", null, PHONE),
+                "uid-ok", new FirebaseContactService.Contact(null, null, PHONE)));
+
+        assertThat(service.findAllByPhone(PHONE)).containsExactly(ok);
+        verify(firebaseContact, times(1)).getContacts(any());
     }
 
     @Test
@@ -180,53 +221,6 @@ class PhoneLookupServiceTest {
 
         assertThat(s.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
         verify(userRepository, never()).findTop10ByDeclaredPhoneHash(any());
-    }
-
-    @Test
-    void findByPhone_staleHashClaimDiffers_dropped() {
-        UserEntity stale = declaredUser("uid-stale");
-        ownerNotFound();
-        candidates(stale);
-        claims(Map.of("uid-stale", "+224629999999"));
-
-        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
-    }
-
-    @Test
-    void findByPhone_candidateWithSmsNumber_dropped() {
-        UserEntity verified = declaredUser("uid-v");
-        ownerNotFound();
-        candidates(verified);
-        when(firebaseContact.getContacts(any())).thenReturn(
-                Map.of("uid-v", new FirebaseContactService.Contact("+33612345678", null, PHONE)));
-
-        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
-    }
-
-    @Test
-    void findByPhone_oneStaleOneValid_found() {
-        UserEntity stale = declaredUser("uid-stale");
-        UserEntity ok = declaredUser("uid-ok");
-        ownerNotFound();
-        candidates(stale, ok);
-        claims(Map.of("uid-ok", PHONE));
-
-        assertThat(service.findByPhone(PHONE)).isEqualTo(new PhoneMatch.Found(ok, PhoneMatch.Trust.DECLARED));
-    }
-
-    @Test
-    void findByPhone_manyCandidates_singleBatchedFirebaseRead() {
-        UserEntity a = declaredUser("uid-a");
-        UserEntity b = declaredUser("uid-b");
-        UserEntity c = declaredUser("uid-c");
-        ownerNotFound();
-        candidates(a, b, c);
-        claims(Map.of("uid-a", PHONE, "uid-b", PHONE, "uid-c", PHONE));
-
-        service.findByPhone(PHONE);
-
-        verify(firebaseContact, times(1)).getContacts(any());
-        verify(firebaseContact, never()).getContact(anyString());
     }
 
     @Test

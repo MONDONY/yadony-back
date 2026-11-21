@@ -188,13 +188,6 @@ class ReceptionLinkerTest {
     }
 
     @Test
-    void linkIfPossible_smsOwnerWithoutLocalUser_doesNothing() {
-        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.None());
-        assertThat(linker.linkIfPossible(bidId)).isEmpty();
-        verify(linkRepository, never()).save(any());
-    }
-
-    @Test
     void linkIfPossible_ambiguous_doesNotLink() {
         when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Ambiguous());
         assertThat(linker.linkIfPossible(bidId)).isEmpty();

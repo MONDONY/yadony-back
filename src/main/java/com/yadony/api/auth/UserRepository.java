@@ -36,10 +36,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query("select u.preferredLanguage from UserEntity u where u.id = :id")
     Optional<String> findPreferredLanguageById(@Param("id") UUID id);
 
-    /** Comptes ayant déclaré (sans SMS) le numéro dont voici l'empreinte, voir {@link DeclaredPhoneHasher}. */
-    List<UserEntity> findAllByDeclaredPhoneHash(String declaredPhoneHash);
-
-    /** Variante plafonnée de la recherche par numéro : au-delà de quelques comptes, le numéro est de toute façon ambigu. */
+    /** Comptes portant l'empreinte d'un numéro déclaré, plafonnés à 10 (voir {@code PhoneLookupService.MAX_CANDIDATES}) : au-delà de quelques comptes, le numéro est de toute façon ambigu. */
     List<UserEntity> findTop10ByDeclaredPhoneHash(String declaredPhoneHash);
 
     /** Comptes dont la colonne héritée {@code fcm_token} porte encore ce jeton (au plus un attendu). */
