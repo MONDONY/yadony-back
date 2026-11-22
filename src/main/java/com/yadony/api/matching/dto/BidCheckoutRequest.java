@@ -40,15 +40,28 @@ public record BidCheckoutRequest(
         // serveur, jamais envoyé), ignorées ailleurs. Aucun montant : le serveur recalcule le prix.
         @Min(1) @Max(400) Integer lengthCm,
         @Min(1) @Max(400) Integer widthCm,
-        @Min(1) @Max(400) Integer heightCm
+        @Min(1) @Max(400) Integer heightCm,
+        // Identifiant d'un compte Yadony destinataire : exclusif avec recipientName / recipientPhone (service).
+        @Size(max = 64) String recipientUsername
 ) {
+    /** Constructeur sans identifiant destinataire (forme d'avant la désignation par identifiant). */
+    public BidCheckoutRequest(UUID announcementId, BigDecimal weightKg,
+                              String description, String contentCategory, String recipientName,
+                              String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
+                              List<BidGridItemRequest> gridItems, Boolean savePaymentMethod, String itemSize,
+                              Integer lengthCm, Integer widthCm, Integer heightCm) {
+        this(announcementId, weightKg, description, contentCategory, recipientName, recipientPhone,
+                disclaimerSigned, photoKeys, gridItems, savePaymentMethod, itemSize, lengthCm, widthCm, heightCm,
+                null);
+    }
+
     /** Constructeur sans dimensions (forme d'avant le bateau au m³). */
     public BidCheckoutRequest(UUID announcementId, BigDecimal weightKg,
                               String description, String contentCategory, String recipientName,
                               String recipientPhone, Boolean disclaimerSigned, List<String> photoKeys,
                               List<BidGridItemRequest> gridItems, Boolean savePaymentMethod, String itemSize) {
         this(announcementId, weightKg, description, contentCategory, recipientName, recipientPhone,
-                disclaimerSigned, photoKeys, gridItems, savePaymentMethod, itemSize, null, null, null);
+                disclaimerSigned, photoKeys, gridItems, savePaymentMethod, itemSize, null, null, null, null);
     }
 
     /** Constructeur sans taille (forme d'avant le contrôle de taille). */

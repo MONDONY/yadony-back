@@ -33,10 +33,9 @@ public record BidNegotiationStartRequest(
         @Size(max = 500, message = "{validation.bid.category.max}")
         String contentCategory,
 
-        @NotBlank(message = "{validation.bid.recipient-name.required}")
+        // Nom + numéro, ou recipientUsername : la règle est vérifiée par le service (BidRecipientDesignation).
         String recipientName,
 
-        @NotBlank(message = "{validation.bid.recipient-phone.required}")
         String recipientPhone,
 
         @NotNull(message = "{validation.bid.disclaimer.accepted}")
@@ -69,8 +68,24 @@ public record BidNegotiationStartRequest(
         /** Dimensions du colis (cm), obligatoires sur un trajet bateau vendu au m³ (mêmes noms que l'offre). */
         @Min(1) @Max(400) Integer lengthCm,
         @Min(1) @Max(400) Integer widthCm,
-        @Min(1) @Max(400) Integer heightCm
+        @Min(1) @Max(400) Integer heightCm,
+
+        /** Identifiant d'un compte Yadony destinataire : exclusif avec recipientName / recipientPhone. */
+        @Size(max = 64) String recipientUsername
 ) {
+    /** Constructeur de compatibilité (sans identifiant destinataire). */
+    public BidNegotiationStartRequest(BigDecimal weightKg, String description, String contentCategory,
+                                      String recipientName, String recipientPhone, Boolean disclaimerSigned,
+                                      String paymentMethod, String phoneNumber, String countryCode,
+                                      List<String> photoKeys, BigDecimal proposedTotalEur,
+                                      List<BidCustomItemRequest> customItems,
+                                      List<BidGridItemRequest> gridItems, String itemSize,
+                                      Integer lengthCm, Integer widthCm, Integer heightCm) {
+        this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
+                paymentMethod, phoneNumber, countryCode, photoKeys, proposedTotalEur, customItems,
+                gridItems, itemSize, lengthCm, widthCm, heightCm, null);
+    }
+
     /** Constructeur de compatibilité (sans dimensions) : la forme d'avant le bateau au m³. */
     public BidNegotiationStartRequest(BigDecimal weightKg, String description, String contentCategory,
                                       String recipientName, String recipientPhone, Boolean disclaimerSigned,
@@ -80,7 +95,7 @@ public record BidNegotiationStartRequest(
                                       List<BidGridItemRequest> gridItems, String itemSize) {
         this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
                 paymentMethod, phoneNumber, countryCode, photoKeys, proposedTotalEur, customItems,
-                gridItems, itemSize, null, null, null);
+                gridItems, itemSize, null, null, null, null);
     }
 
     /** Constructeur de compatibilité (sans taille) : la forme d'avant le contrôle de taille. */

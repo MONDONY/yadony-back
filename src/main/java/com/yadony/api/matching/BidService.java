@@ -157,6 +157,8 @@ public class BidService {
     @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
     private int contactGraceDays = 3;
 
+    private final BidRecipientDesignation recipientDesignation;
+
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
                       ApplicationEventPublisher eventPublisher, RatingRepository ratingRepository,
@@ -177,7 +179,9 @@ public class BidService {
                       com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository,
                       CommissionGridService commissionGridService,
                       com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery,
-                      PayoutTriggerPolicy payoutTriggerPolicy) {
+                      PayoutTriggerPolicy payoutTriggerPolicy,
+                      BidRecipientDesignation recipientDesignation) {
+        this.recipientDesignation = recipientDesignation;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -401,8 +405,10 @@ public class BidService {
         bid.setPricingMode(bidMode);
         bid.setDescription(request.description());
         bid.setContentCategory(normalizedContentCategory);
-        bid.setRecipientName(request.recipientName());
-        bid.setRecipientPhone(request.recipientPhone());
+        recipientDesignation.requireRecipient(request.recipientName(), request.recipientPhone(),
+                request.recipientUsername());
+        recipientDesignation.apply(bid, sender.getId(), announcement.getTravelerId(),
+                request.recipientName(), request.recipientPhone(), request.recipientUsername());
         bid.setDisclaimerSignedAt(LocalDateTime.now(ZoneOffset.UTC));
         bid.setDisclaimerSignedIp(clientIp);
         bid.setPaymentMethod(pm);
@@ -421,6 +427,7 @@ public class BidService {
         }
 
         BidEntity saved = bidRepository.save(bid);
+        recipientDesignation.audit(saved, sender.getId());
 
         auditService.log("BID", saved.getId(), "BID_CREATED", sender.getId(),
                 Map.<String, Object>of(
@@ -1584,6 +1591,8 @@ public class BidService {
         java.util.Set<UUID> userIds = new java.util.HashSet<>();
         announcements.forEach(a -> userIds.add(a.getTravelerId()));
         links.values().forEach(l -> userIds.add(l.getRecipientUserId()));
+        // Comptes désignés par identifiant (identifiant actuel servi à l'expéditeur), lien ou non.
+        bids.forEach(b -> userIds.add(b.getRecipientUserId()));
         userIds.remove(null);
         BidResponsePrefetch.loadInChunks(userIds, userRepository::findAllById);
 
@@ -1972,8 +1981,25 @@ public class BidService {
                 announcement != null ? announcement.getArrivalDateMax() : null,
                 (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name(),
                 bid.getVolumeM3(),
-                depositedAt(bid, prefetch)
+                depositedAt(bid, prefetch),
+                callerIsSender && bid.getRecipientUserId() != null,
+                designatedUsername(bid, recipientLink, callerIsSender)
         );
+    }
+
+    /**
+     * Identifiant actuel du compte désigné par identifiant, pour l'expéditeur seulement et tant que le destinataire
+     * n'a pas confirmé. Lu dans le contexte de persistance (les comptes désignés sont préchargés par
+     * {@link #prefetchFor}), jamais pour le voyageur.
+     */
+    private String designatedUsername(BidEntity bid,
+                                      com.yadony.api.matching.reception.BidRecipientLinkEntity link,
+                                      boolean callerIsSender) {
+        if (!callerIsSender || bid.getRecipientUserId() == null
+                || (link != null && link.getStatus() == com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)) {
+            return null;
+        }
+        return userRepository.findById(bid.getRecipientUserId()).map(UserEntity::getUsername).orElse(null);
     }
 
     /**

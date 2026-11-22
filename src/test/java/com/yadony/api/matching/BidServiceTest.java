@@ -77,6 +77,9 @@ class BidServiceTest {
     @Mock private PayoutTriggerPolicy payoutTriggerPolicy;
     @Mock private HttpServletRequest httpRequest;
 
+    private final com.yadony.api.common.RecipientAccountResolver recipientResolver =
+            mock(com.yadony.api.common.RecipientAccountResolver.class);
+
     @InjectMocks private BidService bidService;
 
     private static final String SENDER_UID = "uid-sender-001";
@@ -168,6 +171,13 @@ class BidServiceTest {
         prefs.setUserId(SENDER_ID);
         prefs.setCurrencyCode(code);
         return prefs;
+    }
+
+    @BeforeEach
+    void wireRecipientDesignation() {
+        // Vraie désignation (nom + numéro, ou identifiant) branchée sur les mocks du test.
+        org.springframework.test.util.ReflectionTestUtils.setField(bidService, "recipientDesignation",
+                new BidRecipientDesignation(recipientResolver, auditService));
     }
 
     @BeforeEach
@@ -4317,6 +4327,99 @@ class BidServiceTest {
             assertThat(bidService.toResponse(bid, sender, SENDER_ID).travelerTracking()).isNull();
         }
 
+        private UserEntity designatedAccount(String username) {
+            UserEntity u = new UserEntity();
+            u.setUsername(username);
+            UUID id = UUID.randomUUID();
+            setId(u, id);
+            lenient().when(userRepository.findById(id)).thenReturn(Optional.of(u));
+            return u;
+        }
+
+        private BidEntity designatedBid(UserEntity account) {
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setRecipientUserId(account.getId());
+            bid.setRecipientName("@" + account.getUsername());
+            bid.setRecipientPhone(null);
+            return bid;
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, vue expéditeur, lien absent : drapeau et identifiant actuel")
+        void designatedByUsername_senderView_noLink_exposesUsername() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+
+            BidResponse resp = bidService.toResponse(bid, buildSender(), SENDER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isTrue();
+            assertThat(resp.recipientUsername()).isEqualTo("awa.diallo");
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant : l'identifiant servi est l'actuel du compte, pas celui du libellé")
+        void designatedByUsername_servesCurrentUsername() {
+            UserEntity account = designatedAccount("awa.nouveau");
+            BidEntity bid = designatedBid(account);
+            bid.setRecipientName("@awa.ancien");
+
+            assertThat(bidService.toResponse(bid, buildSender(), SENDER_ID).recipientUsername())
+                    .isEqualTo("awa.nouveau");
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, lien PENDING ou DECLINED : identifiant servi")
+        void designatedByUsername_pendingOrDeclined_exposesUsername() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.PENDING)));
+            assertThat(bidService.toResponse(bid, buildSender(), SENDER_ID).recipientUsername())
+                    .isEqualTo("awa.diallo");
+
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.DECLINED)));
+            BidResponse declined = bidService.toResponse(bid, buildSender(), SENDER_ID);
+            assertThat(declined.recipientUsername()).isEqualTo("awa.diallo");
+            assertThat(declined.recipientDesignatedByUsername()).isTrue();
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, lien CONFIRMED : drapeau vrai, identifiant nul")
+        void designatedByUsername_confirmed_noUsername() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)));
+
+            BidResponse resp = bidService.toResponse(bid, buildSender(), SENDER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isTrue();
+            assertThat(resp.recipientUsername()).isNull();
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, vue voyageur : jamais de drapeau ni d'identifiant")
+        void designatedByUsername_travelerView_neverExposed() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+
+            BidResponse resp = bidService.toResponse(bid, buildSender(), TRAVELER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isFalse();
+            assertThat(resp.recipientUsername()).isNull();
+        }
+
+        @Test
+        @DisplayName("colis par numéro : drapeau faux, identifiant nul")
+        void byNumber_notDesignated() {
+            BidResponse resp = bidService.toResponse(buildBid(), buildSender(), SENDER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isFalse();
+            assertThat(resp.recipientUsername()).isNull();
+        }
+
         @Test
         @DisplayName("destinataire DECLINED, vue expéditeur → tout reste visible")
         void toResponse_declinedRecipient_senderView_seesEverything() {
@@ -4942,6 +5045,132 @@ class BidServiceTest {
 
             assertThat(sender.getRefusedCount()).isEqualTo(2);
             verify(userRepository).save(sender);
+        }
+    }
+
+    // ─── Destinataire désigné par identifiant (POST /announcements/{id}/bids) ───
+
+    @Nested
+    @DisplayName("createBid : destinataire par identifiant")
+    class RecipientByUsername {
+
+        private final UUID accountId = UUID.randomUUID();
+
+        @BeforeEach
+        void setupHttpRequest() {
+            lenient().when(httpRequest.getHeader("X-Forwarded-For")).thenReturn(null);
+            lenient().when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+        }
+
+        private void stubCommon(UserEntity sender, AnnouncementEntity a, UserEntity traveler) {
+            lenient().when(pawapayProperties.enabled()).thenReturn(true);
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findById(a.getId())).thenReturn(Optional.of(a));
+            if (traveler != null) {
+                when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            }
+            lenient().when(bidRepository.existsBySenderIdAndAnnouncementIdAndStatusIn(any(), any(), any()))
+                    .thenReturn(false);
+            lenient().when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> {
+                BidEntity b = inv.getArgument(0);
+                setId(b, BID_ID);
+                return b;
+            });
+        }
+
+        private AnnouncementEntity cashAnnouncement() {
+            AnnouncementEntity a = buildAnnouncement();
+            a.setAcceptedPaymentMethods(java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.STRIPE,
+                    com.yadony.api.payments.cash.PaymentMethod.CASH));
+            return a;
+        }
+
+        private BidRequest request(String method, String name, String phone, String username) {
+            return new BidRequest(BigDecimal.valueOf(5), "Vêtements", "CLOTHING", name, phone, true, method,
+                    "MOBILE_MONEY".equals(method) ? "+221771234567" : null,
+                    "MOBILE_MONEY".equals(method) ? "SN" : null, null, null, null, null, null, null, null, username);
+        }
+
+        @Test
+        @DisplayName("espèces + identifiant : compte désigné, @identifiant, numéro nul, audit sans numéro")
+        void cash_byUsername_designatesAccount() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity a = cashAnnouncement();
+            stubCommon(sender, a, null);
+            when(recipientResolver.resolve(SENDER_ID, "awa.diallo"))
+                    .thenReturn(new com.yadony.api.common.RecipientAccount(accountId, "awa.diallo"));
+
+            BidResponse r = bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    request("CASH", null, null, "awa.diallo"), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            BidEntity bid = captor.getValue();
+            assertThat(bid.getRecipientUserId()).isEqualTo(accountId);
+            assertThat(bid.getRecipientName()).isEqualTo("@awa.diallo");
+            assertThat(bid.getRecipientPhone()).isNull();
+            verify(auditService).log(eq("BID"), eq(BID_ID), eq("RECIPIENT_DESIGNATED_BY_USERNAME"),
+                    eq(SENDER_ID), argThat(m -> !m.toString().contains("+221")));
+            assertThat(r).isNotNull();
+        }
+
+        @Test
+        @DisplayName("mobile money + identifiant : compte désigné, numéro nul")
+        void mobileMoney_byUsername_designatesAccount() {
+            UserEntity sender = buildSender();
+            sender.setKycStatus(com.yadony.api.auth.KycStatus.VERIFIED);
+            UserEntity traveler = buildTraveler();
+            traveler.setMobileMoneyStatus(com.yadony.api.auth.MobileMoneyPayoutStatus.ACTIVE);
+            traveler.setMobileMoneyCurrency("XOF");
+            traveler.setMobileMoneyCurrencyList(java.util.List.of("XOF"));
+            AnnouncementEntity a = buildAnnouncement();
+            a.setTravelerId(traveler.getId());
+            a.setAcceptedPaymentMethods(java.util.EnumSet.of(com.yadony.api.payments.cash.PaymentMethod.CASH));
+            a.setCurrency("XOF");
+            stubCommon(sender, a, traveler);
+            when(recipientResolver.resolve(SENDER_ID, "awa.diallo"))
+                    .thenReturn(new com.yadony.api.common.RecipientAccount(accountId, "awa.diallo"));
+
+            bidService.createBid(a.getId(), SENDER_UID, request("MOBILE_MONEY", null, null, "awa.diallo"), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository, atLeastOnce()).save(captor.capture());
+            BidEntity bid = captor.getValue();
+            assertThat(bid.getRecipientUserId()).isEqualTo(accountId);
+            assertThat(bid.getRecipientPhone()).isNull();
+            assertThat(bid.getPaymentMethod()).isEqualTo(com.yadony.api.payments.cash.PaymentMethod.MOBILE_MONEY);
+        }
+
+        @Test
+        @DisplayName("aucun destinataire : 422 recipient-required, rien d'enregistré")
+        void noRecipient_422() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity a = cashAnnouncement();
+            stubCommon(sender, a, null);
+
+            assertThatThrownBy(() -> bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    request("CASH", null, null, null), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("recipient-required"));
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("nom + numéro seuls (non-régression) : colis par numéro, aucun compte désigné, pas d'audit")
+        void nameAndPhone_nonRegression() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity a = cashAnnouncement();
+            stubCommon(sender, a, null);
+
+            bidService.createBid(ANNOUNCEMENT_ID, SENDER_UID,
+                    request("CASH", "Aminata Diallo", "+221701234567", null), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getRecipientUserId()).isNull();
+            assertThat(captor.getValue().getRecipientName()).isEqualTo("Aminata Diallo");
+            assertThat(captor.getValue().getRecipientPhone()).isEqualTo("+221701234567");
+            verify(auditService, never()).log(any(), any(), eq("RECIPIENT_DESIGNATED_BY_USERNAME"), any(), any());
         }
     }
 }
