@@ -30,6 +30,8 @@ public interface CancellationFeeQuotePort {
      *                     montant, ni legacy ni déjà partiellement remboursé) ; faux : remboursé en entier quoi qu'il arrive
      * @param grossFee     brut retenu au taux donné, 0 si {@code retainable} est faux
      * @param refundAmount rendu à l'expéditeur : {@code paid - grossFee}
+     * @param capped       le plafond du barème a limité {@code grossFee} (calcul du règlement) ; faux sans retenue
      */
-    record Quote(BigDecimal paid, String currency, boolean retainable, BigDecimal grossFee, BigDecimal refundAmount) {}
+    record Quote(BigDecimal paid, String currency, boolean retainable, BigDecimal grossFee, BigDecimal refundAmount,
+                 boolean capped) {}
 }

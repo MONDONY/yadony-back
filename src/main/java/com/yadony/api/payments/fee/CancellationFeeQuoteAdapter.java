@@ -45,7 +45,7 @@ public class CancellationFeeQuoteAdapter implements CancellationFeeQuotePort {
                     CancellationFeeSettlement.Preview preview =
                             settlement.preview(payment, rate, completedDepositAmount(payment));
                     return new Quote(payment.getAmount(), payment.getCurrency(), preview.retainable(),
-                            preview.grossFee(), preview.senderRefund());
+                            preview.grossFee(), preview.senderRefund(), preview.capped());
                 });
     }
 

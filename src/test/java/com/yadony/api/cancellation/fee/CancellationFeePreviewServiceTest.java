@@ -98,7 +98,7 @@ class CancellationFeePreviewServiceTest {
             BigDecimal gross = new BigDecimal("100.00").multiply(rate).min(new BigDecimal("30"))
                     .setScale(2, java.math.RoundingMode.HALF_UP);
             return Optional.of(new CancellationFeeQuotePort.Quote(new BigDecimal("100.00"), "EUR", true, gross,
-                    new BigDecimal("100.00").subtract(gross)));
+                    new BigDecimal("100.00").subtract(gross), false));
         });
     }
 
@@ -189,7 +189,7 @@ class CancellationFeePreviewServiceTest {
     @Test
     void paymentThatCannotCarryAFee_noFee_noNextTier() {
         when(quotes.quote(eq(BID_ID), any())).thenReturn(Optional.of(new CancellationFeeQuotePort.Quote(
-                new BigDecimal("100.00"), "EUR", false, BigDecimal.ZERO, new BigDecimal("100.00"))));
+                new BigDecimal("100.00"), "EUR", false, BigDecimal.ZERO, new BigDecimal("100.00"), false)));
 
         assertNoFee(service(enabled()).preview(SENDER_UID, BID_ID), "100.00");
     }
@@ -206,9 +206,25 @@ class CancellationFeePreviewServiceTest {
     }
 
     @Test
+    void capped_relayedFromTheQuote_onlyWhenAFeeApplies() {
+        when(quotes.quote(eq(BID_ID), any())).thenReturn(Optional.of(new CancellationFeeQuotePort.Quote(
+                new BigDecimal("200.00"), "EUR", true, new BigDecimal("30.00"), new BigDecimal("170.00"), true)));
+        assertThat(service(enabled()).preview(SENDER_UID, BID_ID).capped()).isTrue();
+
+        when(quotes.quote(eq(BID_ID), any())).thenReturn(Optional.of(new CancellationFeeQuotePort.Quote(
+                new BigDecimal("100.00"), "EUR", true, new BigDecimal("20.00"), new BigDecimal("80.00"), false)));
+        assertThat(service(enabled()).preview(SENDER_UID, BID_ID).capped()).isFalse();
+
+        // Pas retenable : même si le port disait vrai, aucun frais ne s'applique.
+        when(quotes.quote(eq(BID_ID), any())).thenReturn(Optional.of(new CancellationFeeQuotePort.Quote(
+                new BigDecimal("200.00"), "EUR", false, BigDecimal.ZERO, new BigDecimal("200.00"), true)));
+        assertThat(service(enabled()).preview(SENDER_UID, BID_ID).capped()).isFalse();
+    }
+
+    @Test
     void currencyIsThatOfThePayment() {
         when(quotes.quote(eq(BID_ID), any())).thenReturn(Optional.of(new CancellationFeeQuotePort.Quote(
-                new BigDecimal("65600"), "XOF", true, new BigDecimal("13120"), new BigDecimal("52480"))));
+                new BigDecimal("65600"), "XOF", true, new BigDecimal("13120"), new BigDecimal("52480"), false)));
 
         CancellationFeePreviewResponse preview = service(enabled()).preview(SENDER_UID, BID_ID);
 

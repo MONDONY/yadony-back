@@ -14,6 +14,8 @@ import java.time.Instant;
  * @param refundAmount montant rendu à l'expéditeur (payé moins frais) ; 0 si rien n'a été payé en ligne (espèces)
  * @param nextTierAt   instant de la prochaine hausse du taux : le taux affiché vaut jusqu'à cet instant inclus ; nul au
  *                     palier le plus cher ou quand aucun frais ne peut s'appliquer
+ * @param capped       vrai quand le plafond du barème (30 €, converti dans la devise) a limité {@code fee} ; toujours
+ *                     présent, faux quand aucun frais ne s'applique
  */
 public record CancellationFeePreviewResponse(BigDecimal rate, BigDecimal fee, String currency, BigDecimal refundAmount,
-                                             Instant nextTierAt) {}
+                                             Instant nextTierAt, boolean capped) {}

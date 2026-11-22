@@ -77,7 +77,7 @@ public class CancellationFeePreviewService {
         if (quote.isEmpty()) {
             // Rien de payé en ligne ni de remboursable (espèces, pas encore payé) : rien à retenir, rien à rendre.
             return new CancellationFeePreviewResponse(BigDecimal.ZERO, BigDecimal.ZERO, bid.getCurrency(),
-                    BigDecimal.ZERO, null);
+                    BigDecimal.ZERO, null, false);
         }
         boolean feeApplies = assessed.isPresent() && quote.get().retainable();
         return new CancellationFeePreviewResponse(
@@ -85,6 +85,7 @@ public class CancellationFeePreviewService {
                 quote.get().grossFee(),
                 quote.get().currency(),
                 quote.get().refundAmount(),
-                feeApplies ? assessed.get().nextIncreaseAt() : null);
+                feeApplies ? assessed.get().nextIncreaseAt() : null,
+                feeApplies && quote.get().capped());
     }
 }
