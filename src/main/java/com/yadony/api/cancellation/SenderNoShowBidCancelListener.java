@@ -1,6 +1,8 @@
 package com.yadony.api.cancellation;
 
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
+import com.yadony.api.cancellation.fee.CancellationFeeReason;
+import com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder;
 import com.yadony.api.matching.BidEntity;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidStatus;
@@ -17,6 +19,9 @@ import org.springframework.stereotype.Component;
  * remboursement effectif reste, lui, en AFTER_COMMIT côté paiements
  * ({@code SenderNoShowConfirmedListener} / {@code CommissionRefundListener}).
  *
+ * <p>Au même instant, la retenue d'annulation due par l'expéditeur absent est enregistrée
+ * ({@link SenderCancellationFeeRecorder}, sans effet en espèces ou loin du départ).
+ *
  * <p>Idempotent : no-op si le bid n'est plus {@code ACCEPTED} (déjà traité).
  * Ne réagit qu'au motif {@link CancellationReason#SENDER_NO_SHOW} — les
  * annulations après remise gèrent leur propre transition de statut.
@@ -25,9 +30,11 @@ import org.springframework.stereotype.Component;
 public class SenderNoShowBidCancelListener {
 
     private final BidRepository bidRepository;
+    private final SenderCancellationFeeRecorder feeRecorder;
 
-    public SenderNoShowBidCancelListener(BidRepository bidRepository) {
+    public SenderNoShowBidCancelListener(BidRepository bidRepository, SenderCancellationFeeRecorder feeRecorder) {
         this.bidRepository = bidRepository;
+        this.feeRecorder = feeRecorder;
     }
 
     @EventListener
@@ -43,6 +50,10 @@ public class SenderNoShowBidCancelListener {
                 // (ContactWindow, messaging/), sans que ces paquets lisent l'annulation.
                 bid.setRejectionReason(BidEntity.REJECTION_SENDER_NO_SHOW);
                 bidRepository.save(bid);
+                // Retenue due par l'expéditeur absent, écrite ici, avant le commit : le remboursement
+                // (SenderNoShowConfirmedListener, AFTER_COMMIT asynchrone) doit la trouver. Liée au passage
+                // du colis en annulé : une déclaration rejetée ou en attente n'en crée jamais.
+                feeRecorder.record(event.bidId(), CancellationFeeReason.SENDER_NO_SHOW);
             }
         });
     }

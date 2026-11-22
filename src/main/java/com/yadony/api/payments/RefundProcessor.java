@@ -3,6 +3,10 @@ package com.yadony.api.payments;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.payments.currency.CurrencyAmount;
+import com.yadony.api.payments.currency.SupportedCurrency;
+import com.yadony.api.payments.fee.CancellationFeeBreakdown;
+import com.yadony.api.payments.fee.CancellationFeeSettlement;
 import com.yadony.api.payments.pawapay.PawapayOperationEntity;
 import com.yadony.api.payments.pawapay.PawapayOperationKind;
 import com.yadony.api.payments.pawapay.PawapayOperationService;
@@ -14,15 +18,21 @@ import com.stripe.model.Refund;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.PaymentIntentCancelParams;
 import com.stripe.param.RefundCreateParams;
+import jakarta.persistence.PersistenceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.NoTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -39,8 +49,15 @@ import java.util.UUID;
  *       (requires_capture — cas normal chez Yadony, capture à la livraison seulement), ou
  *       {@code Refund.create} (clé d'idempotence {@code "refund-" + paymentId}) si déjà capturé
  *       (succeeded) ; un PI déjà {@code canceled} est un no-op idempotent ;</li>
+ *   <li>retenue d'annulation due par l'expéditeur fautif ({@link CancellationFeeSettlement}) : sur un
+ *       PI capturé, {@code Refund.create} du seul montant payé moins le dédommagement du voyageur (même
+ *       clé), puis retenue réglée et {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent} ;
+ *       partout ailleurs, remboursement intégral inchangé et retenue close {@code NOT_APPLICABLE}. Un
+ *       calcul de retenue qui échoue ne bloque jamais l'expéditeur : remboursement intégral, alerte
+ *       {@code FEE_COMPUTE_FAILED_<paymentId>}, retenue close. Sauf un échec de la BASE pendant ce règlement
+ *       ({@link #mustPropagate}) : il remonte avant tout appel au prestataire, le claim est défait ;</li>
  *   <li>échec Stripe → alerte admin + exception : la transaction REQUIRES_NEW rollback le claim,
- *       le paiement reste remboursable ;</li>
+ *       le paiement reste remboursable (et la retenue due) ;</li>
  *   <li>RELEASED / REFUNDED / FAILED / CANCELLED → no-op (jamais de refund post-versement).</li>
  * </ul>
  *
@@ -51,7 +68,10 @@ import java.util.UUID;
  * second chemin, complètement séparé du chemin Stripe ci-dessus (aucune ligne du chemin Stripe
  * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les six listeners
  * appelants existants de {@link #processRefund} (annulations, litiges, rejets d'annonce) ne
- * changent pas — le dispatch sur le rail est entièrement interne à cette classe.
+ * changent pas — le dispatch sur le rail est entièrement interne à cette classe. Même retenue d'annulation sur ce
+ * rail : remboursement pawaPay PARTIEL du dépôt (payé moins le dédommagement), frais perdus lus dans le barème
+ * pawaPay de l'opérateur du dépôt, mêmes règles de repli (calcul en échec, paiement inéligible : dépôt rendu en
+ * entier, retenue close ; base en échec : rien n'est soumis, le claim est défait).
  */
 @Component
 public class RefundProcessor {
@@ -75,6 +95,15 @@ public class RefundProcessor {
     /** Annulation d'un PaymentIntent PENDING refusée par Stripe : autorisation restée posée. */
     static final String PENDING_CANCEL_FAILED_ALERT_PREFIX = "REFUND_FAILED_";
 
+    /** Retenue d'annulation incalculable : expéditeur remboursé en entier, voyageur non dédommagé (19 + 36). */
+    static final String FEE_COMPUTE_FAILED_ALERT_PREFIX = "FEE_COMPUTE_FAILED_";
+
+    /** Rail mobile money : remboursement déjà en vol d'un autre montant que celui de la retenue (20 + 36). */
+    static final String FEE_REFUND_MISMATCH_ALERT_PREFIX = "FEE_REFUND_MISMATCH_";
+
+    /** Rail mobile money : remboursement partiel repris sans retenue réglée, reste du dépôt à rendre (18 + 36). */
+    static final String PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX = "MM_PARTIAL_REFUND_";
+
     private final PaymentRepository paymentRepository;
     private final AuditService auditService;
     private final AdminAlertService adminAlert;
@@ -90,19 +119,23 @@ public class RefundProcessor {
      */
     private final TransactionTemplate independentAuditTransaction;
 
+    private final CancellationFeeSettlement cancellationFees;
+
     public RefundProcessor(PaymentRepository paymentRepository,
                            AuditService auditService,
                            AdminAlertService adminAlert,
                            PawapayOperationService pawapayOperations,
                            PawapaySubmissionService pawapaySubmission,
                            AdminAlertEscalator alerts,
-                           PlatformTransactionManager transactionManager) {
+                           PlatformTransactionManager transactionManager,
+                           CancellationFeeSettlement cancellationFees) {
         this.paymentRepository = paymentRepository;
         this.auditService = auditService;
         this.adminAlert = adminAlert;
         this.pawapayOperations = pawapayOperations;
         this.pawapaySubmission = pawapaySubmission;
         this.alerts = alerts;
+        this.cancellationFees = cancellationFees;
         this.independentAuditTransaction = new TransactionTemplate(transactionManager);
         this.independentAuditTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -179,6 +212,9 @@ public class RefundProcessor {
         }
 
         final String stripeAction;
+        final String piStatus;
+        Optional<CancellationFeeBreakdown> retainedFee = Optional.empty();
+        RuntimeException feeComputationFailure = null;
         try {
             // Chez Yadony, la capture du PaymentIntent n'a lieu qu'à la livraison
             // (DeliveryConfirmedEvent). Un paiement ESCROW correspond donc, dans la
@@ -188,16 +224,41 @@ public class RefundProcessor {
             // refunding the Charge directly") → il faut annuler l'autorisation.
             // On ne rembourse (Refund) que si le PI a réellement été capturé (succeeded).
             PaymentIntent pi = PaymentIntent.retrieve(payment.getStripePaymentIntentId());
-            if ("succeeded".equals(pi.getStatus())) {
-                Refund.create(
-                        RefundCreateParams.builder()
-                                .setPaymentIntent(payment.getStripePaymentIntentId())
-                                .build(),
-                        RequestOptions.builder()
-                                .setIdempotencyKey("refund-" + paymentId)
-                                .build());
-                stripeAction = "remboursement émis (PI capturé)";
-            } else if (!"canceled".equals(pi.getStatus())) {
+            piStatus = pi.getStatus();
+            if ("succeeded".equals(piStatus)) {
+                // Retenue d'annulation due par l'expéditeur fautif : lue ICI, APRÈS le claim
+                // markRefundedIfEscrow ci-dessus, jamais avant. Ce claim garantit un seul remboursement
+                // par paiement, donc un seul règlement de la retenue ; le taux est lu sous le verrou de
+                // la retenue (dueRateForUpdate) contre une renonciation concurrente de l'administration.
+                try {
+                    retainedFee = cancellationFees.settle(payment, metadataId(pi, "sender_id"),
+                            metadataId(pi, "traveler_id"));
+                } catch (RuntimeException e) {
+                    if (mustPropagate(e)) {
+                        // Base en échec (verrou, lecture, transaction) : AUCUN appel Stripe, le claim est défait.
+                        throw e;
+                    }
+                    // Le calcul de la retenue ne bloque JAMAIS le remboursement de l'expéditeur (taux de
+                    // change absent, barème invalide…) : remboursement intégral comme avant, alerte et
+                    // clôture de la retenue après le succès Stripe.
+                    log.error("Retenue d'annulation incalculable pour le paiement {} : remboursement intégral",
+                            paymentId, e);
+                    feeComputationFailure = e;
+                }
+                if (retainedFee.isPresent()) {
+                    refundMinusCancellationFee(payment, paymentId, retainedFee.get());
+                    stripeAction = "remboursement partiel émis (PI capturé, frais d'annulation retenus)";
+                } else {
+                    Refund.create(
+                            RefundCreateParams.builder()
+                                    .setPaymentIntent(payment.getStripePaymentIntentId())
+                                    .build(),
+                            RequestOptions.builder()
+                                    .setIdempotencyKey("refund-" + paymentId)
+                                    .build());
+                    stripeAction = "remboursement émis (PI capturé)";
+                }
+            } else if (!"canceled".equals(piStatus)) {
                 // requires_capture (et autres états pré-capture) → libère le hold.
                 stripeAction = cancelOrRefundIfCapturedMeanwhile(pi, payment.getStripePaymentIntentId(), paymentId);
             } else {
@@ -217,11 +278,132 @@ public class RefundProcessor {
             throw new IllegalStateException("Stripe escrow release failed for payment " + paymentId, e);
         }
 
-        auditService.log("PAYMENT", payment.getId(), auditAction, auditActor,
-                enrich(auditPayload, payment));
+        // Après le succès Stripe, dans la transaction du claim : un échec plus haut a déjà levé, la
+        // retenue reste alors due et rien n'est réglé.
+        Map<String, Object> enriched = enrich(auditPayload, payment);
+        if (retainedFee.isPresent()) {
+            CancellationFeeBreakdown fee = retainedFee.get();
+            paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
+            cancellationFees.retain(payment, fee);
+            enriched.put("refundedAmount", fee.senderRefund().toPlainString());
+            enriched.put("cancellationFee", fee.grossFee().toPlainString());
+        } else if (feeComputationFailure != null) {
+            raiseFeeComputationAlert(payment, paymentId, feeComputationFailure);
+            cancellationFees.waiveAfterFailedComputation(payment);
+        } else {
+            cancellationFees.waiveIfDue(payment, piStatus);
+        }
+        auditService.log("PAYMENT", payment.getId(), auditAction, auditActor, enriched);
         log.info("Escrow libéré pour PI {} — {} ({})",
                 payment.getStripePaymentIntentId(), stripeAction, auditAction);
         return true;
+    }
+
+    /**
+     * Échec du règlement de la retenue qui ne doit PAS tomber dans le repli « remboursement intégral » : échec de la base
+     * ({@link DataAccessException}, {@link TransactionException}, {@link PersistenceException} non traduite, par exemple
+     * l'attente du verrou de la retenue dépassée), ou transaction du claim déjà condamnée (marquée rollback-only par
+     * l'échec). Le remboursement intégral partirait chez le prestataire, puis le commit échouerait : le paiement resterait
+     * ESCROW alors que l'argent est sorti. L'exception remonte donc telle quelle, avant tout appel au prestataire : la
+     * transaction {@code REQUIRES_NEW} défait le claim, le paiement reste remboursable et la retenue due, comme un échec
+     * Stripe. Toute autre erreur du calcul (taux de change absent, barème invalide) garde le repli.
+     */
+    static boolean mustPropagate(RuntimeException failure) {
+        return failure instanceof DataAccessException || failure instanceof TransactionException
+                || failure instanceof PersistenceException || transactionRollbackOnly();
+    }
+
+    private static boolean transactionRollbackOnly() {
+        try {
+            return TransactionAspectSupport.currentTransactionStatus().isRollbackOnly();
+        } catch (NoTransactionException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Rend à l'expéditeur le montant payé moins la retenue ({@code senderRefund}), en unités mineures de la
+     * devise du paiement. Même clé d'idempotence que le remboursement intégral : un paiement n'a jamais
+     * qu'un remboursement par ce chemin, et un rejeu Stripe rend le même objet.
+     */
+    private static void refundMinusCancellationFee(PaymentEntity payment, UUID paymentId,
+                                                   CancellationFeeBreakdown fee) throws StripeException {
+        long amountMinor = CurrencyAmount.of(fee.senderRefund(),
+                SupportedCurrency.fromCodeOrDefault(payment.getCurrency())).minor();
+        Refund.create(
+                RefundCreateParams.builder()
+                        .setPaymentIntent(payment.getStripePaymentIntentId())
+                        .setAmount(amountMinor)
+                        .build(),
+                RequestOptions.builder()
+                        .setIdempotencyKey("refund-" + paymentId)
+                        .build());
+    }
+
+    /**
+     * Alerte unique par paiement, levée APRÈS le remboursement intégral (un échec Stripe l'aurait sinon
+     * annoncé à tort). Une alerte qui échoue ne remet pas en cause le remboursement déjà émis.
+     */
+    private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure) {
+        raiseFeeComputationAlert(payment, paymentId, failure, "l'expéditeur a été remboursé en entier");
+    }
+
+    /** @param refundOutcome ce que l'expéditeur a reçu, dit en clair dans l'alerte */
+    private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure,
+                                          String refundOutcome) {
+        try {
+            alerts.raiseOnce(FEE_COMPUTE_FAILED_ALERT_PREFIX + paymentId,
+                    "Retenue d'annulation incalculable pour le paiement " + paymentId + " : "
+                            + failure.getMessage() + " ; " + refundOutcome + ", le voyageur "
+                            + "n'est pas dédommagé, à régler à la main",
+                    Map.of("paymentId", paymentId.toString(),
+                            "bidId", String.valueOf(payment.getBidId()),
+                            "error", String.valueOf(failure.getMessage())));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", FEE_COMPUTE_FAILED_ALERT_PREFIX, paymentId,
+                    alertFailure);
+        }
+    }
+
+    /**
+     * Rail mobile money : un remboursement d'une tentative précédente est déjà en vol pour un autre montant que
+     * l'expéditeur moins la retenue. Il fait foi ; la retenue est close et l'écart est à régler à la main. Une alerte
+     * qui échoue ne remet pas en cause le remboursement.
+     */
+    private void raiseRefundMismatchAlert(PaymentEntity payment, UUID paymentId, PawapayOperationEntity refund,
+                                          CancellationFeeBreakdown expected) {
+        try {
+            alerts.raiseOnce(FEE_REFUND_MISMATCH_ALERT_PREFIX + paymentId,
+                    "Retenue d'annulation non réglée pour le paiement " + paymentId + " : un remboursement pawaPay "
+                            + refund.getId() + " de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
+                            + " était déjà en vol, " + expected.senderRefund().toPlainString() + " attendus ; retenue "
+                            + "close, voyageur non dédommagé, à régler à la main",
+                    Map.of("paymentId", paymentId.toString(),
+                            "bidId", String.valueOf(payment.getBidId()),
+                            "operationId", refund.getId().toString(),
+                            "refundAmount", refund.getAmount().toPlainString(),
+                            "expectedRefund", expected.senderRefund().toPlainString()));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", FEE_REFUND_MISMATCH_ALERT_PREFIX, paymentId,
+                    alertFailure);
+        }
+    }
+
+    /**
+     * Expéditeur ou voyageur posé en métadonnée du PaymentIntent à sa création ({@code PaymentService}, bid
+     * comme fil de négociation), ou null. Ne sert qu'au repli du taux de commission de la retenue.
+     */
+    private static UUID metadataId(PaymentIntent pi, String key) {
+        Map<String, String> metadata = pi.getMetadata();
+        String value = metadata == null ? null : metadata.get(key);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**
@@ -271,6 +453,14 @@ public class RefundProcessor {
      * remontent en exception : la transaction {@code REQUIRES_NEW} annule alors le claim, le
      * paiement redevient {@code ESCROW} et donc remboursable plus tard.
      *
+     * <p>Retenue d'annulation due par l'expéditeur fautif ({@link CancellationFeeSettlement#settleMobileMoney}) :
+     * le refund porte sur le dépôt moins la retenue, puis {@code refunded_amount}, retenue réglée et
+     * {@link com.yadony.api.payments.fee.CancellationFeeRetainedEvent}, comme le rail carte. Un refus pawaPay du
+     * remboursement partiel laisse la retenue due (claim annulé) ; un nouvel essai resoumet le même montant. Pour
+     * rembourser le dépôt entier à la place, un administrateur renonce d'abord à la retenue
+     * ({@code POST /admin/cancellation-fees/bids/{bidId}/waive}, ligne {@code NOT_APPLICABLE}
+     * {@code ADMIN_WAIVED}) : {@code processRefund} rend alors le dépôt entier, comme sans retenue.
+     *
      * <p>Cette méthode et {@link #refundEscrowedMobileMoney} ne font JAMAIS
      * {@code payment.setStatus(...)} après un claim bulk — {@code enrich(...)} n'utilise pas
      * {@code status}, rien d'autre ne le lit non plus. Un tel setter rendrait l'entité sale et
@@ -285,6 +475,8 @@ public class RefundProcessor {
                 if (cancelled == 0) {
                     yield false;
                 }
+                // Jamais encaissé : rien à retenir, une retenue encore due est close (sans retenue : une lecture).
+                cancellationFees.waiveNotCollected(payment);
                 auditService.log("PAYMENT", paymentId, auditAction, auditActor, enrich(auditPayload, payment));
                 log.info("Paiement mobile money {} annulé avant encaissement ({})", paymentId, auditAction);
                 yield true;
@@ -341,12 +533,44 @@ public class RefundProcessor {
         }
         PawapayOperationEntity deposit = completedDeposit.get();
 
+        // Retenue d'annulation due par l'expéditeur fautif : lue ICI, après le claim, jamais avant (même garantie
+        // que le rail carte : un seul remboursement par paiement, donc un seul règlement). Un calcul qui échoue ne
+        // bloque jamais l'expéditeur : dépôt rendu en entier comme avant, alerte, retenue close.
+        Optional<CancellationFeeBreakdown> retainedFee = Optional.empty();
+        RuntimeException feeComputationFailure = null;
+        try {
+            retainedFee = cancellationFees.settleMobileMoney(payment, deposit.getProvider(), deposit.getAmount());
+        } catch (RuntimeException e) {
+            if (mustPropagate(e)) {
+                // Base en échec : AUCUNE soumission pawaPay, le claim est défait (même règle que la carte).
+                throw e;
+            }
+            log.error("Retenue d'annulation incalculable pour le paiement mobile money {} : remboursement intégral",
+                    paymentId, e);
+            feeComputationFailure = e;
+        }
+
+        // Un refund déjà vivant (tentative précédente soumise puis annulée : réseau muet, commit raté) est repris
+        // tel quel, jamais resoumis : son montant fait foi. La retenue n'est réglée que s'il est exactement celui de
+        // l'expéditeur moins la retenue ; sinon elle est close avec une alerte, rien n'est rendu deux fois.
+        Optional<PawapayOperationEntity> liveRefund = pawapayOperations.findLive(paymentId, PawapayOperationKind.REFUND);
+        CancellationFeeBreakdown unmatchedFee = null;
+        if (liveRefund.isPresent() && retainedFee.isPresent()
+                && retainedFee.get().senderRefund().compareTo(liveRefund.get().getAmount()) != 0) {
+            unmatchedFee = retainedFee.get();
+            retainedFee = Optional.empty();
+        }
+        // Remboursement PARTIEL (pawaPay v2 l'accepte : amount + currency) : le dépôt moins la retenue. Sans retenue,
+        // le dépôt entier, exactement comme avant.
+        BigDecimal refundAmount = retainedFee.map(CancellationFeeBreakdown::senderRefund).orElse(deposit.getAmount());
+
         // Ce contrôle SUBMIT_REJECTED ne peut jamais se déclencher pour un refund RÉCUPÉRÉ via
         // findLive — LIVE_OR_DONE (l'ensemble filtré par findLive) exclut structurellement
         // SUBMIT_REJECTED (rangé dans DEAD). Il n'est atteignable que pour un refund tout juste
-        // soumis par submitRefund ci-dessous.
-        PawapayOperationEntity refund = pawapayOperations.findLive(paymentId, PawapayOperationKind.REFUND)
-                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, deposit.getAmount()));
+        // soumis par submitRefund ci-dessous. Un refus annule le claim : la retenue reste due, rien
+        // n'est réglé ni clos, et un nouvel essai resoumet le même remboursement partiel.
+        PawapayOperationEntity refund = liveRefund
+                .orElseGet(() -> pawapaySubmission.submitRefund(paymentId, deposit, refundAmount));
         if (refund.getStatus() == PawapayOperationStatus.SUBMIT_REJECTED) {
             alerts.raiseOnce(REJECTED_ALERT_PREFIX + paymentId,
                     "pawaPay a refusé le remboursement du paiement " + paymentId + " : " + refund.getFailureCode(),
@@ -355,15 +579,73 @@ public class RefundProcessor {
             throw new IllegalStateException("pawaPay refund rejected: " + refund.getFailureCode());
         }
 
+        // Après l'acceptation pawaPay, dans la transaction du claim. Un échec ici annule le claim alors que le
+        // remboursement est parti : le paiement redevient ESCROW, la retenue reste due, et un nouvel essai reprend
+        // ce remboursement vivant (branche ci-dessus) puis règle la retenue.
+        Map<String, Object> enriched = enrich(auditPayload, payment);
+        enriched.put("refundOperationId", refund.getId().toString());
+        if (retainedFee.isPresent()) {
+            CancellationFeeBreakdown fee = retainedFee.get();
+            paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
+            cancellationFees.retain(payment, fee);
+            enriched.put("refundedAmount", fee.senderRefund().toPlainString());
+            enriched.put("cancellationFee", fee.grossFee().toPlainString());
+        } else if (feeComputationFailure != null) {
+            raiseFeeComputationAlert(payment, paymentId, feeComputationFailure,
+                    "l'expéditeur est remboursé de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
+                            + " (remboursement pawaPay " + refund.getId() + ")");
+            cancellationFees.waiveAfterFailedComputation(payment);
+        } else if (unmatchedFee != null) {
+            raiseRefundMismatchAlert(payment, paymentId, refund, unmatchedFee);
+            cancellationFees.waiveAfterRefundInFlight(payment);
+        } else {
+            cancellationFees.waiveMobileMoneyIfDue(payment, deposit.getAmount());
+        }
+        // Défense : un remboursement repris d'une tentative précédente, d'une partie du dépôt seulement, sans retenue
+        // réglée (retenue close entre-temps, calcul en échec, écart de montant). Jamais un succès silencieux affiché
+        // « remboursé en entier » : le montant réellement rendu est enregistré (UPDATE ciblé). La retenue reste dans
+        // l'état que les branches ci-dessus lui donnent (close ou absente) : rien n'est promis au voyageur, le reste
+        // du dépôt est dû à l'expéditeur et se règle à la main. Une alerte, sauf si une branche vient d'en lever une.
+        if (retainedFee.isEmpty() && refund.getAmount().compareTo(deposit.getAmount()) != 0) {
+            paymentRepository.recordRefundedAmount(paymentId, refund.getAmount());
+            enriched.put("refundedAmount", refund.getAmount().toPlainString());
+            if (feeComputationFailure == null && unmatchedFee == null) {
+                raisePartialRefundUnsettledAlert(payment, paymentId, refund, deposit);
+            }
+        }
+
         // Audit dans sa propre transaction — motif repris de MobileMoneyPayoutInitiator#release :
         // la trace du remboursement survit même si la transaction ambiante (le claim) échouait
         // ensuite. Rien de faillible ne suit ce point.
-        Map<String, Object> enriched = enrich(auditPayload, payment);
-        enriched.put("refundOperationId", refund.getId().toString());
         independentAuditTransaction.executeWithoutResult(status ->
                 auditService.log("PAYMENT", paymentId, auditAction, auditActor, enriched));
         log.info("Remboursement mobile money {} soumis pour le paiement {} ({})", refund.getId(), paymentId, auditAction);
         return true;
+    }
+
+    /**
+     * Remboursement partiel repris sans retenue réglée : l'expéditeur ne récupère qu'une partie du dépôt, le reste est
+     * chez Yadony. Une alerte unique par paiement ; une alerte qui échoue ne remet pas en cause le remboursement.
+     */
+    private void raisePartialRefundUnsettledAlert(PaymentEntity payment, UUID paymentId, PawapayOperationEntity refund,
+                                                  PawapayOperationEntity deposit) {
+        BigDecimal held = deposit.getAmount().subtract(refund.getAmount());
+        try {
+            alerts.raiseOnce(PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX + paymentId,
+                    "Remboursement pawaPay " + refund.getId() + " repris pour le paiement " + paymentId + " : "
+                            + refund.getAmount().toPlainString() + " " + refund.getCurrency() + " rendus sur un dépôt de "
+                            + deposit.getAmount().toPlainString() + ", sans retenue d'annulation réglée. "
+                            + held.toPlainString() + " " + refund.getCurrency() + " restent chez Yadony, dus à "
+                            + "l'expéditeur : à rendre à la main",
+                    Map.of("paymentId", paymentId.toString(),
+                            "bidId", String.valueOf(payment.getBidId()),
+                            "operationId", refund.getId().toString(),
+                            "refundAmount", refund.getAmount().toPlainString(),
+                            "depositAmount", deposit.getAmount().toPlainString()));
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX, paymentId,
+                    alertFailure);
+        }
     }
 
     private Map<String, Object> enrich(Map<String, String> payload, PaymentEntity payment) {

@@ -49,7 +49,11 @@ public final class TripRescheduleRules {
      * décision du décalage horaire (YADONY-FLUTTER-PROD-1R).
      */
     public static LocalDateTime decisionDeadline(BidEntity bid, AnnouncementEntity announcement) {
-        if (bid.getStatus() == BidStatus.ACCEPTED && bid.getHandoverDeadline() != null) {
+        return decisionDeadline(bid, bid.getStatus(), announcement);
+    }
+
+    private static LocalDateTime decisionDeadline(BidEntity bid, BidStatus status, AnnouncementEntity announcement) {
+        if (status == BidStatus.ACCEPTED && bid.getHandoverDeadline() != null) {
             return bid.getHandoverDeadline();
         }
         LocalTime time = announcement.getDepartureTime() != null
@@ -66,10 +70,18 @@ public final class TripRescheduleRules {
     }
 
     static boolean decisionOpen(BidEntity bid, AnnouncementEntity announcement, Instant now) {
-        if (bid.getPendingRescheduleId() == null || announcement == null
-                || !DECISION_STATUSES.contains(bid.getStatus())) {
+        return decisionOpen(bid, bid.getStatus(), announcement, now);
+    }
+
+    /**
+     * Même règle, le colis pris dans le statut {@code status} à l'instant {@code now} : celui d'avant son annulation,
+     * que l'annulation vient de remplacer sur l'entité (frais d'annulation de l'expéditeur, {@code cancellation/fee} :
+     * aucun frais tant que l'expéditeur peut encore répondre au report).
+     */
+    public static boolean decisionOpen(BidEntity bid, BidStatus status, AnnouncementEntity announcement, Instant now) {
+        if (bid.getPendingRescheduleId() == null || announcement == null || !DECISION_STATUSES.contains(status)) {
             return false;
         }
-        return now.isBefore(decisionDeadline(bid, announcement).toInstant(ZoneOffset.UTC));
+        return now.isBefore(decisionDeadline(bid, status, announcement).toInstant(ZoneOffset.UTC));
     }
 }

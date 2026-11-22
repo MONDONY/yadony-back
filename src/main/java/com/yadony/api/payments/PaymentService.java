@@ -1530,9 +1530,8 @@ public class PaymentService {
                 boolean alreadyRecorded = payment.getRefundedAmount() != null
                         && payment.getRefundedAmount().compareTo(refunded) == 0;
 
-                payment.setRefundedAmount(refunded);
-
                 if (payment.getStatus() == PaymentStatus.RELEASED) {
+                    payment.setRefundedAmount(refunded);
                     paymentRepository.save(payment);
                     if (!alreadyRecorded) {
                         auditService.log("PAYMENT", payment.getId(), "REFUND_AFTER_RELEASE",
@@ -1548,17 +1547,29 @@ public class PaymentService {
                     return;
                 }
 
-                if (fullRefund && payment.getStatus() != PaymentStatus.REFUNDED) {
+                if (!fullRefund) {
+                    // Partiel : écriture ciblée de refunded_amount, jamais un save de l'entité. Celle-ci a été
+                    // lue sans verrou : quand RefundProcessor rembourse moins une retenue d'annulation, Stripe
+                    // envoie ce webhook pendant que la transaction du remboursement (claim REFUNDED) est encore
+                    // ouverte ; le paiement a donc été lu ESCROW, et le flush de l'entité entière (ni @Version
+                    // ni @DynamicUpdate) réécrirait ce statut périmé par-dessus le REFUNDED commité.
+                    paymentRepository.recordRefundedAmount(payment.getId(), refunded);
+                    if (!alreadyRecorded) {
+                        auditService.log("PAYMENT", payment.getId(), "PAYMENT_PARTIALLY_REFUNDED",
+                                payment.getBidId(),
+                                Map.of("piId", piId, "refundedAmount", refunded.toPlainString()));
+                        log.info("Refund partiel {} enregistré pour payment {} (statut inchangé)",
+                                refunded, payment.getId());
+                    }
+                    return;
+                }
+
+                payment.setRefundedAmount(refunded);
+                if (payment.getStatus() != PaymentStatus.REFUNDED) {
                     payment.setStatus(PaymentStatus.REFUNDED);
                     auditService.log("PAYMENT", payment.getId(), "PAYMENT_REFUNDED",
                             payment.getBidId(), Map.of("piId", piId, "source", "stripe_webhook"));
                     log.info("Refund total confirmé par webhook pour payment {}", payment.getId());
-                } else if (!fullRefund && !alreadyRecorded) {
-                    auditService.log("PAYMENT", payment.getId(), "PAYMENT_PARTIALLY_REFUNDED",
-                            payment.getBidId(),
-                            Map.of("piId", piId, "refundedAmount", refunded.toPlainString()));
-                    log.info("Refund partiel {} enregistré pour payment {} (statut {} conservé)",
-                            refunded, payment.getId(), payment.getStatus());
                 }
                 paymentRepository.save(payment);
             });

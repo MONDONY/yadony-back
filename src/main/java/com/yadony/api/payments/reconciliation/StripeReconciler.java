@@ -123,9 +123,26 @@ public class StripeReconciler {
                     if (!captured) codes.add("VERSE_SANS_ENCAISSEMENT");
                 }
                 case REFUNDED -> {
-                    boolean refundedAtStripeInFull = "canceled".equals(status)
-                            || (captured && refundedAtStripe >= expected);
-                    if (!refundedAtStripeInFull) codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");
+                    BigDecimal recorded = payment.getRefundedAmount();
+                    if (recorded != null && recorded.signum() > 0) {
+                        // Montant remboursé enregistré (remboursement moins une retenue d'annulation,
+                        // partage admin, ou miroir du webhook) : Stripe doit avoir rendu ce montant. Moins :
+                        // remboursement absent ou incomplet. Plus sans aller jusqu'au total : écart réel. Le
+                        // TOTAL du paiement est cohérent (remboursé en entier après un premier partiel, la base
+                        // suit au webhook charge.refunded) ; une retenue réglée sur un paiement finalement
+                        // remboursé en entier est signalée par l'invariant INV-20 une fois la base à jour.
+                        long recordedMinor = CurrencyAmount.of(recorded, currency).minor();
+                        if (!captured || refundedAtStripe == 0) {
+                            codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");
+                        } else if (refundedAtStripe < recordedMinor
+                                || (refundedAtStripe > recordedMinor && refundedAtStripe < expected)) {
+                            codes.add("REMBOURSE_DIFFERENT");
+                        }
+                    } else {
+                        boolean refundedAtStripeInFull = "canceled".equals(status)
+                                || (captured && refundedAtStripe >= expected);
+                        if (!refundedAtStripeInFull) codes.add("REMBOURSEMENT_ABSENT_CHEZ_STRIPE");
+                    }
                 }
                 case CANCELLED, FAILED -> {
                     if (captured || authorized) codes.add("ENCAISSE_MAIS_ANNULE");

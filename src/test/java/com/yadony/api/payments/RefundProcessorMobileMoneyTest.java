@@ -55,7 +55,8 @@ class RefundProcessorMobileMoneyTest {
     @BeforeEach
     void setUp() {
         processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
-                operations, submission, alerts, transactionManager);
+                operations, submission, alerts, transactionManager,
+                org.mockito.Mockito.mock(com.yadony.api.payments.fee.CancellationFeeSettlement.class));
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
         payment.setBidId(UUID.randomUUID());

@@ -63,7 +63,7 @@ class MobileMoneyPayoutInitiatorHoldTest {
     @BeforeEach
     void setUp() {
         initiator = new MobileMoneyPayoutInitiator(new MobileMoneyPayoutAccounts(accountRepository, TestMessages.resolver()), operations, submission, adminAlert, alerts, audit,
-                transactionManager, holdPolicy);
+                transactionManager, holdPolicy, org.mockito.Mockito.mock(com.yadony.api.payments.PaymentRepository.class));
         payment = new PaymentEntity();
         ReflectionTestUtils.setField(payment, "id", UUID.randomUUID());
         payment.setRail(PaymentRail.PAWAPAY);

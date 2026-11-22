@@ -47,7 +47,8 @@ class RefundProcessorTest {
     @BeforeEach
     void setUp() {
         processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
-                pawapayOperations, pawapaySubmission, alerts, transactionManager);
+                pawapayOperations, pawapaySubmission, alerts, transactionManager,
+                mock(com.yadony.api.payments.fee.CancellationFeeSettlement.class));
     }
 
     private PaymentEntity payment(PaymentStatus status) {

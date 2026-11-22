@@ -70,6 +70,7 @@ class AdminPaymentControllerTest {
     @Mock private com.yadony.api.payments.hold.PayoutHoldPolicy holdPolicy;
     @Mock private AdminPaymentInsights insights;
     @Mock private AdminPaymentTimeline timeline;
+    @Mock private com.yadony.api.payments.fee.CancellationFeeSettlement cancellationFees;
 
     private AdminPaymentController controller;
 
@@ -86,7 +87,7 @@ class AdminPaymentControllerTest {
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
                 transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
-                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none(), cancellationFees);
     }
 
     /**
@@ -184,7 +185,7 @@ class AdminPaymentControllerTest {
                         mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
                 mock(com.yadony.api.disputes.DisputeRepository.class),
                 new com.yadony.api.payments.ReleaseNetCalculator(vouchers), java.time.Clock.systemUTC(),
-                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none(), cancellationFees);
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             ArgumentCaptor<TransferCreateParams> captor = ArgumentCaptor.forClass(TransferCreateParams.class);
@@ -212,7 +213,7 @@ class AdminPaymentControllerTest {
                         mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null),
                 mock(com.yadony.api.disputes.DisputeRepository.class),
                 new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
-                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none(), cancellationFees);
 
         try (MockedStatic<Transfer> trStatic = mockStatic(Transfer.class)) {
             trStatic.when(() -> Transfer.create(any(TransferCreateParams.class), any(com.stripe.net.RequestOptions.class)))
@@ -279,7 +280,7 @@ class AdminPaymentControllerTest {
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
                 transactionManager, holdPolicy, insights, timeline, capture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, org.mockito.Mockito.mock(com.yadony.api.payments.StripeTransferLookup.class), auditService, eventPublisher, null), org.mockito.Mockito.mock(com.yadony.api.disputes.DisputeRepository.class), new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
-                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none(), cancellationFees);
     }
 
     @Test
@@ -566,6 +567,108 @@ class AdminPaymentControllerTest {
                     .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         }
         verify(eventPublisher, never()).publishEvent(any(com.yadony.api.payments.events.AdminPaymentRefundedEvent.class));
+    }
+
+    // ── refund (sender) : retenue d'annulation encore due, close après un remboursement intégral ─────────────
+
+    @Test
+    void refund_capturedPayment_fullRefund_closesTheDueCancellationFee() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(com.stripe.net.RequestOptions.class)))
+                    .thenAnswer(call -> {
+                        // Jamais avant que Stripe ait rendu l'argent.
+                        verify(cancellationFees, never()).waiveAfterAdminFullRefund(any());
+                        return mock(Refund.class);
+                    });
+
+            controller.refund(paymentId);
+        }
+
+        verify(cancellationFees).waiveAfterAdminFullRefund(p);
+    }
+
+    @Test
+    void refund_holdCancelledOrAlreadyReversed_closesTheDueCancellationFeeToo() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent hold = mock(PaymentIntent.class);
+            when(hold.getStatus()).thenReturn("requires_capture");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(hold);
+            controller.refund(paymentId);
+
+            PaymentIntent captured = mock(PaymentIntent.class);
+            when(captured.getStatus()).thenReturn("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(captured);
+            var alreadyRefunded = mock(com.stripe.exception.InvalidRequestException.class);
+            when(alreadyRefunded.getCode()).thenReturn("charge_already_refunded");
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(com.stripe.net.RequestOptions.class)))
+                    .thenThrow(alreadyRefunded);
+            controller.refund(paymentId);
+        }
+
+        verify(cancellationFees, times(2)).waiveAfterAdminFullRefund(p);
+    }
+
+    @Test
+    void refund_stripeError_leavesTheCancellationFeeDue() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, "ch_x");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(1);
+        try (MockedStatic<PaymentIntent> piStatic = mockStatic(PaymentIntent.class);
+             MockedStatic<Refund> refundStatic = mockStatic(Refund.class)) {
+            PaymentIntent pi = mock(PaymentIntent.class);
+            when(pi.getStatus()).thenReturn("succeeded");
+            piStatic.when(() -> PaymentIntent.retrieve("pi_xxx")).thenReturn(pi);
+            refundStatic.when(() -> Refund.create(any(RefundCreateParams.class), any(com.stripe.net.RequestOptions.class)))
+                    .thenThrow(mock(com.stripe.exception.InvalidRequestException.class));
+
+            assertThatThrownBy(() -> controller.refund(paymentId)).isInstanceOf(YadonyBusinessException.class);
+        }
+
+        verifyNoInteractions(cancellationFees);
+    }
+
+    @Test
+    void refund_notInEscrow_leavesTheCancellationFeeDue() {
+        PaymentEntity p = threadPayment(PaymentStatus.RELEASED, false, "ch_x");
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(paymentRepository.markRefundedIfEscrow(paymentId)).thenReturn(0);
+
+        assertThatThrownBy(() -> controller.refund(paymentId)).isInstanceOf(YadonyBusinessException.class);
+
+        verifyNoInteractions(cancellationFees);
+    }
+
+    @Test
+    void refund_mobileMoney_leftToRefundProcessor_whichSettlesOrClosesTheFeeItself() {
+        PaymentEntity p = threadPayment(PaymentStatus.ESCROW, false, null);
+        p.setRail(com.yadony.api.payments.PaymentRail.PAWAPAY);
+        when(paymentRepository.findById(paymentId)).thenReturn(Optional.of(p));
+        when(refundProcessor.processRefund(eq(paymentId), eq("ESCROW_FORCE_REFUNDED"), any(), any())).thenReturn(true);
+        var admin = new com.yadony.api.admin.account.AdminPrincipal(UUID.randomUUID(), "admin@yadony.test",
+                com.yadony.api.admin.account.AdminRole.ADMIN, false, "uid-admin");
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(admin, null,
+                        java.util.List.of()));
+        try {
+            controller.refund(paymentId);
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+
+        verifyNoInteractions(cancellationFees);
     }
 
     @Test

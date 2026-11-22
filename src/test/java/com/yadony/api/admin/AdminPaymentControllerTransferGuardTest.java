@@ -78,7 +78,7 @@ class AdminPaymentControllerTransferGuardTest {
                 bidRepository, announcementRepository, userRepository, eventPublisher, chargebackRepository,
                 payoutInitiator, pawapayOperations, pawapaySubmission, refundProcessor, entityManager,
                 transactionManager, holdPolicy, insights, timeline, escrowCapture, com.yadony.api.payments.ReleaseTestSupport.executor(paymentRepository, transferLookup, auditService, eventPublisher, null), disputeRepository, new com.yadony.api.payments.ReleaseNetCalculator(null), java.time.Clock.systemUTC(),
-                com.yadony.api.admin.AdminPaymentLinksTestSupport.none());
+                com.yadony.api.admin.AdminPaymentLinksTestSupport.none(), org.mockito.Mockito.mock(com.yadony.api.payments.fee.CancellationFeeSettlement.class));
         payment = new PaymentEntity();
         payment.setNegotiationThreadId(threadId);
         payment.setStripePaymentIntentId("pi_1");

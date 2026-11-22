@@ -396,6 +396,35 @@ class AdminPaymentControllerMobileMoneyIT {
         verify(submission, never()).submitRefund(payment.getId(), deposit, payment.getAmount());
     }
 
+    /**
+     * Frais d'annulation (rail mobile money) : le remboursement mort était PARTIEL (dépôt moins la retenue). Le
+     * relancer pour le dépôt entier rendrait à l'expéditeur la part déjà promise au voyageur : la relance rejoue ce
+     * qui lui reste dû ({@code payments.refunded_amount}), jamais le dépôt entier.
+     */
+    @Test
+    void retryRefund_afterAPartialRefundWithACancellationFee_resubmitsOnlyTheSenderShare() throws Exception {
+        payment.setStatus(PaymentStatus.REFUNDED);
+        payment.setRefundedAmount(new BigDecimal("11760"));
+        PawapayOperationEntity deposit = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.DEPOSIT, payment.getId(), null,
+                new BigDecimal("16800"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        deposit.setStatus(PawapayOperationStatus.COMPLETED);
+        PawapayOperationEntity dead = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), deposit.getId(),
+                new BigDecimal("11760"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        dead.setStatus(PawapayOperationStatus.FAILED);
+        PawapayOperationEntity fresh = new PawapayOperationEntity(UUID.randomUUID(), PawapayOperationKind.REFUND, payment.getId(), deposit.getId(),
+                new BigDecimal("11760"), "XOF", "ORANGE_SEN", "SN", "221771234567");
+        fresh.setStatus(PawapayOperationStatus.ACCEPTED);
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.REFUND)).thenReturn(Optional.of(dead));
+        when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT)).thenReturn(Optional.of(deposit));
+        when(submission.submitRefund(payment.getId(), deposit, new BigDecimal("11760"))).thenReturn(fresh);
+
+        mockMvc.perform(post("/admin/payments/{id}/mobile-money/retry-refund", payment.getId()).with(authentication(releaseAdmin())))
+                .andExpect(status().isOk());
+
+        verify(submission).submitRefund(payment.getId(), deposit, new BigDecimal("11760"));
+        verify(submission, never()).submitRefund(payment.getId(), deposit, deposit.getAmount());
+    }
+
     @Test
     void retryRefund_stripePayment_isRejected() throws Exception {
         payment.setRail(PaymentRail.STRIPE);
