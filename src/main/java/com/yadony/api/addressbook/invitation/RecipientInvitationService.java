@@ -146,8 +146,13 @@ public class RecipientInvitationService {
         try {
             invitation = repository.saveAndFlush(invitation);
         } catch (DataIntegrityViolationException race) {
-            // Deux envois simultanés vers la même cible : l'autre a gagné, même réponse.
-            return InvitationSentResponse.SENT;
+            // Deux envois simultanés vers la même cible : l'autre a gagné, même réponse. Toute autre
+            // violation (contrainte de canal, clé étrangère) est une vraie erreur : elle ne doit pas
+            // passer pour un envoi réussi, sinon l'invité ne reçoit rien sans que personne le sache.
+            if (repository.existsByInviterUserIdAndTargetHashAndStatusIn(inviter.getId(), hash, LIVE)) {
+                return InvitationSentResponse.SENT;
+            }
+            throw race;
         }
         auditService.log("RECIPIENT_INVITATION", invitation.getId(), "RECIPIENT_INVITATION_SENT",
                 inviter.getId(), Map.of("channel", target.channel().name()));
@@ -180,7 +185,11 @@ public class RecipientInvitationService {
         try {
             invitation = repository.saveAndFlush(invitation);
         } catch (DataIntegrityViolationException race) {
-            return InvitationSentResponse.SENT;
+            // Course sur l'index unique : l'autre envoi a gagné. Autre violation : vraie erreur.
+            if (repository.existsByInviterUserIdAndInviteeUserIdAndStatusIn(inviter.getId(), invitee.getId(), LIVE)) {
+                return InvitationSentResponse.SENT;
+            }
+            throw race;
         }
         auditService.log("RECIPIENT_INVITATION", invitation.getId(), "RECIPIENT_INVITATION_SENT",
                 inviter.getId(), Map.of("channel", InvitationChannel.USERNAME.name()));

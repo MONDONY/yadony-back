@@ -185,10 +185,22 @@ class RecipientInvitationServiceTest {
     void send_raceOnUniqueIndex_stillAnswersSent() {
         when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
         doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
+        when(repository.existsByInviterUserIdAndTargetHashAndStatusIn(eq(inviter.getId()), any(), any()))
+                .thenReturn(false, true);
 
         assertThat(service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
                 .isEqualTo(InvitationSentResponse.SENT);
         verify(auditService, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void send_integrityViolationWithoutLiveInvitation_isNotSwallowed() {
+        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+        doThrow(new DataIntegrityViolationException("chk")).when(repository).saveAndFlush(any());
+
+        assertThatThrownBy(() -> service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -337,8 +349,20 @@ class RecipientInvitationServiceTest {
     void send_username_raceOnUniqueIndex_stillAnswersSent() {
         when(usernameLookup.resolveVisible(inviter, "fatou.sow")).thenReturn(Optional.of(invitee));
         doThrow(new DataIntegrityViolationException("uq")).when(repository).saveAndFlush(any());
+        when(repository.existsByInviterUserIdAndInviteeUserIdAndStatusIn(eq(inviter.getId()), eq(invitee.getId()), any()))
+                .thenReturn(false, true);
 
         assertThat(service.send("uid-inviter", byUsername("fatou.sow"))).isEqualTo(InvitationSentResponse.SENT);
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void send_username_integrityViolationWithoutLiveInvitation_isNotSwallowed() {
+        when(usernameLookup.resolveVisible(inviter, "fatou.sow")).thenReturn(Optional.of(invitee));
+        doThrow(new DataIntegrityViolationException("chk")).when(repository).saveAndFlush(any());
+
+        assertThatThrownBy(() -> service.send("uid-inviter", byUsername("fatou.sow")))
+                .isInstanceOf(DataIntegrityViolationException.class);
         verify(eventPublisher, never()).publishEvent(any());
     }
 
