@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Colis désigné par identifiant : quand le lien du compte devient CONFIRMED (confirmation, ou lien d'emblée
- * confirmé d'un destinataire de confiance), le nom devient le nom public du compte et son numéro est copié,
- * seulement s'il ne le masque pas et s'il est connu. Jamais appelé pour un lien PENDING ; un numéro déjà copié
+ * confirmé d'un destinataire de confiance), le nom devient le nom public du compte et son numéro (vérifié par SMS, sinon
+ * déclaré sans SMS) est copié, seulement s'il ne le masque pas et s'il est connu. Jamais appelé pour un lien PENDING ; un numéro déjà copié
  * reste si le compte le masque ensuite ; un colis désigné par numéro n'est pas touché.
  */
 @Component
@@ -29,7 +29,12 @@ public class DesignatedRecipientNaming {
         }
         bid.setRecipientName(account.publicDisplayName());
         if (!account.isHidePhoneNumber()) {
-            ReceptionPhones.toE164(firebaseContact.getContact(account.getFirebaseUid()).phoneNumber())
+            // Numéro vérifié par SMS en priorité ; à défaut, celui déclaré sans SMS (pays où le SMS ne passe
+            // pas : c'est le numéro que le destinataire a lui-même donné, aussi peu vérifié que celui qu'un
+            // expéditeur saisit à la main). Un compte qui le masque n'est pas lu du tout.
+            FirebaseContactService.Contact contact = firebaseContact.getContact(account.getFirebaseUid());
+            ReceptionPhones.toE164(contact.phoneNumber())
+                    .or(() -> ReceptionPhones.toE164(contact.declaredPhone()))
                     .ifPresent(bid::setRecipientPhone);
         }
         bidRepository.save(bid);

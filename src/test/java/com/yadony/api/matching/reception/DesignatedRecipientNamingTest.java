@@ -60,6 +60,55 @@ class DesignatedRecipientNamingTest {
     }
 
     @Test
+    void apply_declaredPhoneOnly_isCopiedWhenNotHidden() {
+        UserEntity a = account(false);
+        BidEntity b = designated(a);
+        when(firebaseContact.getContact("uid-a"))
+                .thenReturn(new FirebaseContactService.Contact(null, null, "+225 07 11 22 33 44"));
+
+        naming().apply(b, a);
+
+        assertThat(b.getRecipientName()).isEqualTo(a.publicDisplayName());
+        assertThat(b.getRecipientPhone()).isEqualTo("+2250711223344");
+        verify(bidRepository).save(b);
+    }
+
+    @Test
+    void apply_verifiedPhoneWinsOverDeclaredPhone() {
+        UserEntity a = account(false);
+        BidEntity b = designated(a);
+        when(firebaseContact.getContact("uid-a"))
+                .thenReturn(new FirebaseContactService.Contact("+221 78 111 22 33", null, "+225 07 11 22 33 44"));
+
+        naming().apply(b, a);
+
+        assertThat(b.getRecipientPhone()).isEqualTo("+221781112233");
+    }
+
+    @Test
+    void apply_declaredPhone_isNeverCopiedWhenHidden() {
+        UserEntity a = account(true);
+        BidEntity b = designated(a);
+
+        naming().apply(b, a);
+
+        assertThat(b.getRecipientPhone()).isNull();
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    @Test
+    void apply_noPhoneAtAll_leavesPhoneEmpty() {
+        UserEntity a = account(false);
+        BidEntity b = designated(a);
+        when(firebaseContact.getContact("uid-a")).thenReturn(FirebaseContactService.Contact.EMPTY);
+
+        naming().apply(b, a);
+
+        assertThat(b.getRecipientPhone()).isNull();
+        assertThat(b.getRecipientName()).isEqualTo(a.publicDisplayName());
+    }
+
+    @Test
     void apply_hiddenPhone_neverReadsNorCopiesPhone() {
         UserEntity a = account(true);
         BidEntity b = designated(a);
