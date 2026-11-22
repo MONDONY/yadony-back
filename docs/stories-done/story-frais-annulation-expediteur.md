@@ -82,6 +82,7 @@ L'interrupteur n'arrête que les NOUVELLES retenues. Une ligne `DUE` est réglé
 
 - `GET /api/v1/cancellations/bids/{bidId}/fee-preview` : aperçu, utilisateur authentifié, expéditeur du colis seul (403 `forbidden` sinon, 404 `bid-not-found`). Lecture seule.
 - `POST /api/v1/admin/cancellation-fees/bids/{bidId}/waive` : renoncer à une retenue encore `DUE`. `ROLE_ADMIN` + permission `PAYMENT_REFUND`. Corps `{"reason": "..."}` (10 à 500 caractères, repris dans l'audit). 404 sans retenue, 409 `cancellation-fee-not-due`, 409 `sender-refund-in-flight` si un remboursement pawaPay de l'expéditeur est déjà vivant ou abouti.
+- `GET /api/v1/admin/cancellation-fees/bids/{bidId}` : lecture de la retenue du colis (`ROLE_ADMIN` + `PAYMENT_VIEW`, SUPPORT compris), avec `waivable` (DUE) et `payoutRetryable` (PAYOUT_PENDING) calculés côté serveur ; 404 `cancellation-fee-not-found`. Le motif de `NOT_APPLICABLE` n'est que dans l'audit, il n'est pas exposé.
 - `POST /api/v1/admin/cancellation-fees/{feeId}/retry-payout` : relancer un versement `PAYOUT_PENDING`. `ROLE_ADMIN` + permission `PAYMENT_RELEASE`. Même corps. La ligne est réarmée (`payout_rearmed_at`), le versement est tenté après le commit, la réponse dit l'état à l'issue. 409 `cancellation-fee-not-pending`.
 
 ### Contrat de l'aperçu pour l'app

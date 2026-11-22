@@ -184,8 +184,38 @@ class CancellationFeeAdminServiceTest {
 
         AdminCancellationFeeResponse response = service().describe(FEE_ID);
 
-        assertThat(response).isEqualTo(new AdminCancellationFeeResponse(FEE_ID, BID_ID, "PAID_OUT",
-                new BigDecimal("17323"), "XOF", "op-1", null));
+        assertThat(response.status()).isEqualTo("PAID_OUT");
+        assertThat(response.travelerNet()).isEqualByComparingTo("17323");
+        assertThat(response.payoutRef()).isEqualTo("op-1");
+        assertThat(response.reason()).isEqualTo("SENDER_CANCEL");
+        assertThat(response.rate()).isEqualByComparingTo("0.30");
+        assertThat(response.waivable()).isFalse();
+        assertThat(response.payoutRetryable()).isFalse();
+    }
+
+    @Test
+    void describeByBid_due_isWaivable_pending_isRetryable_otherStatesNeither() {
+        for (CancellationFeeStatus status : CancellationFeeStatus.values()) {
+            when(fees.findByBidId(BID_ID)).thenReturn(Optional.of(fee(status)));
+
+            AdminCancellationFeeResponse response = service().describeByBid(BID_ID);
+
+            assertThat(response.status()).isEqualTo(status.name());
+            assertThat(response.waivable()).as("waivable " + status).isEqualTo(status == CancellationFeeStatus.DUE);
+            assertThat(response.payoutRetryable()).as("retryable " + status)
+                    .isEqualTo(status == CancellationFeeStatus.PAYOUT_PENDING);
+        }
+    }
+
+    @Test
+    void describeByBid_noRow_404() {
+        when(fees.findByBidId(BID_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().describeByBid(BID_ID))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getErrorCode()).isEqualTo("cancellation-fee-not-found");
+                });
     }
 
     @Test
