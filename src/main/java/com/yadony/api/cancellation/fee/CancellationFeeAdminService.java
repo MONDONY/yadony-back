@@ -122,9 +122,20 @@ public class CancellationFeeAdminService {
                 .orElseThrow(() -> notFound("Retenue d'annulation " + feeId + " introuvable"));
     }
 
+    /** Retenue du colis {@code bidId} (404 {@code cancellation-fee-not-found} sans retenue). Lecture seule. */
+    @Transactional(readOnly = true)
+    public AdminCancellationFeeResponse describeByBid(UUID bidId) {
+        return fees.findByBidId(bidId).map(CancellationFeeAdminService::view)
+                .orElseThrow(() -> notFound("Aucune retenue d'annulation pour le colis " + bidId));
+    }
+
     private static AdminCancellationFeeResponse view(CancellationFeeEntity fee) {
-        return new AdminCancellationFeeResponse(fee.getId(), fee.getBidId(), fee.getStatus().name(),
-                fee.getTravelerNet(), fee.getCurrency(), fee.getPayoutRef(), fee.getPayoutPendingReason());
+        CancellationFeeStatus status = fee.getStatus();
+        return new AdminCancellationFeeResponse(fee.getId(), fee.getBidId(), status.name(), fee.getReason().name(),
+                fee.getRate(), fee.getGrossFee(), fee.getRefundFees(), fee.getCommission(), fee.getTravelerNet(),
+                fee.getCurrency(), fee.getPayoutRef(), fee.getPayoutPendingReason(), fee.getCreatedAt(),
+                fee.getUpdatedAt(), status == CancellationFeeStatus.DUE,
+                status == CancellationFeeStatus.PAYOUT_PENDING);
     }
 
     private static YadonyBusinessException notFound(String detail) {

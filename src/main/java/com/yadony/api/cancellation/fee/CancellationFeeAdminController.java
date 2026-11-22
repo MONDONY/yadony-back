@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,6 +37,17 @@ public class CancellationFeeAdminController {
 
     public CancellationFeeAdminController(CancellationFeeAdminService service) {
         this.service = service;
+    }
+
+    /**
+     * Lecture de la retenue d'un colis, pour la carte « Frais d'annulation » de la fiche du paiement : PAYMENT_VIEW
+     * comme les autres lectures de paiement (le SUPPORT la garde) ; PAYMENT_REFUND et PAYMENT_RELEASE restent sur les
+     * gestes.
+     */
+    @GetMapping("/admin/cancellation-fees/bids/{bidId}")
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('PAYMENT_VIEW')")
+    public ResponseEntity<AdminCancellationFeeResponse> read(@PathVariable UUID bidId) {
+        return ResponseEntity.ok(service.describeByBid(bidId));
     }
 
     /** Rend tout à l'expéditeur au remboursement suivant : même permission que « Rembourser » (PAYMENT_REFUND). */

@@ -17,6 +17,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -27,6 +28,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -68,8 +70,89 @@ class CancellationFeeAdminControllerIT {
     }
 
     private static AdminCancellationFeeResponse response(String status, String pendingReason) {
-        return new AdminCancellationFeeResponse(FEE_ID, BID_ID, status, new BigDecimal("17323"), "XOF", null,
-                pendingReason);
+        return new AdminCancellationFeeResponse(FEE_ID, BID_ID, status, "SENDER_CANCEL", new BigDecimal("0.3000"),
+                new BigDecimal("20000"), new BigDecimal("1200"), new BigDecimal("1477"), new BigDecimal("17323"),
+                "XOF", null, pendingReason, LocalDateTime.parse("2026-11-20T09:30:00"),
+                LocalDateTime.parse("2026-11-21T10:00:00"), "DUE".equals(status), "PAYOUT_PENDING".equals(status));
+    }
+
+    // ── Lecture de la retenue d'un colis ─────────────────────────────────────────────────────────────────
+
+    @Test
+    void read_due_200_waivableNotRetryable_moneyAsNumbers() throws Exception {
+        when(service.describeByBid(BID_ID)).thenReturn(response("DUE", null));
+
+        mockMvc.perform(get("/admin/cancellation-fees/bids/{bidId}", BID_ID).with(authentication(admin())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(FEE_ID.toString()))
+                .andExpect(jsonPath("$.bidId").value(BID_ID.toString()))
+                .andExpect(jsonPath("$.status").value("DUE"))
+                .andExpect(jsonPath("$.reason").value("SENDER_CANCEL"))
+                .andExpect(jsonPath("$.rate").value(0.3))
+                .andExpect(jsonPath("$.grossFee").value(20000))
+                .andExpect(jsonPath("$.refundFees").value(1200))
+                .andExpect(jsonPath("$.commission").value(1477))
+                .andExpect(jsonPath("$.travelerNet").value(17323))
+                .andExpect(jsonPath("$.currency").value("XOF"))
+                .andExpect(jsonPath("$.payoutPendingReason").doesNotExist())
+                .andExpect(jsonPath("$.createdAt").exists())
+                .andExpect(jsonPath("$.updatedAt").exists())
+                .andExpect(jsonPath("$.waivable").value(true))
+                .andExpect(jsonPath("$.payoutRetryable").value(false));
+    }
+
+    @Test
+    void read_payoutPending_200_retryableNotWaivable() throws Exception {
+        when(service.describeByBid(BID_ID)).thenReturn(response("PAYOUT_PENDING", "TOO_MANY_FAILED_PAYOUTS"));
+
+        mockMvc.perform(get("/admin/cancellation-fees/bids/{bidId}", BID_ID).with(authentication(admin())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.payoutPendingReason").value("TOO_MANY_FAILED_PAYOUTS"))
+                .andExpect(jsonPath("$.waivable").value(false))
+                .andExpect(jsonPath("$.payoutRetryable").value(true));
+    }
+
+    @Test
+    void read_supportWithPaymentView_200() throws Exception {
+        assertThat(AdminRole.SUPPORT.permissions()).contains(AdminPermission.PAYMENT_VIEW);
+        when(service.describeByBid(BID_ID)).thenReturn(response("RETAINED", null));
+
+        mockMvc.perform(get("/admin/cancellation-fees/bids/{bidId}", BID_ID)
+                        .with(authentication(admin(AdminRole.SUPPORT))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.waivable").value(false))
+                .andExpect(jsonPath("$.payoutRetryable").value(false));
+    }
+
+    @Test
+    void read_adminWithoutPaymentView_403() throws Exception {
+        var principal = new AdminPrincipal(ADMIN_ID, "admin@yadony.com", AdminRole.SUPPORT, false, "uid");
+        var noPayment = new UsernamePasswordAuthenticationToken(principal, null,
+                List.of(new SimpleGrantedAuthority("USER_VIEW"), new SimpleGrantedAuthority("ROLE_ADMIN")));
+
+        mockMvc.perform(get("/admin/cancellation-fees/bids/{bidId}", BID_ID).with(authentication(noPayment)))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void read_nonAdmin_403() throws Exception {
+        mockMvc.perform(get("/admin/cancellation-fees/bids/{bidId}", BID_ID).with(authentication(appUser())))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void read_unknownBid_404ProblemDetail() throws Exception {
+        when(service.describeByBid(BID_ID)).thenThrow(new YadonyBusinessException(HttpStatus.NOT_FOUND,
+                "cancellation-fee-not-found", "Not Found", "Aucune retenue pour ce colis"));
+
+        mockMvc.perform(get("/admin/cancellation-fees/bids/{bidId}", BID_ID).with(authentication(admin())))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.code").value("cancellation-fee-not-found"));
     }
 
     // ── Renoncer à la retenue ────────────────────────────────────────────────────────────────────────────
