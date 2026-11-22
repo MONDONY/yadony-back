@@ -22,6 +22,9 @@ public class PaymentResponse {
     // constructeurs historiques (bid : le taux vit déjà sur BidQuoteResponse).
     private BigDecimal commissionRate;
     private boolean promoApplied;
+    // Montant déjà remboursé à l'expéditeur, en unités de la devise comme `amount` (100.00 = 100 EUR, jamais en
+    // centimes). Absent du JSON (null) tant que rien n'est remboursé ; inférieur à `amount` après une retenue.
+    private BigDecimal refundedAmount;
 
     public PaymentResponse(UUID id, UUID bidId, String clientSecret,
                            BigDecimal amount, BigDecimal commissionAmount, String status) {
@@ -61,6 +64,8 @@ public class PaymentResponse {
     }
     public BigDecimal getCommissionRate() { return commissionRate; }
     public void setCommissionRate(BigDecimal commissionRate) { this.commissionRate = commissionRate; }
+    public BigDecimal getRefundedAmount() { return refundedAmount; }
+    public void setRefundedAmount(BigDecimal refundedAmount) { this.refundedAmount = refundedAmount; }
     public boolean isPromoApplied() { return promoApplied; }
     public void setPromoApplied(boolean promoApplied) { this.promoApplied = promoApplied; }
 }

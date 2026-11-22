@@ -94,6 +94,23 @@ L'interrupteur n'arrête que les NOUVELLES retenues. Une ligne `DUE` est réglé
 - `nextTierAt` : dernier instant (inclus) du taux affiché ; il est OMIS du JSON quand il est nul (palier le plus cher, ou aucun frais). Dans la fenêtre gratuite, le taux est 0 et la hausse est annoncée. L'app doit relire l'aperçu après `nextTierAt` (le taux a changé).
 - L'aperçu ne rejoue pas `CancellationGuard` : un colis remis après le départ peut afficher 30 % alors que l'annulation sera refusée (`cancel-locked`).
 
+### Configuration publique et montant remboursé
+
+**`GET /api/v1/config/cancellation-fee`** (public, sans authentification, comme tout `/config/**` ; `CancellationFeeConfigController` dans `cancellation/fee`) : l'app choisit ses textes selon `active`, et peut montrer le barème avant paiement.
+
+```json
+{ "active": true, "effectiveFrom": "2026-12-15T00:00:00Z", "capEur": 30,
+  "tiers": [ {"minDaysBefore": 5, "rate": 0}, {"minDaysBefore": 3, "rate": 0.10},
+             {"minDaysBefore": 1, "rate": 0.20}, {"minDaysBefore": 0, "rate": 0.30} ] }
+```
+
+- `active` : interrupteur allumé ET date d'effet posée, c'est `CancellationFeeEligibility.active()`, la même décision que la retenue et l'aperçu.
+- Éteint : `{"active": false, "effectiveFrom": null, ...}` ; le champ `effectiveFrom` reste présent (nul), `capEur` et `tiers` restent (statiques).
+- Sémantique des paliers : un palier s'applique quand il reste au moins `minDaysBefore` jours avant le départ, sauf le premier (le plus lointain, fenêtre gratuite) qui exige strictement plus. Taux de 0 à 1.
+- Aucun montant d'utilisateur n'est exposé.
+
+**`GET /api/v1/payments/bid/{bidId}`** (expéditeur ou voyageur du colis, contrôle de propriété inchangé) : champ additif `refundedAmount`, le montant réellement remboursé (`payments.refunded_amount`), en unités de la devise comme `amount` (70.00 = 70 EUR, jamais en centimes). Absent du JSON tant que rien n'est remboursé (la sérialisation du projet omet les nuls) ; après une retenue il est inférieur à `amount`. Les champs existants ne changent ni de sens ni d'ordre : une ancienne app l'ignore et continue d'afficher le total payé.
+
 ### Entités JPA impliquées
 
 - `CancellationFeeEntity` → `cancellation_fees` (hérite de `BaseEntity`, soft delete) : `bid_id` (unique parmi les lignes non supprimées), `sender_id`, `traveler_id`, `rate`, `reason` (`SENDER_CANCEL`, `SENDER_CANCEL_AFTER_HANDOVER`, `SENDER_NO_SHOW`), `status`, `gross_fee`, `refund_fees`, `commission`, `traveler_net`, `currency` (colonnes NOT NULL : zéro et devise du colis tant que la ligne est `DUE`), `payout_ref` (Transfer Stripe ou opération pawaPay), `payout_pending_reason`, `payout_rearmed_at`.
