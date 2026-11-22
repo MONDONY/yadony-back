@@ -482,6 +482,20 @@ class ReceptionLinkerTest {
     }
 
     @Test
+    void linkIfPossible_locksTheParcelBeforeReadingIt() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        linker.linkIfPossible(bidId);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, linkRepository);
+        order.verify(bidRepository).lockForUpdate(bidId);
+        order.verify(bidRepository).findById(bidId);
+        order.verify(linkRepository).existsByBidId(bidId);
+    }
+
+    @Test
     void linkIfPossible_designatedAccountPending_neverNamesParcel() {
         designated(recipientId);
         when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));

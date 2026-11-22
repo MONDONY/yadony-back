@@ -94,6 +94,8 @@ public class ReceptionLinker {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<BidRecipientLinkEntity> linkIfPossible(UUID bidId) {
+        // Verrou du colis avant sa lecture : le nommage d'un lien d'emblée confirmé réécrit le colis.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId).orElse(null);
         if (bid == null || !BidStatus.IN_FLIGHT.contains(bid.getStatus())
                 || bid.getTrackingToken() == null || linkRepository.existsByBidId(bidId)) {

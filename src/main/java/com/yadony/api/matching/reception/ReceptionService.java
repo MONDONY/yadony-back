@@ -179,6 +179,9 @@ public class ReceptionService {
     /** « C'est pour moi » : idempotent sur un lien déjà confirmé. */
     @Transactional
     public ReceptionResponse confirm(UUID bidId, String firebaseUid) {
+        // Verrou du colis AVANT toute lecture (ordre colis puis lien) : le nom et le numéro posés sur un colis désigné
+        // par identifiant ne doivent pas écraser une mise à jour concurrente (changement de destinataire, remise).
+        bidRepository.lockForUpdate(bidId);
         UserEntity user = currentUser(firebaseUid);
         BidRecipientLinkEntity link = visibleLink(bidId, user.getId());
         BidEntity bid = findBid(bidId);

@@ -415,6 +415,19 @@ class ReceptionServiceTest {
     }
 
     @Test
+    void confirm_locksTheParcelBeforeReadingLinkAndParcel() {
+        BidEntity b = designatedBid();
+        me.setHidePhoneNumber(true);
+
+        service.confirm(b.getId(), "uid-me");
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, linkRepository);
+        order.verify(bidRepository).lockForUpdate(b.getId());
+        order.verify(linkRepository).findByBidIdAndRecipientUserId(b.getId(), meId);
+        order.verify(bidRepository).findById(b.getId());
+    }
+
+    @Test
     void confirm_designated_hiddenPhone_namesButNeverCopiesPhone() {
         BidEntity b = designatedBid();
         me.setHidePhoneNumber(true);
