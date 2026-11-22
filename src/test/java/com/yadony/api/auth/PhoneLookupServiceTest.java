@@ -201,53 +201,27 @@ class PhoneLookupServiceTest {
         verify(userRepository, never()).findTop10ByDeclaredPhoneHash(anyString());
     }
 
-    // ── Constat 6 : cache court de trustedDeclaredPhone ──
+    // ── Aucun cache de confiance : chaque usage revalide le numéro (décision après revue de sécurité) ──
 
     @Test
-    void trustedDeclaredPhone_twoCalls_firebaseHitOnce() {
+    void trustedDeclaredPhone_revalidatedOnEveryCall_smsOwnerAppearingIsSeenAtOnce() {
         UserEntity u = yadonyVerified("u");
-        ownerNotFound();
+        when(firebaseContact.findPhoneOwner(PHONE)).thenReturn(
+                FirebaseContactService.PhoneOwnerLookup.notFound(),
+                FirebaseContactService.PhoneOwnerLookup.found("uid-sms"));
+        when(userRepository.findByFirebaseUid("uid-sms")).thenReturn(java.util.Optional.of(user("uid-sms")));
         candidates(u);
         claims(Map.of("u", PHONE));
         FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
 
         assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
-        assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
-
-        verify(firebaseContact, times(1)).findPhoneOwner(PHONE);
-        verify(firebaseContact, times(1)).getContacts(any());
-    }
-
-    @Test
-    void trustedDeclaredPhone_levelOrHashChange_bypassesCache() {
-        UserEntity u = yadonyVerified("u");
-        ownerNotFound();
-        candidates(u);
-        claims(Map.of("u", PHONE));
-        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
-        assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
-
-        // Redéclaration : niveau retombé à DECLARED, plus de confiance, sans relire le cache.
-        u.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
+        // Un autre compte vient de rattacher le numéro par SMS : la confiance tombe dès l'appel suivant.
         assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
-
-        // Nouveau numéro validé : autre empreinte, autre claim, donc autre clé : Firebase est relu.
-        String other = "+224629999999";
-        u.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
-        u.setDeclaredPhoneHash(hasher.hash(other));
-        when(firebaseContact.findPhoneOwner(other)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
-        when(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(
-                hasher.hash(other), DeclaredPhoneLevel.YADONY_VERIFIED)).thenReturn(List.of(u));
-        claims(Map.of("u", other));
-        assertThat(service.trustedDeclaredPhone(u, new FirebaseContactService.Contact(null, null, other)))
-                .contains(other);
-
-        verify(firebaseContact, times(1)).findPhoneOwner(PHONE);
-        verify(firebaseContact, times(1)).findPhoneOwner(other);
+        verify(firebaseContact, times(2)).findPhoneOwner(PHONE);
     }
 
     @Test
-    void trustedDeclaredPhone_ownerLookupError_notCached() {
+    void trustedDeclaredPhone_ownerLookupError_thenRecovered_noStaleRefusal() {
         UserEntity u = yadonyVerified("u");
         when(firebaseContact.findPhoneOwner(PHONE)).thenReturn(
                 FirebaseContactService.PhoneOwnerLookup.error(), FirebaseContactService.PhoneOwnerLookup.notFound());
@@ -256,34 +230,7 @@ class PhoneLookupServiceTest {
         FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
 
         assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
-        // La panne n'est pas retenue : l'appel suivant relit Firebase et trouve le numéro.
         assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
-        verify(firebaseContact, times(2)).findPhoneOwner(PHONE);
-    }
-
-    @Test
-    void trustedDeclaredPhone_smsOwnerElsewhere_definitiveRefusalCached() {
-        UserEntity u = yadonyVerified("u");
-        ownerIs("uid-sms");
-        when(userRepository.findByFirebaseUid("uid-sms")).thenReturn(java.util.Optional.of(user("uid-sms")));
-        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
-
-        assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
-        assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
-        verify(firebaseContact, times(1)).findPhoneOwner(PHONE);
-    }
-
-    @Test
-    void findByPhone_neverCached_eachCallReadsFirebase() {
-        UserEntity u = yadonyVerified("u");
-        ownerNotFound();
-        candidates(u);
-        claims(Map.of("u", PHONE));
-
-        service.findByPhone(PHONE);
-        service.findByPhone(PHONE);
-
-        verify(firebaseContact, times(2)).findPhoneOwner(PHONE);
     }
 
     private void claims(Map<String, String> declaredByUid) {

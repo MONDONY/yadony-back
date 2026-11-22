@@ -1,15 +1,11 @@
 package com.yadony.api.auth;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Retrouve un compte par son numéro, vérifié par SMS ou déclaré sans SMS.
@@ -32,6 +28,11 @@ import java.util.UUID;
  * Différence résiduelle : un compte validé par Yadony ajoute une lecture groupée (le cache Caffeine de
  * 5 min de {@link FirebaseContactService} l'atténue sans l'effacer). {@link #findAllByPhone}, réservé à
  * l'admin, lit toujours les candidats.
+ *
+ * <p>Aucun cache de confiance ici, volontairement : la confiance accordée à un numéro (rattacher un colis,
+ * accepter une invitation) est revalidée à chaque usage. Un résultat positif gardé ne serait-ce qu'une
+ * minute resterait valable après qu'un propriétaire SMS a rattaché le numéro ou qu'un administrateur a
+ * changé la validation.
  */
 @Component
 public class PhoneLookupService {
@@ -45,26 +46,6 @@ public class PhoneLookupService {
      * à l'ambiguïté ; l'index unique partiel de V393 n'en laisse qu'un en PostgreSQL.
      */
     static final int MAX_YADONY_ROWS = 3;
-
-    /**
-     * Résultat de {@link #trustedDeclaredPhone}, appelé à chaque ouverture des réceptions et des invitations
-     * reçues par un compte validé par Yadony (une recherche de propriétaire et une lecture groupée Firebase,
-     * dans la transaction). Borne de fraîcheur : 60 s. Pendant ce délai, un numéro de confiance le reste
-     * même si un autre compte vient de le rattacher par SMS : au pire le rattrapage lie, dans la minute,
-     * un colis dont le numéro est désormais celui d'un propriétaire SMS (la création d'un colis, elle,
-     * passe par {@link #findByPhone}, jamais mis en cache). Tout changement du compte lui-même (niveau,
-     * empreinte, claim : redéclaration, retour à DECLARED) change la clé et contourne le cache ; un numéro
-     * SMS rattaché à ce compte fait sortir avant l'appel. Ne sont retenues que les issues fondées sur une
-     * réponse Firebase : jamais {@link PhoneMatch.None}, que produisent aussi une panne de la recherche de
-     * propriétaire et une lecture groupée ratée.
-     */
-    private final Cache<TrustKey, Optional<String>> trustCache = Caffeine.newBuilder()
-            .maximumSize(1_000)
-            .expireAfterWrite(Duration.ofSeconds(60))
-            .build();
-
-    /** Tout ce dont dépend la réponse côté compte : une validation retirée ou un autre numéro change la clé. */
-    private record TrustKey(UUID userId, String claim, String storedHash, DeclaredPhoneLevel level) {}
 
     private final FirebaseContactService firebaseContact;
     private final UserRepository userRepository;
@@ -88,33 +69,21 @@ public class PhoneLookupService {
      * vérifié par SMS existe ailleurs, que plusieurs comptes validés se disputent le numéro
      * ({@link PhoneMatch.Ambiguous}) ou qu'un compte a un numéro vérifié par SMS (alors seul celui-là
      * compte). Même règle que le chemin aller : aucun rattachement automatique sur un numéro contesté.
-     * Résultat mis en cache 60 s (voir {@link #trustCache}).
+     * Jamais mis en cache (voir la Javadoc de classe).
      */
     public Optional<String> trustedDeclaredPhone(UserEntity user, FirebaseContactService.Contact contact) {
-        // Sans identifiant, le compte ne peut pas être « l'unique résultat » : inutile d'interroger Firebase.
-        if (user == null || user.getId() == null) {
+        if (user == null) {
             return Optional.empty();
         }
         DeclaredPhoneResolver.Resolved resolved = resolver.resolve(user, contact);
         if (resolved.level() != DeclaredPhoneLevel.YADONY_VERIFIED) {
             return Optional.empty();
         }
-        TrustKey key = new TrustKey(user.getId(), resolved.number(), user.getDeclaredPhoneHash(),
-                user.getDeclaredPhoneLevel());
-        Optional<String> cached = trustCache.getIfPresent(key);
-        if (cached != null) {
-            return cached;
-        }
-        PhoneMatch match = findByPhone(resolved.number());
-        boolean sole = match instanceof PhoneMatch.Found found
+        boolean sole = findByPhone(resolved.number()) instanceof PhoneMatch.Found found
                 && found.trust() == PhoneMatch.Trust.YADONY
-                && found.user() != null
-                && user.getId().equals(found.user().getId());
-        Optional<String> result = sole ? Optional.of(resolved.number()) : Optional.empty();
-        if (!(match instanceof PhoneMatch.None)) {
-            trustCache.put(key, result);
-        }
-        return result;
+                && found.user() != null && found.user().getId() != null
+                && found.user().getId().equals(user.getId());
+        return sole ? Optional.of(resolved.number()) : Optional.empty();
     }
 
     public PhoneMatch findByPhone(String e164) {
