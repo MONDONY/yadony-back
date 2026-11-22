@@ -9,6 +9,7 @@ import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
 import com.yadony.api.matching.ArrivalRules;
 import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRecipientDesignation;
 import com.yadony.api.matching.BidRepository;
 import com.yadony.api.matching.BidService;
 import com.yadony.api.matching.BidStatus;
@@ -73,6 +74,14 @@ public class RecipientChangeService {
         this.tripDelayRepository = tripDelayRepository;
     }
 
+    /** Désignation par identifiant (compte Yadony) ; absente hors Spring, seul le mode nom + numéro marche alors. */
+    private BidRecipientDesignation designation;
+
+    @Autowired
+    void setDesignation(BidRecipientDesignation designation) {
+        this.designation = designation;
+    }
+
     @Autowired
     public RecipientChangeService(BidRepository bidRepository,
                                   AnnouncementRepository announcementRepository,
@@ -123,21 +132,42 @@ public class RecipientChangeService {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-change-not-allowed", "problem.recipient-change-not-allowed");
         }
 
-        String newName = request.recipientName().trim();
-        String newPhone = request.recipientPhone();
-        Optional<String> currentPhone = ReceptionPhones.toE164(bid.getRecipientPhone());
+        boolean byUsername = !isBlank(request.recipientUsername());
+        String newName = isBlank(request.recipientName()) ? null : request.recipientName().trim();
+        String newPhone = isBlank(request.recipientPhone()) ? null : request.recipientPhone();
+        UUID previousAccountId = bid.getRecipientUserId();
+        String previousPhone = bid.getRecipientPhone();
 
-        if (currentPhone.isPresent() && currentPhone.get().equals(newPhone)) {
-            bid.setRecipientName(newName);
-            bidRepository.save(bid);
-            auditService.log("BID", bidId, "RECIPIENT_NAME_UPDATED", caller.getId(),
-                    Map.of("bidId", bidId.toString()));
-            return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
+        if (byUsername) {
+            UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
+                    .map(AnnouncementEntity::getTravelerId).orElse(null);
+            // Pose recipientUserId, "@identifiant" et un numéro nul ; refuse le mélange des modes, le voyageur,
+            // un compte inconnu ou bloqué, soi-même (aucune écriture en cas de refus).
+            designation.apply(bid, caller.getId(), travelerId, request.recipientName(), request.recipientPhone(),
+                    request.recipientUsername());
+            if (bid.getRecipientUserId().equals(previousAccountId)) {
+                // Même compte : seul le libellé est rafraîchi, rien n'est renouvelé.
+                bidRepository.save(bid);
+                auditService.log("BID", bidId, "RECIPIENT_NAME_UPDATED", caller.getId(),
+                        Map.of("bidId", bidId.toString()));
+                return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
+            }
+        } else {
+            if (newName == null || newPhone == null) {
+                throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "recipient-required",
+                        "problem.recipient-required");
+            }
+            Optional<String> currentPhone = ReceptionPhones.toE164(previousPhone);
+            if (currentPhone.isPresent() && currentPhone.get().equals(newPhone)) {
+                bid.setRecipientName(newName);
+                bidRepository.save(bid);
+                auditService.log("BID", bidId, "RECIPIENT_NAME_UPDATED", caller.getId(),
+                        Map.of("bidId", bidId.toString()));
+                return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
+            }
         }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
-        String previousPhone = bid.getRecipientPhone();
-
         // a. Le lien public de l'ancien destinataire cesse de valoir.
         String previousToken = bid.getTrackingToken();
         if (previousToken != null) {
@@ -172,8 +202,12 @@ public class RecipientChangeService {
             linkRepository.save(l);
         }
 
-        bid.setRecipientName(newName);
-        bid.setRecipientPhone(newPhone);
+        if (!byUsername) {
+            // Retour au mode numéro : le compte désigné perd l'accès sur-le-champ.
+            bid.setRecipientName(newName);
+            bid.setRecipientPhone(newPhone);
+            bid.setRecipientUserId(null);
+        }
         bidRepository.save(bid);
 
         // f. Jamais de numéro en clair dans le journal (clés hors liste de masquage
@@ -181,13 +215,23 @@ public class RecipientChangeService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("bidId", bidId.toString());
         payload.put("previousNumberMasked", maskedOrUnknown(previousPhone));
-        payload.put("newNumberMasked", maskedOrUnknown(newPhone));
+        if (byUsername) {
+            payload.put("newRecipientUserId", bid.getRecipientUserId().toString());
+        } else {
+            payload.put("newNumberMasked", maskedOrUnknown(newPhone));
+        }
+        if (previousAccountId != null) {
+            payload.put("previousRecipientUserId", previousAccountId.toString());
+        }
         payload.put("codeRegenerated", String.valueOf(codeRegenerated));
         payload.put("trackingTokenRevoked", String.valueOf(previousToken != null));
         if (previousLinkStatus != null) {
             payload.put("previousLinkStatus", previousLinkStatus);
         }
         auditService.log("BID", bidId, "RECIPIENT_CHANGED", caller.getId(), payload);
+        if (byUsername) {
+            designation.audit(bid, caller.getId());
+        }
 
         // c, d, e. Notifications et rattachement du nouveau numéro, après validation.
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
@@ -196,6 +240,10 @@ public class RecipientChangeService {
         eventPublisher.publishEvent(new BidRecipientChangedEvent(bidId, previousRecipientId, travelerId));
 
         return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     /** Numéro masqué ({@code +221 •••• 67}), ou « inconnu » s'il n'est pas lisible. */
