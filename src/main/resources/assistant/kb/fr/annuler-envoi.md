@@ -8,7 +8,7 @@ routes:
 ---
 Ouvrez l'envoi dans Activités › Mes colis puis touchez « Annuler la demande ».
 Avant le paiement, rien n'est débité et le voyageur est prévenu.
-Une fois la demande acceptée, votre paiement est remboursé automatiquement. Selon la date du colis et le délai avant le départ, des frais d'annulation peuvent être retenus sur ce remboursement (barème dans la fiche « Frais d'annulation »). L'application affiche le montant exact avant que vous confirmiez ; si aucun montant n'est affiché, vous êtes remboursé intégralement.
+Une fois la demande acceptée, votre paiement est remboursé automatiquement. Selon la date du colis et le délai avant le départ, des frais d'annulation peuvent être retenus sur ce remboursement (barème dans la fiche « Frais d'annulation »). Quand l'aperçu est disponible, l'application affiche le montant exact avant que vous confirmiez ; si elle indique qu'aucun frais ne s'applique, vous êtes remboursé intégralement. Si aucun montant n'est affiché parce que l'aperçu est indisponible, le montant exact est retenu selon le barème au moment de l'annulation.
 Si le colis est déjà remis mais que le trajet n'est pas parti, votre paiement vous est remboursé (sous réserve d'éventuels frais d'annulation, comme ci-dessus) et vous récupérez votre colis sous 3 jours : le voyageur confirme la restitution en saisissant votre code de retour.
 Une fois le colis en route, ou le départ passé pour un colis déjà remis, l'annulation n'est plus possible : en cas de problème, écrivez à l'équipe.
 Colis bateau payé au dépôt : une fois le transporteur payé au dépôt du colis, l'annulation est refusée et rien n'est remboursé automatiquement ; contactez le support pour ouvrir un litige.
