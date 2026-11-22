@@ -237,7 +237,10 @@ public class RecipientChangeService {
         UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
                 .map(AnnouncementEntity::getTravelerId)
                 .orElse(null);
-        eventPublisher.publishEvent(new BidRecipientChangedEvent(bidId, previousRecipientId, travelerId));
+        // L'ancien titulaire du lien redevient le destinataire désigné : pas de « colis réaffecté » pour lui.
+        UUID notifiedPrevious = previousRecipientId != null && previousRecipientId.equals(bid.getRecipientUserId())
+                ? null : previousRecipientId;
+        eventPublisher.publishEvent(new BidRecipientChangedEvent(bidId, notifiedPrevious, travelerId));
 
         return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
     }

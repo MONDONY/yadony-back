@@ -66,6 +66,7 @@ class ReceptionServiceTest {
     @Mock AuditService auditService;
     @Mock StorageService storageService;
     @Mock RatingRepository ratingRepository;
+    @Mock com.yadony.api.auth.FirebaseContactService firebaseContact;
 
     ReceptionService service;
 
@@ -81,6 +82,7 @@ class ReceptionServiceTest {
         service = new ReceptionService(linkRepository, bidRepository, announcementRepository, userRepository,
                 linker, notificationDispatcher, auditService, storageService, ratingRepository,
                 Clock.fixed(NOW, ZoneOffset.UTC));
+        service.setFirebaseContact(firebaseContact);
         me = user(meId, "Fatou");
         me.setFirebaseUid("uid-me");
         lenient().when(userRepository.findByFirebaseUid("uid-me")).thenReturn(Optional.of(me));
@@ -381,6 +383,92 @@ class ReceptionServiceTest {
                 .thenReturn(Optional.of(link(b, ReceptionLinkStatus.DECLINED)));
 
         assertNotFound(() -> service.confirm(b.getId(), "uid-me"));
+    }
+
+    // ── confirm : colis désigné par identifiant ─────────────────────────────
+
+    private BidEntity designatedBid() {
+        BidEntity b = bid(BidStatus.HANDED_OVER, NOW_LDT);
+        b.setRecipientUserId(meId);
+        b.setRecipientName("@fatou.diop");
+        b.setRecipientPhone(null);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.PENDING)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        return b;
+    }
+
+    @Test
+    void confirm_designated_setsPublicNameAndCopiesVisiblePhone() {
+        BidEntity b = designatedBid();
+        me.setHidePhoneNumber(false);
+        when(firebaseContact.getContact("uid-me"))
+                .thenReturn(new com.yadony.api.auth.FirebaseContactService.Contact("+221 77 123 45 67", null));
+
+        ReceptionResponse r = service.confirm(b.getId(), "uid-me");
+
+        assertThat(b.getRecipientName()).isEqualTo(me.publicDisplayName()).isNotEqualTo("@fatou.diop");
+        assertThat(b.getRecipientPhone()).isEqualTo("+221771234567");
+        assertThat(b.getRecipientUserId()).isEqualTo(meId);
+        assertThat(r.recipientName()).isEqualTo(me.publicDisplayName());
+        verify(bidRepository).save(b);
+    }
+
+    @Test
+    void confirm_designated_hiddenPhone_namesButNeverCopiesPhone() {
+        BidEntity b = designatedBid();
+        me.setHidePhoneNumber(true);
+
+        service.confirm(b.getId(), "uid-me");
+
+        assertThat(b.getRecipientName()).isEqualTo(me.publicDisplayName());
+        assertThat(b.getRecipientPhone()).isNull();
+        verify(firebaseContact, never()).getContact(any());
+    }
+
+    @Test
+    void confirm_designated_accountWithoutPhone_leavesPhoneNull() {
+        BidEntity b = designatedBid();
+        when(firebaseContact.getContact("uid-me"))
+                .thenReturn(com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
+
+        service.confirm(b.getId(), "uid-me");
+
+        assertThat(b.getRecipientName()).isEqualTo(me.publicDisplayName());
+        assertThat(b.getRecipientPhone()).isNull();
+    }
+
+    @Test
+    void confirm_designated_alreadyConfirmed_doesNotOverwrite() {
+        BidEntity b = bid(BidStatus.HANDED_OVER, NOW_LDT);
+        b.setRecipientUserId(meId);
+        b.setRecipientName("Nom deja pose");
+        b.setRecipientPhone(null);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+
+        service.confirm(b.getId(), "uid-me");
+
+        assertThat(b.getRecipientName()).isEqualTo("Nom deja pose");
+        assertThat(b.getRecipientPhone()).isNull();
+        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
+    void confirm_byNumber_keepsNameAndPhoneUntouched() {
+        BidEntity b = bid(BidStatus.HANDED_OVER, NOW_LDT);
+        b.setRecipientPhone("+221771234567");
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.PENDING)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+
+        service.confirm(b.getId(), "uid-me");
+
+        assertThat(b.getRecipientName()).isEqualTo("Fatou Diop");
+        assertThat(b.getRecipientPhone()).isEqualTo("+221771234567");
+        verify(bidRepository, never()).save(any());
+        verify(firebaseContact, never()).getContact(any());
     }
 
     // ── decline ─────────────────────────────────────────────────────────────

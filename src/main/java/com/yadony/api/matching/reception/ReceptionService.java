@@ -98,6 +98,14 @@ public class ReceptionService {
         this.clock = clock;
     }
 
+    /** Numéro du compte, copié sur un colis désigné par identifiant à la confirmation ; absent hors Spring. */
+    private com.yadony.api.auth.FirebaseContactService firebaseContact;
+
+    @Autowired
+    void setFirebaseContact(com.yadony.api.auth.FirebaseContactService firebaseContact) {
+        this.firebaseContact = firebaseContact;
+    }
+
     /**
      * Rôle de l'utilisateur sur un colis, pour le lien yadony://colis/{id} de la page
      * publique du QR. Jamais d'erreur sur un colis inconnu : NONE, sans dire s'il existe.
@@ -182,12 +190,30 @@ public class ReceptionService {
             linkRepository.save(link);
             auditService.log("BID_RECIPIENT_LINK", link.getId(), "RECEPTION_CONFIRMED", user.getId(),
                     Map.of("bidId", bidId.toString()));
+            nameDesignatedParcel(bid, user);
             var text = NotificationTexts.recipientConfirmed(
                     notificationDispatcher.messagesFor(bid.getSenderId()), user.getFirstName());
             notificationDispatcher.notifyUser(bid.getSenderId(), text.title(), text.body(),
                     Map.of("type", ReceptionNotifications.CONFIRMED, "bidId", bidId.toString()));
         }
         return toResponse(link, bid);
+    }
+
+    /**
+     * Colis désigné par identifiant : à la confirmation, le nom devient le nom public du compte et son numéro
+     * est copié, seulement s'il ne le masque pas et s'il est connu. Jamais avant la confirmation ; un numéro déjà
+     * copié reste si le compte le masque ensuite. Un colis désigné par numéro n'est pas touché.
+     */
+    private void nameDesignatedParcel(BidEntity bid, UserEntity user) {
+        if (bid.getRecipientUserId() == null || !bid.getRecipientUserId().equals(user.getId())) {
+            return;
+        }
+        bid.setRecipientName(user.publicDisplayName());
+        if (!user.isHidePhoneNumber() && firebaseContact != null) {
+            ReceptionPhones.toE164(firebaseContact.getContact(user.getFirebaseUid()).phoneNumber())
+                    .ifPresent(bid::setRecipientPhone);
+        }
+        bidRepository.save(bid);
     }
 
     /**

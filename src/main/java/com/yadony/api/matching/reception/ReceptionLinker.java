@@ -3,6 +3,7 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.RecetteMode;
@@ -95,12 +96,7 @@ public class ReceptionLinker {
                 || bid.getTrackingToken() == null || linkRepository.existsByBidId(bidId)) {
             return Optional.empty();
         }
-        Optional<String> e164 = ReceptionPhones.toE164(bid.getRecipientPhone());
-        if (e164.isEmpty()) {
-            return Optional.empty();
-        }
-        Optional<UserEntity> recipient = firebaseContact.findUidByPhone(e164.get())
-                .flatMap(userRepository::findByFirebaseUid);
+        Optional<UserEntity> recipient = resolveRecipient(bid);
         if (recipient.isEmpty()) {
             return Optional.empty();
         }
@@ -130,6 +126,23 @@ public class ReceptionLinker {
         BidRecipientLinkEntity link = save(bid, recipientId, "LINKED_ON_ACCEPT");
         notifyIncoming(bid, announcement, recipientId);
         return Optional.of(link);
+    }
+
+    /**
+     * Compte destinataire du colis : le compte désigné par identifiant quand il y en a un (actif : un compte
+     * supprimé, suspendu, banni ou en cours de suppression ne reçoit aucun lien), sinon celui du numéro saisi
+     * (recherche Firebase).
+     */
+    private Optional<UserEntity> resolveRecipient(BidEntity bid) {
+        if (bid.getRecipientUserId() != null) {
+            return userRepository.findById(bid.getRecipientUserId())
+                    .filter(u -> u.getStatus() == UserStatus.ACTIVE);
+        }
+        Optional<String> e164 = ReceptionPhones.toE164(bid.getRecipientPhone());
+        if (e164.isEmpty()) {
+            return Optional.empty();
+        }
+        return firebaseContact.findUidByPhone(e164.get()).flatMap(userRepository::findByFirebaseUid);
     }
 
     /**

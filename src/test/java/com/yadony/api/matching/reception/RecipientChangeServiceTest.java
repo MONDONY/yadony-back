@@ -321,6 +321,19 @@ class RecipientChangeServiceTest {
     }
 
     @Test
+    void numberToUsername_sameAccountAsPreviousLink_noReassignedPushToThatAccount() {
+        when(resolver.resolve(senderId, "awa.diallo")).thenReturn(new RecipientAccount(accountId, "awa.diallo"));
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        l.respond(ReceptionLinkStatus.CONFIRMED, null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("awa.diallo"));
+
+        assertThat(l.getDeletedAt()).isNotNull();
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), null, travelerId));
+    }
+
+    @Test
     void numberToUsername_setsAccount_nullPhone_rotatesTokenAndCode_publishesEvent() {
         when(resolver.resolve(senderId, "awa.diallo")).thenReturn(new RecipientAccount(accountId, "awa.diallo"));
         BidRecipientLinkEntity l = link(ReceptionLinkStatus.CONFIRMED);
