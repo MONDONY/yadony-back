@@ -50,6 +50,7 @@ class ReceptionLinkerTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
     @Mock RecipientTrust recipientTrust;
+    @Mock DesignatedRecipientNaming designatedNaming;
     @InjectMocks ReceptionLinker linker;
 
     private final UUID bidId = UUID.randomUUID();
@@ -477,6 +478,29 @@ class ReceptionLinkerTest {
         assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.CONFIRMED);
         verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis arrive"), any(), any());
         verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_TRUSTED_ON_ACCEPT"), eq(null), any());
+        verify(designatedNaming).apply(eq(bid), any(UserEntity.class));
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountPending_neverNamesParcel() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        linker.linkIfPossible(bidId);
+
+        verify(designatedNaming, never()).apply(any(), any());
+    }
+
+    @Test
+    void linkIfPossible_trustedByNumber_neverNamesParcel() {
+        recipientFound(recipientId);
+        when(recipientTrust.isTrusted(senderId, recipientId)).thenReturn(true);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        linker.linkIfPossible(bidId);
+
+        verify(designatedNaming, never()).apply(any(), any());
     }
 
     @Test

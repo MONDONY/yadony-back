@@ -50,6 +50,7 @@ public class ReceptionLinker {
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
     private final RecipientTrust recipientTrust;
+    private final DesignatedRecipientNaming designatedNaming;
 
     public ReceptionLinker(BidRepository bidRepository,
                            AnnouncementRepository announcementRepository,
@@ -59,7 +60,8 @@ public class ReceptionLinker {
                            BlockVisibility blockVisibility,
                            NotificationDispatcher notificationDispatcher,
                            AuditService auditService,
-                           RecipientTrust recipientTrust) {
+                           RecipientTrust recipientTrust,
+                           DesignatedRecipientNaming designatedNaming) {
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -69,6 +71,7 @@ public class ReceptionLinker {
         this.notificationDispatcher = notificationDispatcher;
         this.auditService = auditService;
         this.recipientTrust = recipientTrust;
+        this.designatedNaming = designatedNaming;
     }
 
     /** Mode recette (FLUTTER-FB) ; fermé tant que Spring ne l'a pas injecté. */
@@ -120,6 +123,10 @@ public class ReceptionLinker {
 
         if (recipientTrust.isTrusted(bid.getSenderId(), recipientId)) {
             BidRecipientLinkEntity link = saveConfirmed(bid, recipientId, "LINKED_TRUSTED_ON_ACCEPT");
+            if (bid.getRecipientUserId() != null) {
+                // Lien d'emblée confirmé : même effet qu'une confirmation (nom public, numéro si visible).
+                designatedNaming.apply(bid, recipient.get());
+            }
             notifyAnnounced(bid, recipientId);
             return Optional.of(link);
         }

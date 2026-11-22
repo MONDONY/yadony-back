@@ -81,8 +81,8 @@ class ReceptionServiceTest {
     void setUp() {
         service = new ReceptionService(linkRepository, bidRepository, announcementRepository, userRepository,
                 linker, notificationDispatcher, auditService, storageService, ratingRepository,
+                new DesignatedRecipientNaming(firebaseContact, bidRepository),
                 Clock.fixed(NOW, ZoneOffset.UTC));
-        service.setFirebaseContact(firebaseContact);
         me = user(meId, "Fatou");
         me.setFirebaseUid("uid-me");
         lenient().when(userRepository.findByFirebaseUid("uid-me")).thenReturn(Optional.of(me));

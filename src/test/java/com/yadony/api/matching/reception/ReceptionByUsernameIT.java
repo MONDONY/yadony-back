@@ -64,6 +64,7 @@ class ReceptionByUsernameIT {
     @Autowired BidRecipientLinkRepository linkRepository;
     @Autowired ReceptionLinker linker;
     @MockitoBean FirebaseContactService firebaseContact;
+    @MockitoBean com.yadony.api.common.RecipientTrust recipientTrust;
 
     private UserEntity sender;
     private UserEntity traveler;
@@ -149,6 +150,33 @@ class ReceptionByUsernameIT {
         userRepository.save(account);
 
         assertThat(bidRepository.findById(bid.getId()).orElseThrow().getRecipientPhone()).isEqualTo(ACCOUNT_PHONE);
+    }
+
+    @Test
+    void designated_trustedAccount_linkedConfirmed_namedAndPhoneCopiedAtLink() {
+        when(recipientTrust.isTrusted(sender.getId(), account.getId())).thenReturn(true);
+        BidEntity bid = persistBid(BidStatus.ACCEPTED, account.getId());
+
+        Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bid.getId());
+
+        assertThat(link).get().extracting(BidRecipientLinkEntity::getStatus).isEqualTo(ReceptionLinkStatus.CONFIRMED);
+        BidEntity saved = bidRepository.findById(bid.getId()).orElseThrow();
+        assertThat(saved.getRecipientName()).isEqualTo(account.publicDisplayName());
+        assertThat(saved.getRecipientPhone()).isEqualTo(ACCOUNT_PHONE);
+    }
+
+    @Test
+    void designated_trustedAccountHidingPhone_namedButPhoneNull() {
+        account.setHidePhoneNumber(true);
+        userRepository.save(account);
+        when(recipientTrust.isTrusted(sender.getId(), account.getId())).thenReturn(true);
+        BidEntity bid = persistBid(BidStatus.ACCEPTED, account.getId());
+
+        linker.linkIfPossible(bid.getId());
+
+        BidEntity saved = bidRepository.findById(bid.getId()).orElseThrow();
+        assertThat(saved.getRecipientName()).isEqualTo(account.publicDisplayName());
+        assertThat(saved.getRecipientPhone()).isNull();
     }
 
     @Test
