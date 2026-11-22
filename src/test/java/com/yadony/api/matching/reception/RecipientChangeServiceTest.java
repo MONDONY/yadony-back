@@ -379,6 +379,77 @@ class RecipientChangeServiceTest {
     }
 
     @Test
+    void sameUsernameAfterConfirmation_rewritesNothing() {
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("Binta S.");
+        bid.setRecipientPhone("+221781112233");
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        l.respond(ReceptionLinkStatus.CONFIRMED, null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+        when(resolver.resolve(senderId, "binta.sow")).thenReturn(new RecipientAccount(accountId, "binta.sow"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("binta.sow"));
+
+        assertThat(bid.getRecipientName()).isEqualTo("Binta S.");
+        assertThat(bid.getRecipientPhone()).isEqualTo("+221781112233");
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountId);
+        assertThat(bid.getTrackingToken()).isEqualTo(OLD_TOKEN);
+        assertThat(l.getDeletedAt()).isNull();
+        verify(bidRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void usernameAToUsernameB_pushesReassignedToTheOldAccount() {
+        UUID accountB = UUID.randomUUID();
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("@awa.diallo");
+        bid.setRecipientPhone(null);
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+        when(resolver.resolve(senderId, "binta.sow")).thenReturn(new RecipientAccount(accountB, "binta.sow"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("binta.sow"));
+
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountB);
+        assertThat(bid.getRecipientName()).isEqualTo("@binta.sow");
+        assertThat(l.getDeletedAt()).isNotNull();
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), accountId, travelerId));
+    }
+
+    @Test
+    void declinedThenNewUsername_dropsDeclinedLink_noReassignedPush() {
+        UUID accountB = UUID.randomUUID();
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("@awa.diallo");
+        bid.setRecipientPhone(null);
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        l.respond(ReceptionLinkStatus.DECLINED, null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+        when(resolver.resolve(senderId, "binta.sow")).thenReturn(new RecipientAccount(accountB, "binta.sow"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("binta.sow"));
+
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountB);
+        assertThat(l.getDeletedAt()).isNotNull();
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), null, travelerId));
+    }
+
+    @Test
+    void lookupQuotaExhausted_429_noWrite() {
+        when(resolver.resolve(senderId, "binta.sow")).thenThrow(YadonyBusinessException.localized(
+                HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota", "problem.recipient-lookup-quota"));
+
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID, byUsername("binta.sow")),
+                HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota");
+
+        assertThat(bid.getRecipientUserId()).isNull();
+        assertThat(bid.getRecipientPhone()).isEqualTo("+221 77 123 45 67");
+        verify(bidRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
     void sameUsername_onlyRefreshesTheLabel() {
         bid.setRecipientUserId(accountId);
         bid.setRecipientName("@ancien.nom");

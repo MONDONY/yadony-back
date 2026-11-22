@@ -2,6 +2,7 @@ package com.yadony.api.addressbook.invitation;
 
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.RecipientAccount;
 import com.yadony.api.common.RecipientAccountResolver;
 import com.yadony.api.common.YadonyNotFoundException;
@@ -30,6 +31,10 @@ public class UsernameRecipientResolver implements RecipientAccountResolver {
         lookupService.beginLookup(callerUserId, rawUsername);
         UserEntity found = lookupService.resolveVisible(caller, rawUsername)
                 .orElseThrow(UsernameLookupService::notFound);
+        // Un compte désigné doit pouvoir recevoir : actif seulement (suspendu, banni, en cours de suppression : 404).
+        if (found.getStatus() != UserStatus.ACTIVE) {
+            throw UsernameLookupService.notFound();
+        }
         if (found.getId().equals(callerUserId)) {
             throw UsernameLookupService.selfInvitation();
         }

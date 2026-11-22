@@ -4,6 +4,7 @@ import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.Msisdn;
+import com.yadony.api.common.RecipientAccount;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -141,17 +142,26 @@ public class RecipientChangeService {
         if (byUsername) {
             UUID travelerId = announcementRepository.findById(bid.getAnnouncementId())
                     .map(AnnouncementEntity::getTravelerId).orElse(null);
-            // Pose recipientUserId, "@identifiant" et un numéro nul ; refuse le mélange des modes, le voyageur,
-            // un compte inconnu ou bloqué, soi-même (aucune écriture en cas de refus).
-            designation.apply(bid, caller.getId(), travelerId, request.recipientName(), request.recipientPhone(),
-                    request.recipientUsername());
-            if (bid.getRecipientUserId().equals(previousAccountId)) {
-                // Même compte : seul le libellé est rafraîchi, rien n'est renouvelé.
+            // Résolution AVANT toute écriture : refuse le mélange des modes, le voyageur, un compte inconnu, bloqué
+            // ou inéligible, soi-même.
+            RecipientAccount account = designation.resolve(caller.getId(), travelerId, request.recipientName(),
+                    request.recipientPhone(), request.recipientUsername());
+            if (account.userId().equals(previousAccountId)) {
+                Optional<BidRecipientLinkEntity> current = linkRepository.findByBidId(bidId);
+                boolean confirmed = current.filter(l -> l.getStatus() == ReceptionLinkStatus.CONFIRMED
+                        && account.userId().equals(l.getRecipientUserId())).isPresent();
+                if (confirmed) {
+                    // Déjà confirmé : le colis porte le nom public et le numéro copiés, on n'y touche plus.
+                    return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
+                }
+                // Même compte, pas encore confirmé : seul le libellé est rafraîchi, rien n'est renouvelé.
+                designation.applyAccount(bid, account);
                 bidRepository.save(bid);
                 auditService.log("BID", bidId, "RECIPIENT_NAME_UPDATED", caller.getId(),
                         Map.of("bidId", bidId.toString()));
                 return bidService.getBidAfterOwnMutation(bidId, firebaseUid);
             }
+            designation.applyAccount(bid, account);
         } else {
             if (newName == null || newPhone == null) {
                 throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "recipient-required",

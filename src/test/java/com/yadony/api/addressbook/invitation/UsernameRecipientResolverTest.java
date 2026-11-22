@@ -92,6 +92,32 @@ class UsernameRecipientResolverTest {
     }
 
     @Test
+    void bannedIsNotFound() {
+        UserEntity awa = user("awa.diallo");
+        awa.setStatus(UserStatus.BANNED);
+        when(userRepository.findByUsernameIgnoreCase("awa.diallo")).thenReturn(Optional.of(awa));
+
+        assertStatus(() -> resolver.resolve(me.getId(), "awa.diallo"), HttpStatus.NOT_FOUND, "user-not-found");
+    }
+
+    @Test
+    void pendingDeletionIsNotFound() {
+        UserEntity awa = user("awa.diallo");
+        awa.setStatus(UserStatus.PENDING_DELETION);
+        when(userRepository.findByUsernameIgnoreCase("awa.diallo")).thenReturn(Optional.of(awa));
+
+        assertStatus(() -> resolver.resolve(me.getId(), "awa.diallo"), HttpStatus.NOT_FOUND, "user-not-found");
+    }
+
+    @Test
+    void deletedAccountIsNotFound() {
+        // Un compte supprimé (soft delete, @Where) n'est plus rendu par le dépôt.
+        when(userRepository.findByUsernameIgnoreCase("awa.diallo")).thenReturn(Optional.empty());
+
+        assertStatus(() -> resolver.resolve(me.getId(), "awa.diallo"), HttpStatus.NOT_FOUND, "user-not-found");
+    }
+
+    @Test
     void selfIsRejected() {
         when(userRepository.findByUsernameIgnoreCase("moi.moi")).thenReturn(Optional.of(me));
 

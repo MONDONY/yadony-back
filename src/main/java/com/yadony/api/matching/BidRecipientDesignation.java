@@ -37,6 +37,15 @@ public class BidRecipientDesignation {
             bid.setRecipientPhone(phone);
             return;
         }
+        applyAccount(bid, resolve(senderId, travelerId, name, phone, username));
+    }
+
+    /**
+     * Résout le compte désigné SANS toucher au colis : refuse le mélange des modes, un compte inconnu, bloqué ou
+     * inéligible, soi-même, le voyageur. Permet à l'appelant de décider avant toute écriture (re-désignation du même
+     * compte après sa confirmation, par exemple).
+     */
+    public RecipientAccount resolve(UUID senderId, UUID travelerId, String name, String phone, String username) {
         if (!isBlank(name) || !isBlank(phone)) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "recipient-mode-conflict",
                     "problem.recipient-mode-conflict");
@@ -46,6 +55,11 @@ public class BidRecipientDesignation {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "recipient-is-traveler",
                     "problem.recipient-is-traveler");
         }
+        return account;
+    }
+
+    /** Pose le compte résolu sur le colis : {@code recipientUserId}, {@code "@identifiant"}, numéro nul. */
+    public void applyAccount(BidEntity bid, RecipientAccount account) {
         bid.setRecipientUserId(account.userId());
         bid.setRecipientName("@" + account.username());
         bid.setRecipientPhone(null);
