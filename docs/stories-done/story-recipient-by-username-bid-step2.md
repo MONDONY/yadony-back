@@ -48,3 +48,7 @@ Back d'abord, puis app (la PR app cite la PR back et tolère l'ancien contrat). 
 ## Tests
 - Base de connaissances (`KnowledgeBase*Test`, `AssistantServiceTest`) : 183 tests, 0 rouge.
 Suite complète locale (./mvnw test jacoco:report, 18 218 tests) : 1 échec réel dû à ce changement, corrigé (RecipientInvitationLookupIT attendait le JSON exact sans `parcelDesignation`, relancé vert). Les 16 erreurs restantes et le scénario Cucumber viennent de PostgreSQL embarqué qui ne démarre pas sur ce Mac (initdb, limite de 32 segments de mémoire partagée ; « Connection refused » localhost) : à trancher par la CI Linux. Couverture JaCoCo locale non exploitable (rapport faussé par les forks tombés) : à lire sur la CI.
+
+## Complément (22/11) : numéro déclaré sans SMS
+
+À la confirmation, le numéro copié dans le colis est celui **vérifié par SMS**, sinon celui **déclaré sans SMS** (claim Firebase `declared_phone`), seulement si le compte ne masque pas son numéro. Avant ce complément, un destinataire de pays sans SMS (Côte d'Ivoire, Sénégal, Mali, Cameroun) n'avait jamais de numéro sur le colis. Décision du propriétaire du 22/11 ; vérifié sur staging avec des comptes créés par e-mail.
