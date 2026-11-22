@@ -7,7 +7,7 @@
 -- declared-phone-conflict. Les simples déclarants (DECLARED) restent libres de partager un numéro, et
 -- un compte supprimé (deleted_at) ne bloque plus personne.
 --
--- Index partiel : la colonne declared_phone_level n'existe qu'à partir de V396. Sous H2 (profil test,
+-- Index partiel : la colonne declared_phone_level n'existe qu'à partir de V397. Sous H2 (profil test,
 -- schéma créé par Hibernate), la migration ne tourne pas : DeclaredPhoneSchemaPostgresIT et
 -- AdminDeclaredPhoneRacePostgresIT la vérifient sur PostgreSQL.
 CREATE UNIQUE INDEX uq_users_declared_phone_yadony

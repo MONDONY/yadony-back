@@ -18,8 +18,8 @@ Spécification : `docs/superpowers/specs/2026-11-21-telephone-sans-sms-design.md
 - `src/main/java/com/yadony/api/auth/DeclaredPhoneResolver.java` — point unique qui décide quel numéro déclaré et quel niveau un compte peut exposer.
 - `src/main/java/com/yadony/api/auth/PhoneLookupService.java` — recherche d'un compte par numéro (SMS ou déclaré) avec la précédence, et `trustedDeclaredPhone`.
 - `src/main/java/com/yadony/api/auth/PhoneMatch.java` — `Found(user, trust SMS|YADONY|DECLARED)`, `Ambiguous`, `None`.
-- `src/main/resources/db/migration/V396__declared_phone.sql` — 4 colonnes nullables sur `users` + index sur l'empreinte.
-- `src/main/resources/db/migration/V397__declared_phone_yadony_unique.sql` — index unique partiel : un seul compte vivant validé par Yadony par numéro.
+- `src/main/resources/db/migration/V397__declared_phone.sql` — 4 colonnes nullables sur `users` + index sur l'empreinte.
+- `src/main/resources/db/migration/V398__declared_phone_yadony_unique.sql` — index unique partiel : un seul compte vivant validé par Yadony par numéro.
 - `src/main/resources/assistant/kb/{fr,en}/numero-sans-sms.md`, `src/main/resources/assistant/admin-help/numero-declare-verifie-par-yadony.md` — fiches de l'assistant.
 
 ## Fichiers modifiés
@@ -54,7 +54,7 @@ Spécification : `docs/superpowers/specs/2026-11-21-telephone-sans-sms-design.md
 1. La fiche admin affiche le numéro déclaré et son niveau ; l'admin envoie `POST /admin/users/{id}/declared-phone/verify` avec le numéro qu'il voit.
 2. `AdminDeclaredPhoneService.verify` : lecture Firebase stricte (panne = 503), claim et empreinte concordants (sinon 409 `declared-phone-missing`), numéro affiché = claim (sinon 409 `declared-phone-changed`), pas de numéro SMS sur le compte (409 `phone-already-set`).
 3. `requireNoOtherOwner` : propriétaire SMS ailleurs = 409 `declared-phone-conflict` ; numéro SMS porté par un compte Firebase sans compte Yadony vivant = 409 `declared-phone-held-by-unregistered-account` ; panne de la recherche = 503 ; autre compte déjà validé en base = 409 `declared-phone-conflict`.
-4. Niveau `YADONY_VERIFIED`, date et administrateur, `saveAndFlush` (une violation de l'index V397 = 409 `declared-phone-conflict`), audit `ADMIN_USER_PHONE_VERIFIED` sans numéro. Idempotent.
+4. Niveau `YADONY_VERIFIED`, date et administrateur, `saveAndFlush` (une violation de l'index V398 = 409 `declared-phone-conflict`), audit `ADMIN_USER_PHONE_VERIFIED` sans numéro. Idempotent.
 
 **Utilisation du numéro**
 - Contact d'une contrepartie (`ContactPhoneResponse`) : le numéro SMS, sinon le déclaré avec `verification`.
@@ -70,14 +70,14 @@ Spécification : `docs/superpowers/specs/2026-11-21-telephone-sans-sms-design.md
 
 ### Entités JPA impliquées
 - `UserEntity` → table `users` : `declared_phone_hash` (VARCHAR 64, HMAC-SHA256 hexadécimal), `declared_phone_level` (`DECLARED` | `YADONY_VERIFIED`), `declared_phone_verified_at`, `declared_phone_verified_by` (UUID admin). Le numéro en clair n'est **jamais** en base : il vit dans le claim Firebase `declared_phone`. Soft delete via `@Where(deleted_at IS NULL)`.
-- Index `idx_users_declared_phone_hash` (V396) ; index unique partiel `uq_users_declared_phone_yadony` sur `declared_phone_hash` `WHERE declared_phone_level = 'YADONY_VERIFIED' AND deleted_at IS NULL` (V397).
+- Index `idx_users_declared_phone_hash` (V397) ; index unique partiel `uq_users_declared_phone_yadony` sur `declared_phone_hash` `WHERE declared_phone_level = 'YADONY_VERIFIED' AND deleted_at IS NULL` (V398).
 
 ### Logique métier critique
 - **Trois niveaux** : déclaré (aucune preuve), « Vérifié par Yadony » (validation manuelle), vérifié par SMS (seul à servir à la connexion et aux paiements). Le déclaré n'est jamais écrit dans Firebase `phoneNumber` : ~10 lecteurs le prennent pour vérifié (vol de colis, squat de numéro).
 - **Règle de fiabilité** (`DeclaredPhoneResolver`) : le niveau en base n'est cru que si l'empreinte du claim courant égale `declared_phone_hash` ; sinon le compte retombe à `DECLARED`. Un numéro SMS sur le compte fait ignorer le déclaré.
 - **Précédence** (`PhoneLookupService.findByPhone`) : propriétaire SMS > compte unique validé par Yadony > ambigu (plusieurs validés) ; un simple déclarant n'est jamais rattaché. Panne Firebase = aucun résultat (échec fermé). Les comptes validés sont lus par une requête dédiée (plafond 3), jamais dans la liste mixte plafonnée à 10 : des déclarants en nombre ne peuvent pas masquer le compte validé.
 - **Décision du propriétaire (21/11)** : un numéro simplement déclaré ne rattache jamais un colis et ne résout jamais une invitation (sinon un faux compte verrait le code de retrait d'un destinataire).
-- **Pas d'unicité des déclarés** : plusieurs comptes peuvent déclarer le même numéro ; un seul peut être validé (V397).
+- **Pas d'unicité des déclarés** : plusieurs comptes peuvent déclarer le même numéro ; un seul peut être validé (V398).
 - **Aucun cache de confiance** : `trustedDeclaredPhone` et `findByPhone` interrogent Firebase à chaque usage (recherche du propriétaire SMS ; la lecture groupée des claims profite du cache de 5 min de `FirebaseContactService`). Un résultat positif mis en cache resterait valable après qu'un propriétaire SMS a rattaché le numéro ou qu'un administrateur a changé la validation : une invitation acceptée ou un colis rattaché à tort. Garde-fou : `PhoneLookupServiceTest.trustedDeclaredPhone_revalidatedOnEveryCall_smsOwnerAppearingIsSeenAtOnce`.
 - **Échec fermé partout** : lecture stricte `readContactStrict` (vide sur panne), recherche de propriétaire en trois issues, validation refusée tant qu'un compte Firebase fantôme porte le numéro (aucune libération automatique).
 - **Audit** : `USER_PHONE_DECLARED` et `ADMIN_USER_PHONE_VERIFIED`, payload `{level}` seulement ; une déclaration inchangée n'écrit aucune ligne (table immuable).
@@ -87,9 +87,9 @@ Spécification : `docs/superpowers/specs/2026-11-21-telephone-sans-sms-design.md
 - `ReceptionCatchUpListener` : rattrapage des colis à l'inscription ou à l'ajout d'un numéro, sur le numéro SMS ou le numéro validé de confiance.
 
 ### Pièges et points d'attention
-- **Migrations** : V396 (colonnes) et V397 (index unique) ont été renumérotées deux fois à la fusion de `origin/main` (d'abord V391, puis V392 et V393) : V391 est prise par l'identifiant Yadony, V393 à V395 par les frais d'annulation (#779). Les deux ont été renumérotées ensemble, après la dernière de main : un environnement qui a déjà joué V393 à V395 refuserait une V392 arrivée plus tard (hors ordre). `MigrationVersionsUniqueTest` ne voit que la branche locale : relire `git ls-tree -r origin/main --name-only | grep db/migration` avant chaque fusion. Ne jamais modifier V396/V397 une fois déployées, créer V(n+1).
-- **V397 échoue** si une base contient déjà deux comptes vivants validés sur la même empreinte (possible seulement là où une ancienne version de la branche aurait tourné). Avant un tel déploiement : `SELECT declared_phone_hash, count(*) FROM users WHERE declared_phone_level = 'YADONY_VERIFIED' AND deleted_at IS NULL GROUP BY 1 HAVING count(*) > 1;`.
-- **H2 contre PostgreSQL** : le profil test crée le schéma par Hibernate, les migrations n'y tournent pas (ni V396 ni l'index partiel V397). Le SQL natif doit rester portable : pas de `string_to_array`/`ANY`, plus de `POSITION` dans une chaîne jointe ; `IN (:queryFirebaseUids)` avec la garde `:hasFirebaseUids` et une liste sentinelle (`List.of("")`) pour ne jamais générer `IN ()`. Les vérifications propres à PostgreSQL sont dans `DeclaredPhoneSchemaPostgresIT`, `AdminDeclaredPhoneRacePostgresIT`, `UserRepositoryAdminSearchIT`.
+- **Migrations** : V397 (colonnes) et V398 (index unique) ont été renumérotées trois fois à la fusion de `origin/main` (d'abord V391, puis V392 et V393, puis V396 et V397) : V391 est prise par l'identifiant Yadony, V393 à V395 par les frais d'annulation (#779), V396 par le destinataire désigné par identifiant (#781). Les deux sont renumérotées ensemble, après la dernière de main : un environnement qui a déjà joué les migrations de main refuserait une version plus basse arrivée plus tard (hors ordre). `MigrationVersionsUniqueTest` ne voit que la branche locale : relire `git ls-tree -r origin/main --name-only | grep db/migration` avant chaque fusion. Ne jamais modifier V397/V398 une fois déployées, créer V(n+1).
+- **V398 échoue** si une base contient déjà deux comptes vivants validés sur la même empreinte (possible seulement là où une ancienne version de la branche aurait tourné). Avant un tel déploiement : `SELECT declared_phone_hash, count(*) FROM users WHERE declared_phone_level = 'YADONY_VERIFIED' AND deleted_at IS NULL GROUP BY 1 HAVING count(*) > 1;`.
+- **H2 contre PostgreSQL** : le profil test crée le schéma par Hibernate, les migrations n'y tournent pas (ni V397 ni l'index partiel V398). Le SQL natif doit rester portable : pas de `string_to_array`/`ANY`, plus de `POSITION` dans une chaîne jointe ; `IN (:queryFirebaseUids)` avec la garde `:hasFirebaseUids` et une liste sentinelle (`List.of("")`) pour ne jamais générer `IN ()`. Les vérifications propres à PostgreSQL sont dans `DeclaredPhoneSchemaPostgresIT`, `AdminDeclaredPhoneRacePostgresIT`, `UserRepositoryAdminSearchIT`.
 - **`DECLARED_PHONE_HASH_KEY`** : vide = fonction désactivée (503 `declared-phone-unavailable`, le démarrage n'échoue pas). La changer rend toutes les empreintes muettes (niveaux retombés à `DECLARED`, plus aucune recherche par numéro déclaré) : ne jamais la faire tourner sans recalcul. Transmise par `deploy-staging.yml` et `deploy-prod.yml`.
 - **`setCustomUserClaims` remplace tout le dictionnaire** : `setDeclaredPhone` relit les claims et ne touche qu'à `declared_phone`.
 - **Ordre des écritures** dans `declare` : `saveAndFlush` (version, verrou), audit, Firebase en dernier ; dans `onPhoneAttached`, Firebase d'abord (un échec laisse l'empreinte pour un nouvel essai).
@@ -118,7 +118,7 @@ Tests créés pour la fonctionnalité : `DeclaredPhoneServiceTest`, `SmsOtpContr
 
 ## Décisions techniques
 - **Claim Firebase plutôt que colonne en clair** : un vol de la base ne révèle aucun numéro ; l'empreinte HMAC (clé hors base) suffit à retrouver les déclarants. Écarté : écrire dans `phoneNumber` sans code (lu comme vérifié partout).
-- **Pas d'unicité des déclarés, unicité des validés** : bloquer un numéro déclaré laisserait un squatteur empêcher le vrai titulaire ; deux comptes validés rendraient le numéro ambigu pour tout le monde (index V397).
+- **Pas d'unicité des déclarés, unicité des validés** : bloquer un numéro déclaré laisserait un squatteur empêcher le vrai titulaire ; deux comptes validés rendraient le numéro ambigu pour tout le monde (index V398).
 - **Requête dédiée aux comptes validés** plutôt qu'un plafond plus haut ou un tri : le plafond reste nécessaire pour l'admin, et aucun nombre de déclarants ne doit pouvoir masquer le compte validé.
 - **Compte Firebase fantôme : échec fermé avec un code distinct**, sans libération automatique : libérer un numéro SMS d'un compte Firebase est irréversible et relève d'un geste humain.
 - **Pas de cache sur `trustedDeclaredPhone`** (constat de revue « appel Firebase à chaque ouverture des réceptions » laissé ouvert) : la confiance doit être revalidée à chaque usage, un cache positif est une fenêtre de péremption. Chaque requête ne fait déjà qu'un appel (`ReceptionLinker#catchUp`, `RecipientInvitationService#catchUp` ou `#accept`), et seule la recherche du propriétaire SMS part réellement vers Firebase ; aucune réduction sûre n'était possible.

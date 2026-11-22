@@ -43,7 +43,7 @@ public class PhoneLookupService {
     /**
      * Plafond de la lecture des comptes validés par Yadony ; couplé au nom de
      * {@link UserRepository#findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel}. Deux suffisent pour conclure
-     * à l'ambiguïté ; l'index unique partiel de V397 n'en laisse qu'un en PostgreSQL.
+     * à l'ambiguïté ; l'index unique partiel de V398 n'en laisse qu'un en PostgreSQL.
      */
     static final int MAX_YADONY_ROWS = 3;
 

@@ -102,7 +102,7 @@ public class UserEntity extends BaseEntity {
     private KycStatus kycStatus = KycStatus.NOT_STARTED;
 
     /**
-     * Empreinte HMAC du numéro déclaré sans SMS (V396). Le numéro reste dans un claim Firebase,
+     * Empreinte HMAC du numéro déclaré sans SMS (V397). Le numéro reste dans un claim Firebase,
      * jamais ici : voir {@link DeclaredPhoneHasher}.
      */
     @Column(name = "declared_phone_hash", length = 64)

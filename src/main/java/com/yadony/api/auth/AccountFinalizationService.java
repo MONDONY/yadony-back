@@ -131,7 +131,7 @@ public class AccountFinalizationService {
         user.setBusinessName(null);
         user.setBusinessRegistrationNumber(null);
         user.setBusinessCountry(null);
-        // Numéro déclaré sans SMS (V396) : le claim part avec le compte Firebase, mais l'empreinte HMAC
+        // Numéro déclaré sans SMS (V397) : le claim part avec le compte Firebase, mais l'empreinte HMAC
         // restait sur la ligne. Avec la base et la clé, HMAC(numéro) retrouvait le compte supprimé et son
         // historique, comme le SIRET plus haut. On efface aussi le niveau et la trace de validation.
         user.setDeclaredPhoneHash(null);
