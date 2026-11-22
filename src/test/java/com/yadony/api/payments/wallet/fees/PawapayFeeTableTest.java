@@ -140,4 +140,41 @@ class PawapayFeeTableTest {
         // Opérateur absent de la grille (ex. FREE_SEN) : défaut 2,5 % + 2,0 %.
         assertThat(table.fee("FREE_SEN", amount, "XOF")).isEqualByComparingTo("450");
     }
+
+    // ── Remboursement partiel d'un dépôt (frais d'annulation, rail mobile money) ──────────────────────────────
+
+    private static final PawapayFeeTable PARTIAL = new PawapayFeeTable(
+            new PawapayFeeTable.Rate(new BigDecimal("2.5"), new BigDecimal("2.0")),
+            Map.of("ORANGE_SEN", new PawapayFeeTable.Rate(new BigDecimal("1.5"), new BigDecimal("1.0"))));
+
+    @Test
+    void partialRefundFee_depositOnTheDeposited_refundOnTheRefunded_roundedOnce() {
+        // 65 600 × 1,5 % = 984 ; 45 922 × 1 % = 459,22 ; total 1 443,22 → 1 443 F (échelle 0).
+        assertThat(PARTIAL.partialRefundFee("ORANGE_SEN", new BigDecimal("65600"), new BigDecimal("45922"), "XOF"))
+                .isEqualByComparingTo("1443")
+                .hasScaleOf(0);
+    }
+
+    @Test
+    void partialRefundFee_operatorWithoutOverride_usesTheDefault() {
+        // 50 000 × 2,5 % = 1 250 ; 35 000 × 2 % = 700.
+        assertThat(PARTIAL.partialRefundFee("MTN_MOMO_CIV", new BigDecimal("50000"), new BigDecimal("35000"), "XOF"))
+                .isEqualByComparingTo("1950");
+    }
+
+    @Test
+    void partialRefundFee_eurosAtTwoDecimals() {
+        // 100 × 2,5 % = 2,50 ; 70 × 2 % = 1,40.
+        assertThat(PARTIAL.partialRefundFee(null, new BigDecimal("100.00"), new BigDecimal("70.00"), "EUR"))
+                .isEqualByComparingTo("3.90")
+                .hasScaleOf(2);
+    }
+
+    @Test
+    void partialRefundFee_wholeRefund_equalsTheWholeDepositFee() {
+        BigDecimal amount = new BigDecimal("20000");
+
+        assertThat(PARTIAL.partialRefundFee("ORANGE_SEN", amount, amount, "XOF"))
+                .isEqualByComparingTo(PARTIAL.fee("ORANGE_SEN", amount, "XOF"));
+    }
 }

@@ -202,6 +202,8 @@ public class NotificationPrefsService {
             "STRIPE_ONBOARDING_INCOMPLETE",
             // Virement Stripe vers la banque du voyageur (arrivé, échoué)
             "BANK_PAYOUT_PAID", "BANK_PAYOUT_FAILED",
+            // Frais d'annulation : argent retenu à l'expéditeur, dédommagement versé au voyageur
+            "CANCELLATION_FEE_RETAINED", "CANCELLATION_FEE_PAID_OUT",
             // Récompense de parrainage à choisir (crédit de solde ou code personnel)
             "REFERRAL_REWARD_AVAILABLE",
             // Code de bienvenue du filleul parrainé (une seule fois, à l'inscription)

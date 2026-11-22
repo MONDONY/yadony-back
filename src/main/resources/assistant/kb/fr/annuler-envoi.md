@@ -1,15 +1,15 @@
 ---
 id: annuler-envoi
 title: Annuler mon envoi
-keywords: annuler mon envoi, annuler la demande, annulation, annuler un colis, expéditeur annule, rétractation, code de retour, récupérer mon colis, annulé par l'équipe, voyageur injoignable
+keywords: annuler mon envoi, frais d'annulation, annuler la demande, annulation, annuler un colis, expéditeur annule, rétractation, code de retour, récupérer mon colis, annulé par l'équipe, voyageur injoignable
 routes:
   - path: /envois
     label: Mes colis
 ---
 Ouvrez l'envoi dans Activités › Mes colis puis touchez « Annuler la demande ».
 Avant le paiement, rien n'est débité et le voyageur est prévenu.
-Une fois la demande acceptée, votre paiement est remboursé automatiquement.
-Si le colis est déjà remis mais que le trajet n'est pas parti, vous êtes intégralement remboursé et vous récupérez votre colis sous 3 jours : le voyageur confirme la restitution en saisissant votre code de retour.
+Une fois la demande acceptée, votre paiement est remboursé automatiquement. Selon la date du colis et le délai avant le départ, des frais d'annulation peuvent être retenus sur ce remboursement (barème dans la fiche « Frais d'annulation »). L'application affiche le montant exact avant que vous confirmiez ; si aucun montant n'est affiché, vous êtes remboursé intégralement.
+Si le colis est déjà remis mais que le trajet n'est pas parti, votre paiement vous est remboursé (sous réserve d'éventuels frais d'annulation, comme ci-dessus) et vous récupérez votre colis sous 3 jours : le voyageur confirme la restitution en saisissant votre code de retour.
 Une fois le colis en route, ou le départ passé pour un colis déjà remis, l'annulation n'est plus possible : en cas de problème, écrivez à l'équipe.
 Colis bateau payé au dépôt : une fois le transporteur payé au dépôt du colis, l'annulation est refusée et rien n'est remboursé automatiquement ; contactez le support pour ouvrir un litige.
 Si le voyageur reporte son trajet, vous pouvez aussi annuler sans frais.

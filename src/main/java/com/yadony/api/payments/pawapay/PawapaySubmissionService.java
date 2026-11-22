@@ -109,6 +109,19 @@ public class PawapaySubmissionService {
     }
 
     /**
+     * Versement du dédommagement d'annulation {@code cancellationFeeId} au voyageur ({@code travelerId} porté en
+     * {@code user_id}, jamais de {@code payment_id}).
+     */
+    public PawapayOperationEntity submitCancellationFeePayout(UUID cancellationFeeId, UUID travelerId, String msisdn,
+                                                              String provider, String country, BigDecimal amount,
+                                                              String currency, String clientReference) {
+        PawapayOperationEntity op = operations.createForCancellationFee(travelerId, cancellationFeeId, amount, currency,
+                provider, country, msisdn);
+        return submit(op, () -> client.initiatePayout(new PawapayPayoutRequest(op.getId(), op.getMsisdn(),
+                provider, amount, currency, PAYOUT_MESSAGE, clientReference)));
+    }
+
+    /**
      * Remboursement de wallet, premier temps : réserve l'opération REFUND (purpose
      * {@code WALLET_REFUND}, sans paiement de colis) liée au dépôt d'origine, SANS appel
      * réseau. L'appelant pose l'identifiant sur son item et le commite, puis appelle

@@ -5,12 +5,13 @@ import com.yadony.api.payments.integrity.MoneyInvariant.Severity;
 import java.util.List;
 
 /**
- * Les 18 règles de cohérence de l'argent vérifiées par {@link MoneyIntegrityMonitor}. Écrites
+ * Les 20 règles de cohérence de l'argent vérifiées par {@link MoneyIntegrityMonitor}. Écrites
  * le 05/10 contre le schéma réel ; {@code MoneyIntegrityMonitorIT} les exécute toutes sur
  * Postgres embarqué avec les migrations, une colonne renommée y casse avant la production.
  *
  * <p>Familles : wallet (01-03, 14, 15), séquestre (04-06, 08), montants et devises (07, 17),
- * doublons et commission (09, 10), prestataires (11-13, 16), supplément de prix à la remise (18).
+ * doublons et commission (09, 10), prestataires (11-13, 16), supplément de prix à la remise (18),
+ * frais d'annulation de l'expéditeur (19, 20).
  *
  * <p>Les colonnes {@code TIMESTAMP} sans fuseau écrites en UTC ({@code bid_supplements},
  * {@code payment_splits}) se comparent à {@code now() AT TIME ZONE 'UTC'}, jamais à {@code now()} :
@@ -20,6 +21,28 @@ public final class MoneyInvariants {
 
     private MoneyInvariants() {
     }
+
+    /**
+     * Retenues d'annulation d'un expéditeur fautif (INV-19, INV-20 ; {@code cancellation_fees} en TIMESTAMPTZ, comparé à
+     * {@code now()}) et le paiement de leur colis : le sien ou celui du fil de négociation payé, le remboursé d'abord
+     * (une retenue n'est réglée que sur un paiement remboursé). Les lignes closes {@code NOT_APPLICABLE} ne portent
+     * aucune anomalie : écartées avant de chercher leur paiement.
+     */
+    private static final String CANCELLATION_FEE_WITH_PAYMENT = """
+                        FROM cancellation_fees cf
+                        JOIN bids b ON b.id = cf.bid_id
+                        LEFT JOIN LATERAL (
+                            SELECT pp.id, pp.rail, pp.status, pp.amount, pp.refunded_amount
+                            FROM payments pp
+                            WHERE pp.deleted_at IS NULL
+                              AND (pp.bid_id = cf.bid_id
+                                   OR (pp.bid_id IS NULL AND b.linked_negotiation_thread_id IS NOT NULL
+                                       AND pp.negotiation_thread_id = b.linked_negotiation_thread_id))
+                            ORDER BY (pp.status = 'REFUNDED') DESC, pp.created_at DESC
+                            LIMIT 1
+                        ) p ON true
+                        WHERE cf.deleted_at IS NULL AND cf.status <> 'NOT_APPLICABLE'
+            """;
 
     public static final List<MoneyInvariant> ALL = List.of(
             new MoneyInvariant("INV-01", "Solde du wallet égal à la somme de ses mouvements", Severity.CRITIQUE, """
@@ -151,6 +174,17 @@ public final class MoneyInvariants {
                                         AND COALESCE(p.refunded_amount, 0) < p.amount
                                         AND NOT EXISTS (SELECT 1 FROM payment_splits ps
                                                         WHERE ps.payment_id = p.id AND ps.deleted_at IS NULL)
+                                        -- Frais d'annulation retenus : rendre le payé moins le brut retenu est l'état
+                                        -- normal, pas un remboursement inachevé. Seulement au montant exact (INV-19
+                                        -- surveille les écarts) ; colis du paiement ou du fil de négociation payé.
+                                        AND NOT EXISTS (SELECT 1 FROM cancellation_fees cf
+                                                        JOIN bids bf ON bf.id = cf.bid_id
+                                                        WHERE cf.deleted_at IS NULL
+                                                          AND cf.status IN ('RETAINED','PAYOUT_PENDING','PAID_OUT')
+                                                          AND (bf.id = p.bid_id
+                                                               OR (p.bid_id IS NULL
+                                                                   AND bf.linked_negotiation_thread_id = p.negotiation_thread_id))
+                                                          AND p.refunded_amount = p.amount - cf.gross_fee)
                                         AND (SELECT max(a.created_at) FROM audit_log a
                                              WHERE a.entity_type = 'PAYMENT' AND a.entity_id = p.id) < now() - interval '1 day'
                                         THEN 'REFUND_STRIPE_NON_CONFIRME'
@@ -518,6 +552,50 @@ public final class MoneyInvariants {
                         JOIN bids b ON b.id = s.bid_id
                         LEFT JOIN ops o ON o.supplement_id = s.id
                         WHERE s.deleted_at IS NULL
+                    ) x
+                    WHERE anomaly IS NOT NULL
+                    """),
+            new MoneyInvariant("INV-19", "Frais d'annulation réglés et versés au voyageur", Severity.HAUTE, """
+                    SELECT * FROM (
+                        SELECT cf.id AS cancellation_fee_id, cf.bid_id, cf.status, cf.reason, cf.rate, cf.gross_fee,
+                               cf.traveler_net, cf.currency, cf.created_at, cf.payout_pending_reason,
+                               p.id AS payment_id, p.rail, p.status AS payment_status, p.amount, p.refunded_amount,
+                               CASE
+                                   -- Retenue jamais réglée ni close alors que l'expéditeur est remboursé depuis 24 h.
+                                   WHEN cf.status = 'DUE' AND p.status = 'REFUNDED'
+                                        AND cf.created_at < now() - interval '1 day'
+                                        AND COALESCE((SELECT max(a.created_at) FROM audit_log a
+                                                      WHERE a.entity_type = 'PAYMENT' AND a.entity_id = p.id),
+                                                     cf.created_at) < now() - interval '1 day'
+                                        THEN 'RETENUE_DUE_SUR_PAIEMENT_REMBOURSE'
+                                   -- Dédommagement toujours pas versé au voyageur 3 jours après la retenue.
+                                   WHEN cf.status IN ('RETAINED','PAYOUT_PENDING')
+                                        AND COALESCE((SELECT min(a.created_at) FROM audit_log a
+                                                      WHERE a.entity_type = 'BID' AND a.entity_id = cf.bid_id
+                                                        AND a.action = 'CANCELLATION_FEE_RETAINED'),
+                                                     cf.created_at) < now() - interval '3 days'
+                                        THEN 'DEDOMMAGEMENT_NON_VERSE'
+                               END AS anomaly
+                    """ + CANCELLATION_FEE_WITH_PAYMENT + """
+                    ) x
+                    WHERE anomaly IS NOT NULL
+                    """),
+            // Retenue réglée sur un remboursement d'un autre montant : argent sorti deux fois (expéditeur remboursé en
+            // entier après la retenue alors que le voyageur est payé) ou expéditeur lésé. CRITIQUE comme INV-07, 12 et
+            // 15, et règle à part : l'alerte, dédupliquée par règle, ne se perd pas derrière un retard de versement.
+            new MoneyInvariant("INV-20", "Frais d'annulation : remboursé plus retenue égal au payé", Severity.CRITIQUE, """
+                    SELECT * FROM (
+                        SELECT cf.id AS cancellation_fee_id, cf.bid_id, cf.status, cf.gross_fee, cf.traveler_net,
+                               cf.currency, p.id AS payment_id, p.rail, p.status AS payment_status, p.amount,
+                               p.refunded_amount,
+                               CASE
+                                   -- L'expéditeur a récupéré exactement le payé moins le brut retenu.
+                                   WHEN cf.status IN ('RETAINED','PAYOUT_PENDING','PAID_OUT')
+                                        AND (p.id IS NULL OR p.status <> 'REFUNDED'
+                                             OR COALESCE(p.refunded_amount, 0) + cf.gross_fee <> p.amount)
+                                        THEN 'RETENUE_INCOHERENTE_AVEC_LE_REMBOURSEMENT'
+                               END AS anomaly
+                    """ + CANCELLATION_FEE_WITH_PAYMENT + """
                     ) x
                     WHERE anomaly IS NOT NULL
                     """)

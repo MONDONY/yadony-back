@@ -90,7 +90,11 @@ class PaymentListenerTransactionalContractTest {
                 // Supplément de prix, rail mobile money (plan B3) : issue des opérations pawaPay
                 // BID_SUPPLEMENT, mêmes événements génériques, même contrat. Aucun appel pawaPay ici.
                 Arguments.of(BidSupplementOutcomeListener.class, "onCompleted"),
-                Arguments.of(BidSupplementOutcomeListener.class, "onFailed")
+                Arguments.of(BidSupplementOutcomeListener.class, "onFailed"),
+                // Dédommagement d'annulation, rail mobile money : issue du versement pawaPay CANCELLATION_FEE, mêmes
+                // événements génériques, même contrat. Aucun appel pawaPay ici (seulement la ligne de la retenue).
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutOutcomeListener.class, "onCompleted"),
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutOutcomeListener.class, "onFailed")
         );
     }
 
@@ -119,7 +123,12 @@ class PaymentListenerTransactionalContractTest {
                 // recrédit du solde), PaymentIntent de commission annulée ; transactions courtes autour
                 // de l'appel Stripe (BidSupplementCashLedger), jamais une transaction englobante.
                 Arguments.of(BidSupplementCashListener.class, "onClosed"),
-                Arguments.of(BidSupplementCashListener.class, "onRefundRequested")
+                Arguments.of(BidSupplementCashListener.class, "onRefundRequested"),
+                // Dédommagement d'annulation versé au voyageur (Transfer Stripe) : lectures et transitions de
+                // la retenue en transactions REQUIRES_NEW courtes autour de l'appel, jamais une englobante.
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutListener.class, "onFeeRetained"),
+                // Relance admin du même versement (Stripe ou pawaPay) : même chemin, même règle.
+                Arguments.of(com.yadony.api.payments.fee.CancellationFeePayoutListener.class, "onPayoutRetryRequested")
         );
     }
 

@@ -37,6 +37,8 @@ public enum NotificationCategory {
             "KYC_VERIFIED", "KYC_ACTION_REQUIRED", "KYC_RESET",
             "STRIPE_ONBOARDING_INCOMPLETE", "CARD_EXPIRING", "WALLET_ADJUSTED", "REFERRAL_REWARD_AVAILABLE", "REFERRAL_WELCOME",
             "BANK_PAYOUT_PAID", "BANK_PAYOUT_FAILED",
+            // Frais d'annulation : retenue réglée (expéditeur), dédommagement versé (voyageur).
+            "CANCELLATION_FEE_RETAINED", "CANCELLATION_FEE_PAID_OUT",
             "wallet_topup_confirmed", "wallet_topup_failed",
             "negotiation_awaiting_payment", "negotiation_commission_pending",
             "negotiation_commission_declined", "negotiation_commission_expired",

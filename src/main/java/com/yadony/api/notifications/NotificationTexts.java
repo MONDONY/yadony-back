@@ -954,6 +954,24 @@ public final class NotificationTexts {
                         : m.get("notification.bank-payout-paid.body", formattedAmount));
     }
 
+    // ── Frais d'annulation de l'expéditeur ─────────────────────────────────────────────────────────────
+
+    /**
+     * Retenue réglée : l'expéditeur apprend le montant retenu et le montant rendu, montants déjà formatés dans la devise
+     * du paiement. Après une absence confirmée ({@code noShow}), le texte le dit : il n'a vu aucun aperçu.
+     */
+    public static NotificationText cancellationFeeRetained(Messages m, boolean noShow, String retained, String refunded) {
+        return new NotificationText(m.get("notification.cancellation-fee.retained.title"),
+                m.get(noShow ? "notification.cancellation-fee.retained.no-show.body"
+                        : "notification.cancellation-fee.retained.body", retained, refunded));
+    }
+
+    /** Dédommagement versé au voyageur après l'annulation fautive de l'expéditeur, net déjà formaté. */
+    public static NotificationText cancellationFeePaidOut(Messages m, String amount) {
+        return new NotificationText(m.get("notification.cancellation-fee.paid-out.title"),
+                m.get("notification.cancellation-fee.paid-out.body", amount));
+    }
+
     /** Virement Stripe vers la banque du voyageur refusé : il doit mettre à jour son compte bancaire. */
     public static NotificationText bankPayoutFailed(Messages m) {
         return new NotificationText(m.get("notification.bank-payout-failed.title"),

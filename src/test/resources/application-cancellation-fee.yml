@@ -1,0 +1,13 @@
+# Profil des SEULS tests des frais d'annulation : @ActiveProfiles({"test", "cancellation-fee"}) ou
+# @ActiveProfiles({"e2e", "cancellation-fee"}). Les profils partagés (application-test.yml, application-e2e.yml)
+# laissent les frais éteints, comme en production : la suite entière prouve ainsi que l'état éteint est celui
+# d'avant la fonction. Un seul profil, pour qu'un seul contexte Spring de plus soit mis en cache par profil de base.
+yadony:
+  cancellation-fee:
+    enabled: true
+    # Date d'effet ancienne : tous les colis des tests sont « nouveaux ».
+    effective-from: 2020-01-01T00:00:00Z
+    # RÉSERVÉ À CE FICHIER : autorise une date d'effet antérieure au 2026-11-01 (refusée au démarrage partout
+    # ailleurs). Jamais dans application-test.yml, application-e2e.yml, src/main ni les workflows (vérifié par
+    # CancellationFeePropertiesTest).
+    allow-past-effective-from: true

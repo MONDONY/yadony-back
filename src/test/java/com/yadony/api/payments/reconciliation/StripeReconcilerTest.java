@@ -150,6 +150,92 @@ class StripeReconcilerTest {
     }
 
     @Test
+    void rembourseMoinsUneRetenue_stripeARenduCeMontantExact_nEstPasSignale() throws Exception {
+        // Retenue d'annulation : 70 € rendus sur 100, refunded_amount = 70,00. Pas une anomalie.
+        PaymentEntity p = payment(PaymentStatus.REFUNDED, "100.00", "pi_fee_ok");
+        p.setRefundedAmount(new BigDecimal("70.00"));
+        stripeHas(p, intent("pi_fee_ok", "succeeded", 10000, "eur", 7000L));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
+
+    @Test
+    void rembourseMoinsUneRetenue_stripeARenduPlusSansAllerJusquAuTotal_estSignale() throws Exception {
+        // Une partie de la retenue rendue depuis Stripe alors que le voyageur est dédommagé : double sortie d'argent.
+        PaymentEntity p = payment(PaymentStatus.REFUNDED, "100.00", "pi_fee_more");
+        p.setRefundedAmount(new BigDecimal("70.00"));
+        stripeHas(p, intent("pi_fee_more", "succeeded", 10000, "eur", 8500L));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
+                .satisfies(m -> assertThat(m.code()).contains("REMBOURSE_DIFFERENT"));
+    }
+
+    @Test
+    void partielEnregistre_puisRembourseEnEntierChezStripe_avantLeWebhook_nEstPasSignale() throws Exception {
+        // Premier remboursement partiel enregistré (70), puis le reste rendu : Stripe a tout rendu, le webhook
+        // charge.refunded complet n'a pas encore mis la base à jour. État transitoire cohérent (l'ancienne règle
+        // « remboursé au moins le total » passait aussi) ; une retenue réglée reste surveillée par INV-20.
+        PaymentEntity p = payment(PaymentStatus.REFUNDED, "100.00", "pi_partial_then_full");
+        p.setRefundedAmount(new BigDecimal("70.00"));
+        stripeHas(p, intent("pi_partial_then_full", "succeeded", 10000, "eur", 10000L));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
+
+    @Test
+    void montantEnregistreXof_memeRegle() throws Exception {
+        // Franc CFA, aucune unité mineure : 45 922 rendus sur 65 600 (retenue), puis le total.
+        PaymentEntity exact = payment(PaymentStatus.REFUNDED, "65600", "pi_xof_exact");
+        exact.setCurrency("XOF");
+        exact.setRefundedAmount(new BigDecimal("45922"));
+        PaymentEntity less = payment(PaymentStatus.REFUNDED, "65600", "pi_xof_less");
+        less.setCurrency("XOF");
+        less.setRefundedAmount(new BigDecimal("45922"));
+        when(payments.findForStripeReconciliation(anyCollection(), any())).thenReturn(List.of(exact, less));
+        PaymentIntent exactIntent = intent("pi_xof_exact", "succeeded", 65600, "xof", 45922L);
+        PaymentIntent lessIntent = intent("pi_xof_less", "succeeded", 65600, "xof", 40000L);
+        when(stripe.retrieveWithLatestCharge("pi_xof_exact")).thenReturn(exactIntent);
+        when(stripe.retrieveWithLatestCharge("pi_xof_less")).thenReturn(lessIntent);
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement().satisfies(m -> {
+            assertThat(m.code()).contains("REMBOURSE_DIFFERENT");
+            assertThat(m.reference()).isEqualTo(less.getId().toString());
+        });
+    }
+
+    @Test
+    void rembourseMoinsUneRetenue_stripeARenduMoins_estSignale() throws Exception {
+        PaymentEntity p = payment(PaymentStatus.REFUNDED, "100.00", "pi_fee_less");
+        p.setRefundedAmount(new BigDecimal("70.00"));
+        stripeHas(p, intent("pi_fee_less", "succeeded", 10000, "eur", 5000L));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
+                .satisfies(m -> assertThat(m.code()).contains("REMBOURSE_DIFFERENT"));
+    }
+
+    @Test
+    void sansMontantEnregistre_rembourseEnEntierOuAnnule_nEstPasSignale() throws Exception {
+        PaymentEntity refunded = payment(PaymentStatus.REFUNDED, "100.00", "pi_full");
+        PaymentEntity cancelled = payment(PaymentStatus.REFUNDED, "100.00", "pi_cancelled");
+        when(payments.findForStripeReconciliation(anyCollection(), any())).thenReturn(List.of(refunded, cancelled));
+        PaymentIntent full = intent("pi_full", "succeeded", 10000, "eur", 10000L);
+        PaymentIntent canceled = intent("pi_cancelled", "canceled", 10000, "eur", null);
+        when(stripe.retrieveWithLatestCharge("pi_full")).thenReturn(full);
+        when(stripe.retrieveWithLatestCharge("pi_cancelled")).thenReturn(canceled);
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).isEmpty();
+    }
+
+    @Test
+    void sansMontantEnregistre_rembourseEnPartie_resteSignaleCommeAvant() throws Exception {
+        PaymentEntity p = payment(PaymentStatus.REFUNDED, "100.00", "pi_partial_unrecorded");
+        stripeHas(p, intent("pi_partial_unrecorded", "succeeded", 10000, "eur", 7000L));
+
+        assertThat(reconciler.reconcile(NOW).mismatches()).singleElement()
+                .satisfies(m -> assertThat(m.code()).contains("REMBOURSEMENT_ABSENT_CHEZ_STRIPE"));
+    }
+
+    @Test
     void uneErreurStripe_estCompteeSansBloquerLesAutres() throws Exception {
         PaymentEntity broken = payment(PaymentStatus.ESCROW, "25.00", "pi_down");
         PaymentEntity fine = payment(PaymentStatus.ESCROW, "25.00", "pi_fine");

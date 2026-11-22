@@ -71,7 +71,8 @@ class CancellationServiceNoShowTest {
                 cancellationRepository, rematchSuggestionRepository,
                 bidRepository, announcementRepository,
                 userRepository, auditService, eventPublisher, commissionProps, rematchService, storageService, deliveryNoShowProcedure,
-                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                org.mockito.Mockito.mock(com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder.class));
         // reportSenderNoShow vérifie que l'appelant est le voyageur de l'annonce du bid.
         com.yadony.api.matching.AnnouncementEntity announcement = new com.yadony.api.matching.AnnouncementEntity();
         ReflectionTestUtils.setField(announcement, "id", ANNOUNCEMENT_ID);

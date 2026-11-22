@@ -16,6 +16,8 @@ import com.yadony.api.cancellation.events.TripCancelRefusedDepositPaidEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.cancellation.events.TravelerHighCancellationEvent;
 import com.yadony.api.cancellation.events.TravelerNoShowReportedEvent;
+import com.yadony.api.cancellation.fee.CancellationFeeReason;
+import com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.StorageService;
@@ -62,6 +64,7 @@ public class CancellationService {
     private final StorageService storageService;
     private final DeliveryNoShowProcedureService deliveryNoShowProcedure;
     private final NegotiationThreadRepository negotiationThreadRepository;
+    private final SenderCancellationFeeRecorder feeRecorder;
 
     /**
      * Colis vivants d'un trajet que son annulation touche : ouverts (annulés) et déjà remis (procédure de retour).
@@ -102,7 +105,8 @@ public class CancellationService {
                                 RematchService rematchService,
                                 StorageService storageService,
                                 DeliveryNoShowProcedureService deliveryNoShowProcedure,
-                                NegotiationThreadRepository negotiationThreadRepository) {
+                                NegotiationThreadRepository negotiationThreadRepository,
+                                SenderCancellationFeeRecorder feeRecorder) {
         this.cancellationRepository = cancellationRepository;
         this.rematchSuggestionRepository = rematchSuggestionRepository;
         this.bidRepository = bidRepository;
@@ -115,6 +119,7 @@ public class CancellationService {
         this.storageService = storageService;
         this.deliveryNoShowProcedure = deliveryNoShowProcedure;
         this.negotiationThreadRepository = negotiationThreadRepository;
+        this.feeRecorder = feeRecorder;
     }
 
     @Transactional
@@ -726,10 +731,10 @@ public class CancellationService {
 
     /**
      * Annulation après remise du colis (HANDED_OVER) par l'expéditeur OU le voyageur.
-     * Verrou D3, restauration du kilo, remboursement intégral (via per-bid
+     * Verrou D3, restauration du kilo, remboursement (via per-bid
      * {@link TripCancelledEvent}), génération du code de retour (D7), suggestions de trajets
-     * du même corridor pour renvoyer le colis une fois récupéré. MVP : aucune pénalité
-     * monétaire.
+     * du même corridor pour renvoyer le colis une fois récupéré. L'expéditeur qui annule doit une
+     * retenue selon le barème ({@link SenderCancellationFeeRecorder}) ; le voyageur, jamais.
      */
     @Transactional
     public void cancelAfterHandover(String firebaseUid, UUID bidId) {
@@ -832,7 +837,14 @@ public class CancellationService {
         auditService.log("BID", bidId, "RETURN_CODE_GENERATED", caller.getId(),
                 Map.of("returnDeadline", String.valueOf(bid.getReturnDeadline())));
 
-        // Remboursement intégral réutilisant la matrice de TripCancelledEvent (per-bid).
+        // L'expéditeur annule après la remise : retenue due (carte ou mobile money, selon le barème),
+        // écrite dans cette transaction pour que le remboursement AFTER_COMMIT la trouve. Le voyageur
+        // qui annule ne paie jamais (Yadony absorbe).
+        if (actor == CancellationActor.SENDER) {
+            feeRecorder.record(bidId, CancellationFeeReason.SENDER_CANCEL_AFTER_HANDOVER);
+        }
+
+        // Remboursement réutilisant la matrice de TripCancelledEvent (per-bid).
         Map<UUID, String> bidPaymentMethods = new HashMap<>();
         Map<UUID, String> bidCommissionChargedVia = new HashMap<>();
         bidPaymentMethods.put(bidId,

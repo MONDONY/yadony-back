@@ -64,7 +64,8 @@ class CancellationServiceReturnCodeTest {
                 announcementRepository, userRepository, auditService, eventPublisher,
                 new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24),
                 rematchService, storageService, deliveryNoShowProcedure,
-                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class));
+                org.mockito.Mockito.mock(com.yadony.api.requests.repository.NegotiationThreadRepository.class),
+                org.mockito.Mockito.mock(com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder.class));
     }
 
     private UserEntity user(UUID id) {

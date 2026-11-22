@@ -82,7 +82,8 @@ class DepositPaidCancellationTest {
         service = new CancellationService(cancellationRepository, rematchSuggestionRepository, bidRepository,
                 announcementRepository, userRepository, auditService, eventPublisher,
                 new CommissionProperties(new BigDecimal("0.12"), new BigDecimal("1.00"), 24),
-                rematchService, storageService, deliveryNoShowProcedure, threads);
+                rematchService, storageService, deliveryNoShowProcedure, threads,
+                org.mockito.Mockito.mock(com.yadony.api.cancellation.fee.SenderCancellationFeeRecorder.class));
         service.setDepositPayoutPort(bidId -> {
             askedPort.add(bidId);
             return portAnswer;

@@ -182,6 +182,13 @@ jobs:
           # allumée par la variable d'environnement GitHub. Manquait ici alors que staging
           # la transmettait : la variable posée en production restait sans effet.
           BID_AMENDMENT_ENABLED=${{ vars.BID_AMENDMENT_ENABLED || 'false' }}
+          # Frais d'annulation de l'expéditeur : éteints par défaut. Allumés seulement avec une date d'effet : seuls
+          # les colis créés à partir d'elle portent des frais. Format EXACT de YADONY_CANCELLATION_FEE_EFFECTIVE_FROM :
+          # 2026-12-15T00:00:00Z (date, heure et fuseau). Chiffres seuls (20261215), date seule (2026-12-15) ou date
+          # antérieure au 2026-11-01T00:00:00Z : le back refuse de démarrer. Vide : aucun frais (avertissement).
+          # Ne pas allumer avant l'app qui affiche les frais et les CGU à jour.
+          YADONY_CANCELLATION_FEE_ENABLED=${{ vars.YADONY_CANCELLATION_FEE_ENABLED || 'false' }}
+          YADONY_CANCELLATION_FEE_EFFECTIVE_FROM=${{ vars.YADONY_CANCELLATION_FEE_EFFECTIVE_FROM }}
           # Modes de transport route et bateau (l'avion reste toujours ouvert) : éteints par défaut.
           # Valeurs d'amorçage : une fois les lignes transport_*_enabled en base, c'est l'admin (Paramètres) qui décide.
           YADONY_TRANSPORT_ROAD_ENABLED=${{ vars.YADONY_TRANSPORT_ROAD_ENABLED || 'false' }}

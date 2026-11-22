@@ -39,6 +39,20 @@ public interface PawapayOperationRepository extends JpaRepository<PawapayOperati
     long countByBidSupplementIdAndKindAndStatusIn(
             UUID bidSupplementId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
 
+    // ── Dédommagement d'annulation (purpose CANCELLATION_FEE, payment_id toujours nul) ──
+
+    Optional<PawapayOperationEntity> findFirstByCancellationFeeIdAndKindAndStatusInOrderByCreatedAtDesc(
+            UUID cancellationFeeId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
+
+    boolean existsByCancellationFeeIdAndKindAndStatusIn(
+            UUID cancellationFeeId, PawapayOperationKind kind, Collection<PawapayOperationStatus> statuses);
+
+    long countByCancellationFeeIdAndKindAndStatus(
+            UUID cancellationFeeId, PawapayOperationKind kind, PawapayOperationStatus status);
+
+    long countByCancellationFeeIdAndKindAndStatusAndCreatedAtAfter(
+            UUID cancellationFeeId, PawapayOperationKind kind, PawapayOperationStatus status, LocalDateTime createdAfter);
+
     boolean existsByUserIdAndKindAndCurrencyAndPurposeAndStatusIn(UUID userId, PawapayOperationKind kind,
             String currency, PawapayOperationPurpose purpose, Collection<PawapayOperationStatus> statuses);
 
