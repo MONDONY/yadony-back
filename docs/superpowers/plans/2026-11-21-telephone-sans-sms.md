@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Branche dédiée par dépôt (`feature/telephone-declare`), jamais sur `main`. Aucun `Co-Authored-By`. Travail dans un worktree : `dony-back/.claude/worktrees/<nom>`, `dony_app-worktrees/<nom>`. Partir de `origin/main` (les copies locales sont périmées).
-- Prochaine migration Flyway : **V392** (V391 a été prise sur `origin/main` par l'identifiant Yadony, `V391__username_change_and_released.sql` ; renumérotée à la fusion). Jamais d'édition d'une migration existante.
+- Migrations Flyway du numéro déclaré : **V396** (colonnes) et **V397** (index unique partiel des comptes validés). D'abord V391, puis V392 et V393, renumérotées à chaque fusion de `origin/main` : V391 prise par l'identifiant Yadony (`V391__username_change_and_released.sql`), V393 à V395 par les frais d'annulation (#779). Jamais d'édition d'une migration existante.
 - Erreurs : `YadonyBusinessException.localized(HttpStatus, code, "problem.<clé>")` (RFC 7807), clés ajoutées FR et EN dans les messages.
 - `audit_log` : jamais le numéro dans le payload.
 - Numéros au format E.164. Indicatif dans `SMS_BLOCKED_COUNTRY_CODES` = seule condition pour déclarer.
@@ -39,7 +39,7 @@
 ### Task 1: Empreinte et colonnes en base
 
 **Files:**
-- Create: `src/main/resources/db/migration/V392__declared_phone.sql`
+- Create: `src/main/resources/db/migration/V396__declared_phone.sql` (créée en V392, renumérotée)
 - Create: `src/main/java/com/yadony/api/auth/DeclaredPhoneHasher.java`
 - Modify: `src/main/java/com/yadony/api/auth/UserEntity.java`, `src/main/java/com/yadony/api/auth/UserRepository.java`, `.env.example`, `.env.prod.template`, `.env.staging.template`, `src/main/resources/application.yml`
 - Test: `src/test/java/com/yadony/api/auth/DeclaredPhoneHasherTest.java`
@@ -49,7 +49,7 @@
 
 - [ ] **Step 1: Test** `hash_isDeterministicAndKeyed`: même numéro → même hash ; clé différente → hash différent ; sortie 64 hex ; jamais le numéro en clair.
 - [ ] **Step 2: Lancer** `./mvnw test -Dtest=DeclaredPhoneHasherTest` : échec attendu (classe absente).
-- [ ] **Step 3:** Migration V392 : 4 colonnes nullables sur `users` + index sur `declared_phone_hash`. Hasher lit `yadony.declared-phone.hash-key` (env `DECLARED_PHONE_HASH_KEY`, obligatoire en prod, valeur de test en dev/test). Ajouter la variable aux gabarits d'environnement. Entité et finder du repository.
+- [ ] **Step 3:** Migration V396 (créée en V392, renumérotée) : 4 colonnes nullables sur `users` + index sur `declared_phone_hash`. Hasher lit `yadony.declared-phone.hash-key` (env `DECLARED_PHONE_HASH_KEY`, obligatoire en prod, valeur de test en dev/test). Ajouter la variable aux gabarits d'environnement. Entité et finder du repository.
 - [ ] **Step 4: Lancer** le test, puis `./mvnw test` complet : PASS.
 - [ ] **Step 5: Commit** `feat(auth): colonnes et empreinte du numéro déclaré`.
 

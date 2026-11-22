@@ -43,12 +43,12 @@ import static org.mockito.Mockito.when;
 /**
  * Deux administrateurs valident en même temps deux comptes qui déclarent le même numéro. Le contrôle
  * {@code existsBy...} ne voit pas l'écriture non encore validée de l'autre : seul l'index unique partiel
- * de V393 les départage. Le second reçoit 409 {@code declared-phone-conflict}, pas une erreur 500, et
+ * de V397 les départage. Le second reçoit 409 {@code declared-phone-conflict}, pas une erreur 500, et
  * n'est pas validé. PostgreSQL réel : sous H2 (profil test) la migration ne tourne pas.
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
-@DisplayName("Validation simultanée d'un numéro déclaré : l'index unique V393 tranche (PostgreSQL)")
+@DisplayName("Validation simultanée d'un numéro déclaré : l'index unique V397 tranche (PostgreSQL)")
 class AdminDeclaredPhoneRacePostgresIT {
 
     private static EmbeddedPostgres postgres;

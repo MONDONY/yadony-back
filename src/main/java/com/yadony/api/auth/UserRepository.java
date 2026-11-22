@@ -47,7 +47,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * Comptes (non supprimés) portant l'empreinte au niveau donné, plafonnés à 3 (voir
      * {@code PhoneLookupService.MAX_YADONY_ROWS}) : deux comptes validés suffisent à rendre le numéro ambigu.
      * Lecture séparée de {@link #findTop10ByDeclaredPhoneHash} : des déclarants en nombre ne doivent jamais
-     * masquer le compte validé par Yadony. L'index unique partiel de V393 n'en laisse qu'un en PostgreSQL.
+     * masquer le compte validé par Yadony. L'index unique partiel de V397 n'en laisse qu'un en PostgreSQL.
      */
     List<UserEntity> findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(String declaredPhoneHash,
                                                                        DeclaredPhoneLevel declaredPhoneLevel);
@@ -56,7 +56,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * Un AUTRE compte (non supprimé) porte-t-il cette empreinte au niveau donné ? Sans plafond, contrairement à
      * {@link #findTop10ByDeclaredPhoneHash} : dix déclarants ne doivent pas masquer un compte validé par Yadony.
      * Contrôle de confort (message clair) ; deux validations simultanées passent toutes les deux ce test, c'est
-     * l'index unique partiel de V393 qui tranche.
+     * l'index unique partiel de V397 qui tranche.
      */
     boolean existsByDeclaredPhoneHashAndDeclaredPhoneLevelAndIdNot(String declaredPhoneHash,
                                                                     DeclaredPhoneLevel declaredPhoneLevel, UUID id);

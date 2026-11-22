@@ -39,7 +39,7 @@ public class AdminDeclaredPhoneService {
         this.auditService = auditService;
     }
 
-    /** Index unique partiel de V393 : un seul compte vivant validé par Yadony par empreinte. */
+    /** Index unique partiel de V397 : un seul compte vivant validé par Yadony par empreinte. */
     static final String YADONY_UNIQUE_INDEX = "uq_users_declared_phone_yadony";
 
     /**

@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * V392 et V393 sur un vrai PostgreSQL : quatre colonnes nullables, l'index sur l'empreinte, puis l'index
+ * V396 et V397 sur un vrai PostgreSQL : quatre colonnes nullables, l'index sur l'empreinte, puis l'index
  * unique partiel qui n'admet qu'un compte vivant validé par Yadony par numéro (H2 ne joue pas les migrations).
  */
 class DeclaredPhoneSchemaPostgresIT {
@@ -37,7 +37,7 @@ class DeclaredPhoneSchemaPostgresIT {
             s.execute("CREATE SCHEMA IF NOT EXISTS kyc_schema");
         }
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration")
-                .schemas("public", "kyc_schema").target("393").cleanDisabled(false).load().migrate();
+                .schemas("public", "kyc_schema").target("397").cleanDisabled(false).load().migrate();
     }
 
     @AfterAll
@@ -76,7 +76,7 @@ class DeclaredPhoneSchemaPostgresIT {
         try (Connection c = dataSource.getConnection(); Statement s = c.createStatement()) {
             ResultSet idx = s.executeQuery("SELECT indexdef FROM pg_indexes WHERE tablename = 'users' "
                     + "AND indexname = 'uq_users_declared_phone_yadony'");
-            assertThat(idx.next()).as("index uq_users_declared_phone_yadony créé par V393").isTrue();
+            assertThat(idx.next()).as("index uq_users_declared_phone_yadony créé par V397").isTrue();
             assertThat(idx.getString(1)).startsWith("CREATE UNIQUE INDEX")
                     .contains("declared_phone_hash")
                     .contains("YADONY_VERIFIED")
