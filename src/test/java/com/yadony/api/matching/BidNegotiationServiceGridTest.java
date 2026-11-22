@@ -93,7 +93,8 @@ class BidNegotiationServiceGridTest {
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                config, bidService, mobileMoneyPort, commissionGridService);
+                config, bidService, mobileMoneyPort, commissionGridService,
+                new BidRecipientDesignation(null, auditService));
         lenient().when(commissionGridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
         lenient().when(bidRepository.save(any(BidEntity.class))).thenAnswer(inv -> inv.getArgument(0));
     }

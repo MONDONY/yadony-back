@@ -5,6 +5,7 @@ import com.yadony.api.auth.PhoneLookupService;
 import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
+import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.AuditService;
 import com.yadony.api.common.BlockVisibility;
 import com.yadony.api.common.RecetteMode;
@@ -52,6 +53,7 @@ public class ReceptionLinker {
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
     private final RecipientTrust recipientTrust;
+    private final DesignatedRecipientNaming designatedNaming;
 
     public ReceptionLinker(BidRepository bidRepository,
                            AnnouncementRepository announcementRepository,
@@ -62,6 +64,7 @@ public class ReceptionLinker {
                            NotificationDispatcher notificationDispatcher,
                            AuditService auditService,
                            RecipientTrust recipientTrust,
+                           DesignatedRecipientNaming designatedNaming,
                            PhoneLookupService phoneLookup) {
         this.phoneLookup = phoneLookup;
         this.bidRepository = bidRepository;
@@ -73,6 +76,7 @@ public class ReceptionLinker {
         this.notificationDispatcher = notificationDispatcher;
         this.auditService = auditService;
         this.recipientTrust = recipientTrust;
+        this.designatedNaming = designatedNaming;
     }
 
     /** Mode recette (FLUTTER-FB) ; fermé tant que Spring ne l'a pas injecté. */
@@ -95,21 +99,14 @@ public class ReceptionLinker {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<BidRecipientLinkEntity> linkIfPossible(UUID bidId) {
+        // Verrou du colis avant sa lecture : le nommage d'un lien d'emblée confirmé réécrit le colis.
+        bidRepository.lockForUpdate(bidId);
         BidEntity bid = bidRepository.findById(bidId).orElse(null);
         if (bid == null || !BidStatus.IN_FLIGHT.contains(bid.getStatus())
                 || bid.getTrackingToken() == null || linkRepository.existsByBidId(bidId)) {
             return Optional.empty();
         }
-        Optional<String> e164 = ReceptionPhones.toE164(bid.getRecipientPhone());
-        if (e164.isEmpty()) {
-            return Optional.empty();
-        }
-        // Seuls un numéro vérifié par SMS ou validé par Yadony rattachent un colis : numéro
-        // simplement déclaré, ambigu ou inconnu, aucun rattachement.
-        Optional<UserEntity> recipient = phoneLookup.findByPhone(e164.get()) instanceof PhoneMatch.Found found
-                && (found.trust() == PhoneMatch.Trust.SMS || found.trust() == PhoneMatch.Trust.YADONY)
-                ? Optional.of(found.user())
-                : Optional.empty();
+        Optional<UserEntity> recipient = resolveRecipient(bid);
         if (recipient.isEmpty()) {
             return Optional.empty();
         }
@@ -133,12 +130,38 @@ public class ReceptionLinker {
 
         if (recipientTrust.isTrusted(bid.getSenderId(), recipientId)) {
             BidRecipientLinkEntity link = saveConfirmed(bid, recipientId, "LINKED_TRUSTED_ON_ACCEPT");
+            if (bid.getRecipientUserId() != null) {
+                // Lien d'emblée confirmé : même effet qu'une confirmation (nom public, numéro si visible).
+                designatedNaming.apply(bid, recipient.get());
+            }
             notifyAnnounced(bid, recipientId);
             return Optional.of(link);
         }
         BidRecipientLinkEntity link = save(bid, recipientId, "LINKED_ON_ACCEPT");
         notifyIncoming(bid, announcement, recipientId);
         return Optional.of(link);
+    }
+
+    /**
+     * Compte destinataire du colis : le compte désigné par identifiant quand il y en a un (actif : un compte
+     * supprimé, suspendu, banni ou en cours de suppression ne reçoit aucun lien), sinon celui du numéro saisi.
+     * Pour le numéro, seuls un numéro vérifié par SMS ou validé par Yadony rattachent un colis
+     * ({@link PhoneLookupService#findByPhone}) : numéro simplement déclaré, ambigu ou inconnu, aucun
+     * rattachement. Ces règles du numéro ne touchent pas le chemin par identifiant.
+     */
+    private Optional<UserEntity> resolveRecipient(BidEntity bid) {
+        if (bid.getRecipientUserId() != null) {
+            return userRepository.findById(bid.getRecipientUserId())
+                    .filter(u -> u.getStatus() == UserStatus.ACTIVE);
+        }
+        Optional<String> e164 = ReceptionPhones.toE164(bid.getRecipientPhone());
+        if (e164.isEmpty()) {
+            return Optional.empty();
+        }
+        return phoneLookup.findByPhone(e164.get()) instanceof PhoneMatch.Found found
+                && (found.trust() == PhoneMatch.Trust.SMS || found.trust() == PhoneMatch.Trust.YADONY)
+                ? Optional.of(found.user())
+                : Optional.empty();
     }
 
     /**

@@ -53,6 +53,7 @@ class ReceptionLinkerTest {
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
     @Mock RecipientTrust recipientTrust;
+    @Mock DesignatedRecipientNaming designatedNaming;
     @InjectMocks ReceptionLinker linker;
 
     private final UUID bidId = UUID.randomUUID();
@@ -489,5 +490,150 @@ class ReceptionLinkerTest {
 
         assertThat(linker.catchUpAndNotify(me)).isZero();
         verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+    }
+
+    // ── Destinataire désigné par identifiant (recipientUserId) ───────────────
+
+    private void designated(UUID accountId) {
+        bid.setRecipientPhone(null);
+        bid.setRecipientUserId(accountId);
+    }
+
+    @Test
+    void linkIfPossible_designatedAccount_createsPendingLinkWithoutFirebaseLookup() {
+        designated(recipientId);
+        UserEntity account = user(recipientId, "uid-r", "Fatou");
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(account));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bidId);
+
+        assertThat(link).isPresent();
+        assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.PENDING);
+        assertThat(link.get().getRecipientUserId()).isEqualTo(recipientId);
+        verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(phoneLookup, never()).findByPhone(anyString());
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis pour vous ?"),
+                eq("Awa : colis Paris vers Dakar."), any());
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_ON_ACCEPT"), eq(null), any());
+    }
+
+    @Test
+    void linkIfPossible_designatedAccount_trusted_confirmsAndAnnounces() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+        when(recipientTrust.isTrusted(senderId, recipientId)).thenReturn(true);
+
+        Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bidId);
+
+        assertThat(link).isPresent();
+        assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.CONFIRMED);
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis arrive"), any(), any());
+        verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_TRUSTED_ON_ACCEPT"), eq(null), any());
+        verify(designatedNaming).apply(eq(bid), any(UserEntity.class));
+    }
+
+    @Test
+    void linkIfPossible_locksTheParcelBeforeReadingIt() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        linker.linkIfPossible(bidId);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bidRepository, linkRepository);
+        order.verify(bidRepository).lockForUpdate(bidId);
+        order.verify(bidRepository).findById(bidId);
+        order.verify(linkRepository).existsByBidId(bidId);
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountPending_neverNamesParcel() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        linker.linkIfPossible(bidId);
+
+        verify(designatedNaming, never()).apply(any(), any());
+    }
+
+    @Test
+    void linkIfPossible_trustedByNumber_neverNamesParcel() {
+        recipientFound(recipientId);
+        when(recipientTrust.isTrusted(senderId, recipientId)).thenReturn(true);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        linker.linkIfPossible(bidId);
+
+        verify(designatedNaming, never()).apply(any(), any());
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountDeleted_noLinkNoException() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.empty());
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = com.yadony.api.auth.UserStatus.class, names = {"SUSPENDED", "BANNED", "PENDING_DELETION"})
+    void linkIfPossible_designatedAccountIneligible_noLink(com.yadony.api.auth.UserStatus status) {
+        designated(recipientId);
+        UserEntity account = user(recipientId, "uid-r", "Fatou");
+        account.setStatus(status);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(account));
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountIsTraveler_noLink() {
+        designated(travelerId);
+        when(userRepository.findById(travelerId)).thenReturn(Optional.of(user(travelerId, "uid-t", "Moussa")));
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountBlocked_noLink() {
+        designated(recipientId);
+        when(userRepository.findById(recipientId)).thenReturn(Optional.of(user(recipientId, "uid-r", "Fatou")));
+        when(blockVisibility.isHidden(senderId, recipientId)).thenReturn(true);
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountIsSender_noLinkOutsideRecette() {
+        designated(senderId);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(user(senderId, "uid-s", "Awa")));
+
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void linkIfPossible_designatedAccountIsSender_recetteTester_linksSelf() {
+        designated(senderId);
+        UserEntity me = user(senderId, "uid-s", "Awa");
+        me.setRecetteTester(true);
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(me));
+        linker.setRecetteMode(recette(true, "staging"));
+
+        Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bidId);
+
+        assertThat(link).isPresent();
+        assertThat(link.get().getRecipientUserId()).isEqualTo(senderId);
+        assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.PENDING);
+        verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(phoneLookup, never()).findByPhone(anyString());
     }
 }

@@ -82,6 +82,7 @@ public class BidNegotiationService {
     private final BidService bidService;
     private final BidNegotiationMobileMoneyPort mobileMoneyPort;
     private final CommissionGridService commissionGridService;
+    private final BidRecipientDesignation recipientDesignation;
 
     public BidNegotiationService(BidRepository bidRepository,
                                  AnnouncementRepository announcementRepository,
@@ -97,7 +98,9 @@ public class BidNegotiationService {
                                  MatchingNegotiationConfig config,
                                  BidService bidService,
                                  BidNegotiationMobileMoneyPort mobileMoneyPort,
-                                 CommissionGridService commissionGridService) {
+                                 CommissionGridService commissionGridService,
+                                 BidRecipientDesignation recipientDesignation) {
+        this.recipientDesignation = recipientDesignation;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -205,8 +208,10 @@ public class BidNegotiationService {
                          :                     BidPricingMode.KG);
         bid.setDescription(request.description());
         bid.setContentCategory(normalizedCategory);
-        bid.setRecipientName(request.recipientName());
-        bid.setRecipientPhone(request.recipientPhone());
+        recipientDesignation.requireRecipient(request.recipientName(), request.recipientPhone(),
+                request.recipientUsername());
+        recipientDesignation.apply(bid, sender.getId(), announcement.getTravelerId(),
+                request.recipientName(), request.recipientPhone(), request.recipientUsername());
         bid.setDisclaimerSignedAt(LocalDateTime.now(ZoneOffset.UTC));
         bid.setDisclaimerSignedIp(bidService.resolveClientIp(httpRequest));
         if (paymentMethod != null) {
@@ -226,6 +231,7 @@ public class BidNegotiationService {
         bid.setNegotiationRound(1);
 
         BidEntity saved = bidRepository.save(bid);
+        recipientDesignation.audit(saved, sender.getId());
 
         persistGridItems(saved, announcement, gridItems);
         persistCustomItems(saved, customItems);

@@ -89,13 +89,17 @@ class BidNegotiationServiceTest {
     private static final UUID ANNOUNCEMENT_ID = UUID.randomUUID();
     private static final UUID BID_ID = UUID.randomUUID();
 
+    private final com.yadony.api.common.RecipientAccountResolver recipientResolver =
+            org.mockito.Mockito.mock(com.yadony.api.common.RecipientAccountResolver.class);
+
     @BeforeEach
     void setUp() {
         service = new BidNegotiationService(
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                config, bidService, mobileMoneyPort, commissionGridService);
+                config, bidService, mobileMoneyPort, commissionGridService,
+                new BidRecipientDesignation(recipientResolver, auditService));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -333,6 +337,57 @@ class BidNegotiationServiceTest {
             ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
             verify(bidRepository).save(captor.capture());
             assertThat(captor.getValue().getItemSize()).isEqualTo(ItemSize.M);
+        }
+
+        @Test
+        @DisplayName("proposition avec identifiant → compte désigné, @identifiant, numéro nul, audit")
+        void propose_byUsername_designatesAccount() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            UUID accountId = UUID.randomUUID();
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+            when(recipientResolver.resolve(SENDER_ID, "awa.diallo"))
+                    .thenReturn(new com.yadony.api.common.RecipientAccount(accountId, "awa.diallo"));
+            stubSavedBid();
+
+            service.propose(ANNOUNCEMENT_ID, SENDER_UID, new BidNegotiationStartRequest(
+                    new BigDecimal("5.0"), "Vêtements", "CLOTHING", null, null, true, "CASH", null, null, null,
+                    new BigDecimal("45.00"), null, null, null, null, null, null, "awa.diallo"), httpRequest);
+
+            ArgumentCaptor<BidEntity> captor = ArgumentCaptor.forClass(BidEntity.class);
+            verify(bidRepository).save(captor.capture());
+            assertThat(captor.getValue().getRecipientUserId()).isEqualTo(accountId);
+            assertThat(captor.getValue().getRecipientName()).isEqualTo("@awa.diallo");
+            assertThat(captor.getValue().getRecipientPhone()).isNull();
+            verify(auditService).log(eq("BID"), eq(BID_ID), eq("RECIPIENT_DESIGNATED_BY_USERNAME"),
+                    eq(SENDER_ID), anyMap());
+        }
+
+        @Test
+        @DisplayName("proposition sans destinataire → 422 recipient-required, rien d'enregistré")
+        void propose_withoutRecipient_422() {
+            UserEntity sender = buildSender();
+            AnnouncementEntity announcement = buildAnnouncement();
+            when(userRepository.findByFirebaseUid(SENDER_UID)).thenReturn(Optional.of(sender));
+            when(announcementRepository.findByIdForUpdate(ANNOUNCEMENT_ID)).thenReturn(Optional.of(announcement));
+            lenient().when(bidService.assertCanBidOn(sender, announcement, "CLOTHING")).thenReturn("CLOTHING");
+            lenient().when(bidService.resolvePaymentMethodFor(announcement, "CASH"))
+                    .thenReturn(com.yadony.api.payments.cash.PaymentMethod.CASH);
+            lenient().when(commissionRateResolver.resolve(TRAVELER_ID, SENDER_ID)).thenReturn(new BigDecimal("0.05"));
+            lenient().when(userRepository.findById(TRAVELER_ID)).thenReturn(Optional.of(buildTraveler()));
+
+            assertThatThrownBy(() -> service.propose(ANNOUNCEMENT_ID, SENDER_UID,
+                    new BidNegotiationStartRequest(new BigDecimal("5.0"), "Vêtements", "CLOTHING", null, null, true,
+                            "CASH", null, null, null, new BigDecimal("45.00"), null, null, null, null, null, null, null), httpRequest))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("recipient-required"));
+            verify(bidRepository, never()).save(any());
         }
 
         @Test

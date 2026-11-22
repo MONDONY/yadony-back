@@ -28,10 +28,10 @@ public record BidRequest(
         @Size(max = 500, message = "{validation.bid.category.max}")
         String contentCategory,
 
-        @NotBlank(message = "{validation.bid.recipient-name.required}")
+        // Nom + numéro, OU recipientUsername (exclusifs) : la présence est contrôlée par le service
+        // (BidRecipientDesignation.requireRecipient), pas par la validation du corps.
         String recipientName,
 
-        @NotBlank(message = "{validation.bid.recipient-phone.required}")
         String recipientPhone,
 
         @NotNull(message = "{validation.bid.disclaimer.accepted}")
@@ -68,8 +68,22 @@ public record BidRequest(
          */
         @Min(1) @Max(400) Integer lengthCm,
         @Min(1) @Max(400) Integer widthCm,
-        @Min(1) @Max(400) Integer heightCm
+        @Min(1) @Max(400) Integer heightCm,
+
+        /** Identifiant d'un compte Yadony destinataire : exclusif avec nom et numéro. Doit rester en DERNIER. */
+        @Size(max = 64) String recipientUsername
 ) {
+    /** Constructeur de compatibilité (sans identifiant destinataire). */
+    public BidRequest(BigDecimal weightKg, String description, String contentCategory,
+                      String recipientName, String recipientPhone, Boolean disclaimerSigned,
+                      String paymentMethod, String phoneNumber, String countryCode, String promoCode,
+                      List<String> photoKeys, List<BidGridItemRequest> gridItems, String itemSize,
+                      Integer lengthCm, Integer widthCm, Integer heightCm) {
+        this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
+                paymentMethod, phoneNumber, countryCode, promoCode, photoKeys, gridItems, itemSize,
+                lengthCm, widthCm, heightCm, null);
+    }
+
     /** Constructeur de compatibilité (sans dimensions) : la forme d'avant le bateau au m³. */
     public BidRequest(BigDecimal weightKg, String description, String contentCategory,
                       String recipientName, String recipientPhone, Boolean disclaimerSigned,
@@ -77,7 +91,7 @@ public record BidRequest(
                       List<String> photoKeys, List<BidGridItemRequest> gridItems, String itemSize) {
         this(weightKg, description, contentCategory, recipientName, recipientPhone, disclaimerSigned,
                 paymentMethod, phoneNumber, countryCode, promoCode, photoKeys, gridItems, itemSize,
-                null, null, null);
+                null, null, null, null);
     }
 
     /** Constructeur de compatibilité (sans taille) : la forme d'avant le contrôle de taille. */

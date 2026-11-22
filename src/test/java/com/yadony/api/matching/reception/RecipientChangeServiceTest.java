@@ -3,6 +3,9 @@ package com.yadony.api.matching.reception;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
+import com.yadony.api.common.RecipientAccount;
+import com.yadony.api.common.RecipientAccountResolver;
+import com.yadony.api.matching.BidRecipientDesignation;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
@@ -47,6 +50,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -60,6 +64,7 @@ class RecipientChangeServiceTest {
     @Mock BidService bidService;
     @Mock AuditService auditService;
     @Mock ApplicationEventPublisher eventPublisher;
+    @Mock RecipientAccountResolver resolver;
 
     private RecipientChangeService service;
 
@@ -79,6 +84,7 @@ class RecipientChangeServiceTest {
         service = new RecipientChangeService(bidRepository, announcementRepository, userRepository,
                 linkRepository, revokedTokenRepository, bidService, auditService, eventPublisher,
                 Clock.fixed(now, ZoneOffset.UTC));
+        service.setDesignation(new BidRecipientDesignation(resolver, auditService));
 
         sender = new UserEntity();
         ReflectionTestUtils.setField(sender, "id", senderId);
@@ -297,6 +303,236 @@ class RecipientChangeServiceTest {
         assertThatThrownBy(() -> service.changeRecipient(bid.getId(), UID, request("Awa", "+221781112233")))
                 .isInstanceOfSatisfying(YadonyBusinessException.class,
                         e -> assertThat(e.getErrorCode()).isEqualTo("announcement-not-found"));
+    }
+
+    // ── Désignation par identifiant ─────────────────────────────────────────
+
+    private final UUID accountId = UUID.randomUUID();
+
+    private ChangeRecipientRequest byUsername(String username) {
+        return new ChangeRecipientRequest(null, null, username);
+    }
+
+    private void assertProblem(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, HttpStatus status, String code) {
+        assertThatThrownBy(call).isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+            assertThat(e.getStatus()).isEqualTo(status);
+            assertThat(e.getErrorCode()).isEqualTo(code);
+        });
+    }
+
+    @Test
+    void numberToUsername_sameAccountAsPreviousLink_noReassignedPushToThatAccount() {
+        when(resolver.resolve(senderId, "awa.diallo")).thenReturn(new RecipientAccount(accountId, "awa.diallo"));
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        l.respond(ReceptionLinkStatus.CONFIRMED, null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("awa.diallo"));
+
+        assertThat(l.getDeletedAt()).isNotNull();
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), null, travelerId));
+    }
+
+    @Test
+    void numberToUsername_setsAccount_nullPhone_rotatesTokenAndCode_publishesEvent() {
+        when(resolver.resolve(senderId, "awa.diallo")).thenReturn(new RecipientAccount(accountId, "awa.diallo"));
+        BidRecipientLinkEntity l = link(ReceptionLinkStatus.CONFIRMED);
+
+        service.changeRecipient(bid.getId(), UID, byUsername("awa.diallo"));
+
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountId);
+        assertThat(bid.getRecipientPhone()).isNull();
+        assertThat(bid.getRecipientName()).isEqualTo("@awa.diallo");
+        ArgumentCaptor<RevokedTrackingTokenEntity> revoked = ArgumentCaptor.forClass(RevokedTrackingTokenEntity.class);
+        verify(revokedTokenRepository).save(revoked.capture());
+        assertThat(revoked.getValue().getToken()).isEqualTo(OLD_TOKEN);
+        assertThat(bid.getTrackingToken()).isNotEqualTo(OLD_TOKEN);
+        assertThat(bid.getConfirmationCode()).matches("\\d{6}").isNotEqualTo("123456");
+        assertThat(bid.isConfirmationCodePublicEnabled()).isFalse();
+        assertThat(l.getDeletedAt()).isNotNull();
+        verify(bidRepository).save(bid);
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), oldRecipientId, travelerId));
+        Map<String, Object> payload = auditPayload("RECIPIENT_CHANGED");
+        assertThat(payload).containsEntry("newRecipientUserId", accountId.toString())
+                .containsEntry("previousNumberMasked", "+221 •••• 67").doesNotContainKey("newNumberMasked");
+        assertThat(payload.toString()).doesNotContain("1234567");
+        verify(auditService).log("BID", bid.getId(), "RECIPIENT_DESIGNATED_BY_USERNAME", senderId,
+                Map.of("recipientUserId", accountId.toString()));
+    }
+
+    @Test
+    void usernameToNumber_clearsTheAccount() {
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("@awa.diallo");
+        bid.setRecipientPhone(null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.empty());
+
+        service.changeRecipient(bid.getId(), UID, request("Awa Sow", "+221781112233"));
+
+        assertThat(bid.getRecipientUserId()).isNull();
+        assertThat(bid.getRecipientPhone()).isEqualTo("+221781112233");
+        assertThat(bid.getRecipientName()).isEqualTo("Awa Sow");
+        assertThat(bid.getTrackingToken()).isNotEqualTo(OLD_TOKEN);
+        assertThat(auditPayload("RECIPIENT_CHANGED"))
+                .containsEntry("previousRecipientUserId", accountId.toString())
+                .containsEntry("previousNumberMasked", "inconnu");
+    }
+
+    @Test
+    void sameUsernameAfterConfirmation_rewritesNothing() {
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("Binta S.");
+        bid.setRecipientPhone("+221781112233");
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        l.respond(ReceptionLinkStatus.CONFIRMED, null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+        when(resolver.resolve(senderId, "binta.sow")).thenReturn(new RecipientAccount(accountId, "binta.sow"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("binta.sow"));
+
+        assertThat(bid.getRecipientName()).isEqualTo("Binta S.");
+        assertThat(bid.getRecipientPhone()).isEqualTo("+221781112233");
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountId);
+        assertThat(bid.getTrackingToken()).isEqualTo(OLD_TOKEN);
+        assertThat(l.getDeletedAt()).isNull();
+        verify(bidRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void usernameAToUsernameB_pushesReassignedToTheOldAccount() {
+        UUID accountB = UUID.randomUUID();
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("@awa.diallo");
+        bid.setRecipientPhone(null);
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+        when(resolver.resolve(senderId, "binta.sow")).thenReturn(new RecipientAccount(accountB, "binta.sow"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("binta.sow"));
+
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountB);
+        assertThat(bid.getRecipientName()).isEqualTo("@binta.sow");
+        assertThat(l.getDeletedAt()).isNotNull();
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), accountId, travelerId));
+    }
+
+    @Test
+    void declinedThenNewUsername_dropsDeclinedLink_noReassignedPush() {
+        UUID accountB = UUID.randomUUID();
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("@awa.diallo");
+        bid.setRecipientPhone(null);
+        BidRecipientLinkEntity l = new BidRecipientLinkEntity(bid.getId(), accountId);
+        l.respond(ReceptionLinkStatus.DECLINED, null);
+        when(linkRepository.findByBidId(bid.getId())).thenReturn(Optional.of(l));
+        when(resolver.resolve(senderId, "binta.sow")).thenReturn(new RecipientAccount(accountB, "binta.sow"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("binta.sow"));
+
+        assertThat(bid.getRecipientUserId()).isEqualTo(accountB);
+        assertThat(l.getDeletedAt()).isNotNull();
+        assertThat(publishedEvent()).isEqualTo(new BidRecipientChangedEvent(bid.getId(), null, travelerId));
+    }
+
+    @Test
+    void lookupQuotaExhausted_429_noWrite() {
+        when(resolver.resolve(senderId, "binta.sow")).thenThrow(YadonyBusinessException.localized(
+                HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota", "problem.recipient-lookup-quota"));
+
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID, byUsername("binta.sow")),
+                HttpStatus.TOO_MANY_REQUESTS, "recipient-lookup-quota");
+
+        assertThat(bid.getRecipientUserId()).isNull();
+        assertThat(bid.getRecipientPhone()).isEqualTo("+221 77 123 45 67");
+        verify(bidRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void sameUsername_onlyRefreshesTheLabel() {
+        bid.setRecipientUserId(accountId);
+        bid.setRecipientName("@ancien.nom");
+        bid.setRecipientPhone(null);
+        when(resolver.resolve(senderId, "awa.diallo")).thenReturn(new RecipientAccount(accountId, "awa.diallo"));
+
+        service.changeRecipient(bid.getId(), UID, byUsername("awa.diallo"));
+
+        assertThat(bid.getRecipientName()).isEqualTo("@awa.diallo");
+        assertThat(bid.getTrackingToken()).isEqualTo(OLD_TOKEN);
+        assertThat(bid.getConfirmationCode()).isEqualTo("123456");
+        verify(revokedTokenRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+        assertThat(auditPayload("RECIPIENT_NAME_UPDATED")).containsOnlyKeys("bidId");
+    }
+
+    @Test
+    void username_travelerSelfUnknownBlocked_sameErrorsAsCreation_noWrite() {
+        when(resolver.resolve(senderId, "voyageur")).thenReturn(new RecipientAccount(travelerId, "voyageur"));
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID, byUsername("voyageur")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "recipient-is-traveler");
+
+        when(resolver.resolve(senderId, "moi")).thenThrow(YadonyBusinessException.localized(
+                HttpStatus.UNPROCESSABLE_ENTITY, "recipient-invitation-self", "problem.recipient-invitation-self"));
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID, byUsername("moi")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "recipient-invitation-self");
+
+        when(resolver.resolve(senderId, "inconnu")).thenThrow(YadonyBusinessException.localized(
+                HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID, byUsername("inconnu")),
+                HttpStatus.NOT_FOUND, "user-not-found");
+
+        assertThat(bid.getRecipientUserId()).isNull();
+        assertThat(bid.getRecipientPhone()).isEqualTo("+221 77 123 45 67");
+        assertThat(bid.getTrackingToken()).isEqualTo(OLD_TOKEN);
+        verify(revokedTokenRepository, never()).save(any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void usernameWithNameOrPhone_422_modeConflict() {
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID,
+                new ChangeRecipientRequest("Awa", null, "awa.diallo")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "recipient-mode-conflict");
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID,
+                new ChangeRecipientRequest(null, "+221781112233", "awa.diallo")),
+                HttpStatus.UNPROCESSABLE_ENTITY, "recipient-mode-conflict");
+        verify(revokedTokenRepository, never()).save(any());
+    }
+
+    @Test
+    void neitherUsernameNorNamePlusPhone_422_recipientRequired() {
+        for (ChangeRecipientRequest r : new ChangeRecipientRequest[]{
+                new ChangeRecipientRequest(null, null, null),
+                new ChangeRecipientRequest("Awa", null, null),
+                new ChangeRecipientRequest(null, "+221781112233", null),
+                new ChangeRecipientRequest(" ", "+221781112233", " ")}) {
+            assertProblem(() -> service.changeRecipient(bid.getId(), UID, r),
+                    HttpStatus.UNPROCESSABLE_ENTITY, "recipient-required");
+        }
+        verify(bidRepository, never()).save(any());
+    }
+
+    @Test
+    void username_statusOutsideTheWindow_409_notSender_403() {
+        bid.setStatus(BidStatus.COMPLETED);
+        assertProblem(() -> service.changeRecipient(bid.getId(), UID, byUsername("awa.diallo")),
+                HttpStatus.CONFLICT, "recipient-change-not-allowed");
+        verifyNoInteractions(resolver);
+
+        bid.setStatus(BidStatus.IN_TRANSIT);
+        UserEntity other = new UserEntity();
+        ReflectionTestUtils.setField(other, "id", travelerId);
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(other));
+        assertProblem(() -> service.changeRecipient(bid.getId(), "uid-traveler", byUsername("awa.diallo")),
+                HttpStatus.FORBIDDEN, "forbidden");
+        verifyNoInteractions(resolver);
+    }
+
+    @Test
+    void oldConstructor_stillBuildsTheRequest() {
+        ChangeRecipientRequest r = new ChangeRecipientRequest("Awa", "+221781112233");
+        assertThat(r.recipientUsername()).isNull();
     }
 
     // ── Refus ───────────────────────────────────────────────────────────────

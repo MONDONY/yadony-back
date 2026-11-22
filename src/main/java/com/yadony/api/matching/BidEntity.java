@@ -116,6 +116,10 @@ public class BidEntity extends BaseEntity {
     @Column(name = "recipient_phone", length = 30)
     private String recipientPhone;
 
+    /** Compte Yadony désigné comme destinataire par identifiant (V396). Null = destinataire saisi à la main. */
+    @Column(name = "recipient_user_id")
+    private UUID recipientUserId;
+
     @Column(name = "disclaimer_signed_at")
     private LocalDateTime disclaimerSignedAt;
 
@@ -435,6 +439,9 @@ public class BidEntity extends BaseEntity {
 
     public String getRecipientPhone() { return recipientPhone; }
     public void setRecipientPhone(String recipientPhone) { this.recipientPhone = recipientPhone; }
+
+    public UUID getRecipientUserId() { return recipientUserId; }
+    public void setRecipientUserId(UUID recipientUserId) { this.recipientUserId = recipientUserId; }
 
     public LocalDateTime getDisclaimerSignedAt() { return disclaimerSignedAt; }
     public void setDisclaimerSignedAt(LocalDateTime disclaimerSignedAt) { this.disclaimerSignedAt = disclaimerSignedAt; }

@@ -195,5 +195,14 @@ public record BidResponse(
          * versement au transporteur est lancé. Servi aux deux parties. Toujours sérialisé (null explicite), champ
          * ajouté : les anciennes apps l'ignorent. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        java.time.OffsetDateTime depositedAt
+        java.time.OffsetDateTime depositedAt,
+        /** Vue expéditeur : le destinataire est un compte Yadony désigné par identifiant (colis avec
+         * {@code recipientUserId}), quel que soit l'état du lien. Toujours false pour le voyageur. Toujours
+         * sérialisé, champ ajouté : les anciennes apps l'ignorent. */
+        boolean recipientDesignatedByUsername,
+        /** Vue expéditeur : identifiant ACTUEL du compte désigné, tant que le destinataire n'a pas confirmé (lien
+         * absent, PENDING ou DECLINED) ; null une fois le lien CONFIRMED, pour un colis par numéro, un compte
+         * supprimé, et toujours null pour le voyageur. Toujours sérialisé (null explicite), champ ajouté. */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
+        String recipientUsername
 ) {}

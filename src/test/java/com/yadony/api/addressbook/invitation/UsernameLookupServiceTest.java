@@ -65,6 +65,19 @@ class UsernameLookupServiceTest {
     }
 
     @Test
+    void lookupAdvertisesParcelDesignationCapability() throws Exception {
+        UserEntity awa = user("awa", "awa.diallo");
+        when(userRepository.findByUsernameIgnoreCase("awa.diallo")).thenReturn(Optional.of(awa));
+        when(blockVisibility.isHidden(me.getId(), awa.getId())).thenReturn(false);
+
+        UsernameLookupResponse response = service.lookup(UID, "awa.diallo");
+
+        assertThat(response.parcelDesignation()).isTrue();
+        assertThat(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(response))
+                .contains("\"parcelDesignation\":true");
+    }
+
+    @Test
     void missingFirstNameGivesQuestionMark() {
         UserEntity noName = user(null, "sans.nom");
         when(userRepository.findByUsernameIgnoreCase("sans.nom")).thenReturn(Optional.of(noName));

@@ -46,6 +46,7 @@ public class BidCheckoutService {
     private final BidPhotoService bidPhotoService;
     private final CommissionGridService commissionGridService;
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private final BidRecipientDesignation recipientDesignation;
 
     public BidCheckoutService(BidRepository bidRepository,
                               AnnouncementRepository announcementRepository,
@@ -57,7 +58,9 @@ public class BidCheckoutService {
                               AnnouncementPriceGridItemRepository annGridItemRepository,
                               BidPhotoService bidPhotoService,
                               CommissionGridService commissionGridService,
-                              org.springframework.context.ApplicationEventPublisher eventPublisher) {
+                              org.springframework.context.ApplicationEventPublisher eventPublisher,
+                              BidRecipientDesignation recipientDesignation) {
+        this.recipientDesignation = recipientDesignation;
         this.eventPublisher = eventPublisher;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
@@ -232,8 +235,8 @@ public class BidCheckoutService {
         bid.setPricingMode(bidMode);
         bid.setDescription(req.description());
         bid.setContentCategory(normalizedContentCategory);
-        bid.setRecipientName(req.recipientName());
-        bid.setRecipientPhone(req.recipientPhone());
+        recipientDesignation.apply(bid, sender.getId(), announcement.getTravelerId(),
+                req.recipientName(), req.recipientPhone(), req.recipientUsername());
         bid.setDisclaimerSignedAt(now);
         bid.setDisclaimerSignedIp(ip);
         bid.setStatus(BidStatus.AWAITING_PAYMENT);
@@ -242,6 +245,7 @@ public class BidCheckoutService {
         commissionGridService.current().ifPresent(g -> bid.setCommissionGridId(g.id()));
 
         BidEntity saved = bidRepository.save(bid);
+        recipientDesignation.audit(saved, sender.getId());
 
         // Traitement grid items et calcul gridNet
         BigDecimal gridNet = BigDecimal.ZERO;

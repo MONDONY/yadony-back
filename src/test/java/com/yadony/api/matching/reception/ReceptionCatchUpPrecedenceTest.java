@@ -55,7 +55,7 @@ class ReceptionCatchUpPrecedenceTest {
         PhoneLookupService lookup = new PhoneLookupService(firebase, users, hasher, new DeclaredPhoneResolver(hasher));
         linker = new ReceptionLinker(mock(BidRepository.class), mock(AnnouncementRepository.class), users, links,
                 firebase, block, mock(NotificationDispatcher.class), mock(AuditService.class),
-                mock(RecipientTrust.class), lookup);
+                mock(RecipientTrust.class), mock(DesignatedRecipientNaming.class), lookup);
         bid = new BidEntity();
         ReflectionTestUtils.setField(bid, "id", UUID.randomUUID());
         bid.setSenderId(UUID.randomUUID());
