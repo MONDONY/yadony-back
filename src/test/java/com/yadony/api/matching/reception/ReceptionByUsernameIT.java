@@ -91,6 +91,7 @@ class ReceptionByUsernameIT {
         assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.PENDING);
         assertThat(link.get().getRecipientUserId()).isEqualTo(account.getId());
         verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(firebaseContact, never()).findPhoneOwner(anyString());
 
         // Avant confirmation : ni numéro en base, ni fuite dans les vues expéditeur et voyageur.
         mockMvc.perform(get("/bids/{id}", bid.getId()).with(authentication(as(sender))))
@@ -205,7 +206,10 @@ class ReceptionByUsernameIT {
         bid.setRecipientName("Binta Sow");
         bid.setRecipientPhone("+221 78 111 22 33");
         bidRepository.save(bid);
-        when(firebaseContact.findUidByPhone(ACCOUNT_PHONE)).thenReturn(Optional.of(account.getFirebaseUid()));
+        // Chemin par numéro : propriétaire vérifié par SMS lu par PhoneLookupService (findPhoneOwner), seul un
+        // numéro vérifié par SMS ou validé par Yadony rattache le colis.
+        when(firebaseContact.findPhoneOwner(ACCOUNT_PHONE))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.found(account.getFirebaseUid()));
 
         Optional<BidRecipientLinkEntity> link = linker.linkIfPossible(bid.getId());
 
