@@ -70,7 +70,7 @@ class LocalizedMatchingAuthRefusalsIT {
             BidCheckoutRequest request = mock(BidCheckoutRequest.class);
             when(request.announcementId()).thenReturn(UUID.randomUUID());
             new BidCheckoutService(mock(BidRepository.class), announcementRepository, userRepository, null, null, "",
-                    null, null, null, null, null).checkout("uid-sender", request, null);
+                    null, null, null, null, null, null).checkout("uid-sender", request, null);
         }
 
         @GetMapping("/t/stats")

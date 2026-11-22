@@ -17,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -44,6 +45,7 @@ class BidCheckoutServiceTest {
     @Mock private HttpServletRequest httpRequest;
     @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
+    @Spy private BidRecipientDesignation recipientDesignation = new BidRecipientDesignation(null, null);
     @InjectMocks private BidCheckoutService service;
 
     private UserEntity sender;

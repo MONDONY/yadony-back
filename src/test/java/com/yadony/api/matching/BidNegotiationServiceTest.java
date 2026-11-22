@@ -95,7 +95,8 @@ class BidNegotiationServiceTest {
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                config, bidService, mobileMoneyPort, commissionGridService);
+                config, bidService, mobileMoneyPort, commissionGridService,
+                new BidRecipientDesignation(null, auditService));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────

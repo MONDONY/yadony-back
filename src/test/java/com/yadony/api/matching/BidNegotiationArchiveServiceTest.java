@@ -80,7 +80,8 @@ class BidNegotiationArchiveServiceTest {
                 bidRepository, announcementRepository, userRepository, messageRepository,
                 customItemRepository, bidGridItemRepository, annGridItemRepository,
                 bidPhotoService, commissionRateResolver, auditService, eventPublisher,
-                new MatchingNegotiationConfig(3, 1, 24, "-"), bidService, mobileMoneyPort, null);
+                new MatchingNegotiationConfig(3, 1, 24, "-"), bidService, mobileMoneyPort, null,
+                new BidRecipientDesignation(null, auditService));
 
         announcement = new AnnouncementEntity();
         announcement.setTravelerId(TRAVELER_ID);
