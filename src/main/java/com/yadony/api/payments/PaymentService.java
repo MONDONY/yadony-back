@@ -1618,7 +1618,7 @@ public class PaymentService {
     }
 
     private PaymentResponse toPaymentResponse(PaymentEntity payment, String clientSecret) {
-        return new PaymentResponse(
+        PaymentResponse response = new PaymentResponse(
                 payment.getId(),
                 payment.getBidId(),
                 clientSecret,
@@ -1628,6 +1628,9 @@ public class PaymentService {
                 payment.getStripePaymentIntentId(),
                 payment.getCurrency()
         );
+        // Montant réellement remboursé (null tant que rien ne l'est) : après une retenue, inférieur au total payé.
+        response.setRefundedAmount(payment.getRefundedAmount());
+        return response;
     }
 
     /** Variante avec PaymentIntent : expose aussi payment_method_types (YadonyPaymentSheet). */
