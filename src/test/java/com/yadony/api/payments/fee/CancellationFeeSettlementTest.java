@@ -376,6 +376,41 @@ class CancellationFeeSettlementTest {
     }
 
     @Test
+    void preview_capped_trueWhenTheCapLimitsTheGross_falseOtherwise_sameGrossAsTheSettlement() {
+        when(stripeFees.fee(PI, "EUR")).thenReturn(new BigDecimal("1.75"));
+        PaymentEntity big = captured(payment("200.00", "9.52", "EUR"));
+        PaymentEntity small = captured(payment("100.00", "4.76", "EUR"));
+        BigDecimal rate = new BigDecimal("0.20");
+
+        CancellationFeeSettlement.Preview capped = settlement.preview(big, rate, null);
+        CancellationFeeSettlement.Preview notCapped = settlement.preview(small, rate, null);
+
+        assertThat(capped.capped()).isTrue();
+        assertThat(capped.grossFee()).isEqualByComparingTo("30.00")
+                .isEqualTo(settlement.compute(big, SENDER, TRAVELER, rate).grossFee());
+        assertThat(notCapped.capped()).isFalse();
+        assertThat(notCapped.grossFee()).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void preview_capped_xofConvertedCap() {
+        when(rateLookup.unitsPerEur("XOF")).thenReturn(new BigDecimal("655.957"));
+
+        assertThat(settlement.preview(captured(payment("100000", "4762", "XOF")), new BigDecimal("0.30"), null)
+                .capped()).isTrue();
+        assertThat(settlement.preview(captured(payment("65600", "3124", "XOF")), new BigDecimal("0.20"), null)
+                .capped()).isFalse();
+    }
+
+    @Test
+    void preview_capped_falseWithoutFee() {
+        assertThat(settlement.preview(captured(payment("100000", "4762", "XOF")), BigDecimal.ZERO, null).capped())
+                .isFalse();
+        assertThat(settlement.preview(payment("200.00", "9.52", "EUR"), new BigDecimal("0.30"), null).capped())
+                .as("carte non capturée : pas de retenue").isFalse();
+    }
+
+    @Test
     void preview_neverReadsStripeFeesNorTheCommission() {
         PaymentEntity payment = captured(payment("100.00", "4.76", "EUR"));
 

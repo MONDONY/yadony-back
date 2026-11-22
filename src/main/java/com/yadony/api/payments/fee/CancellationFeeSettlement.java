@@ -162,8 +162,9 @@ public class CancellationFeeSettlement {
      *                     {@link #settleMobileMoney}) ; faux : il serait remboursé en entier
      * @param grossFee     brut retenu, 0 si {@code retainable} est faux ou au taux 0
      * @param senderRefund rendu à l'expéditeur
+     * @param capped       le plafond a limité le brut ({@link CancellationFeeCalculator#isCapped}) ; faux sans retenue
      */
-    public record Preview(boolean retainable, BigDecimal grossFee, BigDecimal senderRefund) {}
+    public record Preview(boolean retainable, BigDecimal grossFee, BigDecimal senderRefund, boolean capped) {}
 
     /**
      * Ce que le remboursement retiendrait si l'expéditeur annulait MAINTENANT au taux donné : MÊME brut que le règlement
@@ -184,18 +185,22 @@ public class CancellationFeeSettlement {
         int scale = scaleOf(payment.getCurrency());
         if (previewIneligibility(payment, mobileMoneyDepositAmount) != null) {
             return new Preview(false, BigDecimal.ZERO.setScale(scale),
-                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale));
+                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale), false);
         }
         try {
-            BigDecimal gross = rate.signum() == 0
-                    ? BigDecimal.ZERO.setScale(scale)
-                    : CancellationFeeCalculator.grossFee(paid, rate, capIn(payment.getCurrency()), scale);
-            return new Preview(true, gross, CancellationFeeCalculator.senderRefund(paid, gross, scale));
+            if (rate.signum() == 0) {
+                BigDecimal none = BigDecimal.ZERO.setScale(scale);
+                return new Preview(true, none, CancellationFeeCalculator.senderRefund(paid, none, scale), false);
+            }
+            BigDecimal cap = capIn(payment.getCurrency());
+            BigDecimal gross = CancellationFeeCalculator.grossFee(paid, rate, cap, scale);
+            return new Preview(true, gross, CancellationFeeCalculator.senderRefund(paid, gross, scale),
+                    CancellationFeeCalculator.isCapped(paid, rate, cap, scale));
         } catch (RuntimeException e) {
             log.warn("Aperçu de la retenue incalculable pour le paiement {} : aucun frais montré ({})",
                     payment.getId(), e.getMessage());
             return new Preview(false, BigDecimal.ZERO.setScale(scale),
-                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale));
+                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale), false);
         }
     }
 

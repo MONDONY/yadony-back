@@ -79,12 +79,30 @@ class CancellationFeePreviewControllerIntegrationTest {
                 .andExpect(jsonPath("$.fee").value(20.00))
                 .andExpect(jsonPath("$.currency").value("EUR"))
                 .andExpect(jsonPath("$.refundAmount").value(80.00))
+                .andExpect(jsonPath("$.capped").value(false))
                 .andReturn().getResponse().getContentAsString();
 
         CancellationFeePreviewResponse preview = objectMapper.readValue(body, CancellationFeePreviewResponse.class);
         assertThat(preview.nextTierAt()).isEqualTo(storedDeparture.minus(Duration.ofHours(24)));
         assertThat(preview.nextTierAt()).isBetween(departure.minus(Duration.ofHours(26)),
                 departure.minus(Duration.ofHours(22)));
+    }
+
+    @Test
+    void sender_bigPayment_cappedTrue() throws Exception {
+        UserEntity sender = persistUser(Role.SENDER);
+        AnnouncementEntity trip = persistTrip(persistUser(Role.TRAVELER),
+                Instant.now().plus(Duration.ofHours(48)).truncatedTo(ChronoUnit.SECONDS));
+        BidEntity bid = persistBid(trip, sender, PaymentMethod.STRIPE);
+        persistCapturedPayment(bid, "200.00");
+
+        mockMvc.perform(get("/cancellations/bids/{bidId}/fee-preview", bid.getId())
+                        .with(authentication(asRole(sender, "SENDER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rate").value(0.20))
+                .andExpect(jsonPath("$.fee").value(30.00))
+                .andExpect(jsonPath("$.refundAmount").value(170.00))
+                .andExpect(jsonPath("$.capped").value(true));
     }
 
     @Test
@@ -114,6 +132,7 @@ class CancellationFeePreviewControllerIntegrationTest {
                 .andExpect(jsonPath("$.fee").value(0))
                 .andExpect(jsonPath("$.refundAmount").value(0))
                 .andExpect(jsonPath("$.currency").value("EUR"))
+                .andExpect(jsonPath("$.capped").value(false))
                 .andExpect(jsonPath("$.nextTierAt").doesNotExist());
     }
 

@@ -87,8 +87,9 @@ L'interrupteur n'arrête que les NOUVELLES retenues. Une ligne `DUE` est réglé
 
 ### Contrat de l'aperçu pour l'app
 
-`CancellationFeePreviewResponse(rate, fee, currency, refundAmount, nextTierAt)` :
+`CancellationFeePreviewResponse(rate, fee, currency, refundAmount, nextTierAt, capped)` :
 - `rate` : taux appliqué (0.20 = 20 %), 0 quand rien ne s'applique ; `fee` : brut retenu (ce que perd l'expéditeur, pas la part du voyageur) ; `refundAmount` : payé moins `fee` ; montants à l'échelle de la devise (2 décimales en euro, aucune en franc CFA), mais un zéro peut arriver sans décimale (`0`).
+- `capped` : booléen TOUJOURS présent (jamais omis). Vrai exactement quand le plafond de 30 € (converti dans la devise du paiement, arrondi vers le bas) a limité le brut, c'est-à-dire quand `payé × taux` arrondi à l'échelle de la devise dépasse `fee`. Faux sous le plafond, pile au plafond (150 € à 20 % = 30 € : pas plafonné), sans frais (`fee` 0) et pour espèces ou rien de payé en ligne. Calculé par `CancellationFeeCalculator.isCapped`, avec les mêmes entrées que `grossFee` du règlement : l'app ne doit plus le déduire en recalculant `fee + refundAmount`. Champ additif : une ancienne app l'ignore ; une app récente doit le traiter comme faux s'il manque (ancien back).
 - Aucun frais (taux 0, frais 0, tout le payé rendu, `nextTierAt` absent) : interrupteur éteint, colis antérieur à la date d'effet, pas encore accepté, report du trajet en attente de la réponse de l'expéditeur, paiement qui ne peut pas porter de retenue.
 - Espèces ou rien de payé en ligne : `rate`, `fee` ET `refundAmount` valent 0, devise du colis.
 - `nextTierAt` : dernier instant (inclus) du taux affiché ; il est OMIS du JSON quand il est nul (palier le plus cher, ou aucun frais). Dans la fenêtre gratuite, le taux est 0 et la hausse est annoncée. L'app doit relire l'aperçu après `nextTierAt` (le taux a changé).

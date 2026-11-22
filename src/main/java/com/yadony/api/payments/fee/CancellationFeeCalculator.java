@@ -57,6 +57,17 @@ public final class CancellationFeeCalculator {
         return paidAmount.multiply(rate).min(capInPaymentCurrency).setScale(scale, RoundingMode.HALF_UP);
     }
 
+    /**
+     * Le plafond a-t-il limité le brut ? Vrai exactement quand {@code payé × taux} arrondi à l'échelle de la devise
+     * dépasse le brut retenu par {@link #grossFee} (donc le plafond). Faux quand le brut est nul (aucun frais). Même
+     * entrées et même brut que le règlement : l'aperçu et le remboursement ne peuvent pas diverger.
+     */
+    public static boolean isCapped(BigDecimal paidAmount, BigDecimal rate, BigDecimal capInPaymentCurrency, int scale) {
+        BigDecimal gross = grossFee(paidAmount, rate, capInPaymentCurrency, scale);
+        BigDecimal uncapped = paidAmount.multiply(rate).setScale(scale, RoundingMode.HALF_UP);
+        return gross.signum() > 0 && gross.compareTo(uncapped) < 0;
+    }
+
     /** Rendu à l'expéditeur : le payé, à l'échelle de la devise, moins le brut de {@link #grossFee}. */
     public static BigDecimal senderRefund(BigDecimal paidAmount, BigDecimal grossFee, int scale) {
         return paidAmount.setScale(scale, RoundingMode.HALF_UP).subtract(grossFee);

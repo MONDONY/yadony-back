@@ -59,7 +59,7 @@ class CancellationFeeQuoteAdapterTest {
     void card_quoteOfTheSettlementPreview() {
         when(payments.findForBid(BID_ID)).thenReturn(Optional.of(payment));
         when(settlement.preview(payment, RATE, null)).thenReturn(
-                new CancellationFeeSettlement.Preview(true, new BigDecimal("20.00"), new BigDecimal("80.00")));
+                new CancellationFeeSettlement.Preview(true, new BigDecimal("20.00"), new BigDecimal("80.00"), false));
 
         Optional<CancellationFeeQuotePort.Quote> quote = adapter.quote(BID_ID, RATE);
 
@@ -82,7 +82,7 @@ class CancellationFeeQuoteAdapterTest {
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT))
                 .thenReturn(Optional.of(deposit(PawapayOperationStatus.COMPLETED, "65600")));
         when(settlement.preview(payment, RATE, new BigDecimal("65600"))).thenReturn(
-                new CancellationFeeSettlement.Preview(true, new BigDecimal("13120"), new BigDecimal("52480")));
+                new CancellationFeeSettlement.Preview(true, new BigDecimal("13120"), new BigDecimal("52480"), false));
 
         assertThat(adapter.quote(BID_ID, RATE)).hasValueSatisfying(q -> {
             assertThat(q.currency()).isEqualTo("XOF");
@@ -97,7 +97,7 @@ class CancellationFeeQuoteAdapterTest {
         when(operations.findLatest(payment.getId(), PawapayOperationKind.DEPOSIT))
                 .thenReturn(Optional.of(deposit(PawapayOperationStatus.PROCESSING, "100.00")));
         when(settlement.preview(payment, RATE, null)).thenReturn(
-                new CancellationFeeSettlement.Preview(false, BigDecimal.ZERO, new BigDecimal("100.00")));
+                new CancellationFeeSettlement.Preview(false, BigDecimal.ZERO, new BigDecimal("100.00"), false));
 
         assertThat(adapter.quote(BID_ID, RATE)).hasValueSatisfying(q -> assertThat(q.retainable()).isFalse());
         verify(settlement).preview(payment, RATE, null);

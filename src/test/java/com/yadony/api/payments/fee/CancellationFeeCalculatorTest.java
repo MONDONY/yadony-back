@@ -143,4 +143,34 @@ class CancellationFeeCalculatorTest {
         assertThatThrownBy(() -> CancellationFeeCalculator.grossFee(bd("100"), bd("0.3"), bd("30"), -1))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("scale");
     }
+
+    @Test
+    void isCapped_eurBoundary_exactlyAtCapIsNotCapped() {
+        // 150 x 0,20 = 30,00 : le plafond égale le brut, il ne l'a pas limité.
+        assertThat(CancellationFeeCalculator.isCapped(bd("150.00"), bd("0.20"), bd("30"), 2)).isFalse();
+        assertAmount(CancellationFeeCalculator.grossFee(bd("150.00"), bd("0.20"), bd("30"), 2), "30.00", 2);
+    }
+
+    @Test
+    void isCapped_eurJustAboveCap_isCapped() {
+        // 150,01 x 0,20 = 30,002 -> 30,00 arrondi : pas plafonné (même montant) ; 150,10 -> 30,02 : plafonné.
+        assertThat(CancellationFeeCalculator.isCapped(bd("150.01"), bd("0.20"), bd("30"), 2)).isFalse();
+        assertThat(CancellationFeeCalculator.isCapped(bd("150.10"), bd("0.20"), bd("30"), 2)).isTrue();
+        assertThat(CancellationFeeCalculator.isCapped(bd("200"), bd("0.20"), bd("30"), 2)).isTrue();
+        assertThat(CancellationFeeCalculator.isCapped(bd("100"), bd("0.20"), bd("30"), 2)).isFalse();
+    }
+
+    @Test
+    void isCapped_xofConvertedCapBoundary() {
+        // Plafond converti 19 678 F : 98 390 x 0,20 = 19 678 pile ; 98 395 x 0,20 = 19 679 > plafond.
+        assertThat(CancellationFeeCalculator.isCapped(bd("98390"), bd("0.20"), bd("19678"), 0)).isFalse();
+        assertThat(CancellationFeeCalculator.isCapped(bd("98395"), bd("0.20"), bd("19678"), 0)).isTrue();
+        assertAmount(CancellationFeeCalculator.grossFee(bd("98395"), bd("0.20"), bd("19678"), 0), "19678", 0);
+    }
+
+    @Test
+    void isCapped_noFee_isFalse() {
+        assertThat(CancellationFeeCalculator.isCapped(bd("200"), BigDecimal.ZERO, bd("30"), 2)).isFalse();
+        assertThat(CancellationFeeCalculator.isCapped(bd("200"), bd("0.20"), BigDecimal.ZERO, 2)).isFalse();
+    }
 }
