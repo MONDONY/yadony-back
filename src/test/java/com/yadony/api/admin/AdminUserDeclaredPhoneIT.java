@@ -358,6 +358,35 @@ class AdminUserDeclaredPhoneIT {
     }
 
     @Test
+    void verify_numberHeldByFirebaseAccountWithoutYadonyAccount_409DistinctCode_noWrite() throws Exception {
+        // Ancienne tentative de connexion par téléphone : un compte Firebase porte le numéro, aucun compte
+        // Yadony actif derrière. Échec fermé, avec un code que l'admin peut comprendre.
+        when(firebaseContact.findPhoneOwner(phone))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.found("phantom-" + UUID.randomUUID()));
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("declared-phone-held-by-unregistered-account"));
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+        verify(firebaseContact, never()).clearPhone(anyString());
+        verify(firebaseContact, never()).deleteAccount(anyString());
+        verify(auditService, never()).log(any(), any(), eq("ADMIN_USER_PHONE_VERIFIED"), any(), any());
+    }
+
+    @Test
+    void verify_firebaseReadFails_503_not409Missing() throws Exception {
+        when(firebaseContact.readContactStrict(uid)).thenReturn(Optional.empty());
+
+        mockMvc.perform(verifyShowing(phone, admin("USER_PHONE_VERIFY")))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("declared-phone-unavailable"));
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getDeclaredPhoneLevel())
+                .isEqualTo(DeclaredPhoneLevel.DECLARED);
+    }
+
+    @Test
     void verify_otherSimpleDeclarant_doesNotBlock() throws Exception {
         // Un simple déclarant du même numéro ne bloque pas la validation (aucune unicité sur le déclaré).
         UserEntity squatter = user("squat-" + UUID.randomUUID());
@@ -377,10 +406,11 @@ class AdminUserDeclaredPhoneIT {
                 .content("{\"declaredPhone\":\"" + shown + "\"}");
     }
 
-    /** Lecture en cache ET lecture fraîche (le service valide sur la lecture fraîche). */
+    /** Lecture en cache, lecture fraîche ET lecture stricte (le service valide sur la lecture stricte). */
     private void claim(FirebaseContactService.Contact contact) {
         when(firebaseContact.getContact(uid)).thenReturn(contact);
         when(firebaseContact.getFreshContact(uid)).thenReturn(contact);
+        when(firebaseContact.readContactStrict(uid)).thenReturn(Optional.of(contact));
     }
 
     private String url() {

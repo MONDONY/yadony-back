@@ -129,6 +129,34 @@ public class FirebaseContactService {
     }
 
     /**
+     * Lecture fraîche ET stricte, pour les gardes qui ne doivent jamais échouer ouvertes (numéro déclaré :
+     * déclaration et validation par un administrateur). Contrairement à {@link #getFreshContact}, une panne
+     * n'est pas maquillée en {@link Contact#EMPTY} : vide = « impossible de savoir », l'appelant refuse (503).
+     * Un UID inconnu de Firebase est en revanche une réponse sûre : {@link Contact#EMPTY}. Le succès réamorce
+     * le cache ; l'échec l'invalide, pour qu'aucune valeur ancienne ne survive à une lecture ratée.
+     */
+    public Optional<Contact> readContactStrict(String firebaseUid) {
+        if (unavailable() || firebaseUid == null || firebaseUid.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            Contact contact = toContact(firebaseAuth.getUser(firebaseUid));
+            cache.put(firebaseUid, contact);
+            return Optional.of(contact);
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() == AuthErrorCode.USER_NOT_FOUND) {
+                cache.put(firebaseUid, Contact.EMPTY);
+                return Optional.of(Contact.EMPTY);
+            }
+            log.warn("Firebase getUser({}) strict a échoué : {}", firebaseUid, e.getAuthErrorCode());
+        } catch (Exception e) {
+            log.warn("Firebase getUser({}) strict indisponible", firebaseUid, e);
+        }
+        cache.invalidate(firebaseUid);
+        return Optional.empty();
+    }
+
+    /**
      * Coordonnées de plusieurs utilisateurs en un aller-retour (listes admin, exports).
      * Firebase plafonne à 100 identifiants par appel, d'où le découpage.
      *

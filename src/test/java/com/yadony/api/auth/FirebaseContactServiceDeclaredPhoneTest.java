@@ -144,6 +144,63 @@ class FirebaseContactServiceDeclaredPhoneTest {
         verify(firebaseAuth, never()).setCustomUserClaims(anyString(), anyMap());
     }
 
+    // ── readContactStrict : une panne n'est jamais confondue avec « aucune coordonnée » ──
+
+    @Test
+    @DisplayName("readContactStrict relit Firebase en ignorant le cache et le réamorce")
+    void readContactStrict_ignoresCache_andRefreshesIt() throws Exception {
+        UserRecord before = record(Map.of());
+        UserRecord after = record(Map.of("declared_phone", "+2250102030405"));
+        when(firebaseAuth.getUser("uid-1")).thenReturn(before, after);
+        service.getContact("uid-1"); // amorce le cache sans numéro
+
+        assertThat(service.readContactStrict("uid-1"))
+                .hasValueSatisfying(c -> assertThat(c.declaredPhone()).isEqualTo("+2250102030405"));
+        assertThat(service.getContact("uid-1").declaredPhone()).isEqualTo("+2250102030405");
+        verify(firebaseAuth, times(2)).getUser("uid-1");
+    }
+
+    @Test
+    @DisplayName("readContactStrict : erreur Firebase -> vide (pas Contact.EMPTY), cache invalidé")
+    void readContactStrict_firebaseError_emptyAndCacheInvalidated() throws Exception {
+        UserRecord cached = record(Map.of("declared_phone", "+2250102030405"));
+        FirebaseAuthException boom = mock(FirebaseAuthException.class);
+        when(boom.getAuthErrorCode()).thenReturn(com.google.firebase.auth.AuthErrorCode.EMAIL_ALREADY_EXISTS);
+        when(firebaseAuth.getUser("uid-1")).thenReturn(cached).thenThrow(boom).thenReturn(cached);
+        service.getContact("uid-1");
+
+        assertThat(service.readContactStrict("uid-1")).isEmpty();
+        // L'ancienne valeur n'est plus servie : la lecture suivante repart vers Firebase.
+        service.getContact("uid-1");
+        verify(firebaseAuth, times(3)).getUser("uid-1");
+    }
+
+    @Test
+    @DisplayName("readContactStrict : exception inattendue -> vide")
+    void readContactStrict_unexpectedException_empty() throws Exception {
+        when(firebaseAuth.getUser("uid-1")).thenThrow(new IllegalStateException("réseau"));
+
+        assertThat(service.readContactStrict("uid-1")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("readContactStrict : UID inconnu de Firebase -> Contact.EMPTY (réponse sûre, pas une panne)")
+    void readContactStrict_userNotFound_definitiveEmptyContact() throws Exception {
+        FirebaseAuthException notFound = mock(FirebaseAuthException.class);
+        when(notFound.getAuthErrorCode()).thenReturn(com.google.firebase.auth.AuthErrorCode.USER_NOT_FOUND);
+        when(firebaseAuth.getUser("uid-1")).thenThrow(notFound);
+
+        assertThat(service.readContactStrict("uid-1")).contains(FirebaseContactService.Contact.EMPTY);
+    }
+
+    @Test
+    @DisplayName("readContactStrict : sans Firebase ou sans UID -> vide")
+    void readContactStrict_unavailableOrBlankUid_empty() {
+        assertThat(new FirebaseContactService(null).readContactStrict("uid-1")).isEmpty();
+        assertThat(service.readContactStrict(" ")).isEmpty();
+        assertThat(service.readContactStrict(null)).isEmpty();
+    }
+
     @Test
     @DisplayName("isAvailable : vrai avec FirebaseAuth, faux sans (test/CI)")
     void isAvailable_reflectsFirebaseAuthPresence() {

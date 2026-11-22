@@ -48,7 +48,7 @@ class AdminDeclaredPhoneServiceTest {
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.of(user));
         when(firebase.isAvailable()).thenReturn(true);
-        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, "+2250707070707"));
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, "+2250707070707")));
         var service = new AdminDeclaredPhoneService(users, firebase, new DeclaredPhoneHasher(""), audit);
 
         assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), "+2250707070707"))
@@ -85,7 +85,7 @@ class AdminDeclaredPhoneServiceTest {
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.of(user));
         when(firebase.isAvailable()).thenReturn(true);
-        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, PHONE));
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
         when(firebase.findPhoneOwner(PHONE)).thenReturn(null);
         var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
 
@@ -105,7 +105,7 @@ class AdminDeclaredPhoneServiceTest {
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.of(user));
         when(firebase.isAvailable()).thenReturn(true);
-        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, PHONE));
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
         when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.found("u"));
         var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
 
@@ -123,7 +123,7 @@ class AdminDeclaredPhoneServiceTest {
         UUID id = UUID.randomUUID();
         when(users.findById(id)).thenReturn(Optional.of(user));
         when(firebase.isAvailable()).thenReturn(true);
-        when(firebase.getFreshContact("u")).thenReturn(new FirebaseContactService.Contact(null, null, PHONE));
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
         when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
         when(users.existsByDeclaredPhoneHashAndDeclaredPhoneLevelAndIdNot(
                 hasher.hash(PHONE), com.yadony.api.auth.DeclaredPhoneLevel.YADONY_VERIFIED, user.getId()))
@@ -136,6 +136,113 @@ class AdminDeclaredPhoneServiceTest {
                         .isEqualTo("declared-phone-conflict"));
         verify(firebase, never()).getContacts(any());
         verify(users, never()).saveAndFlush(any());
+    }
+
+    // ── Constat 7 : lecture stricte, une panne Firebase n'est jamais « aucun numéro déclaré » ──
+
+    @Test
+    void verify_strictContactReadFails_503Unavailable_not409Missing() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.readContactStrict("u")).thenReturn(Optional.empty());
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("declared-phone-unavailable");
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                });
+        verify(firebase, never()).getFreshContact(any());
+        verify(users, never()).saveAndFlush(any());
+    }
+
+    // ── Constat 3 : compte Firebase fantôme (numéro SMS sans compte Yadony actif) ──
+
+    @Test
+    void verify_smsOwnerWithoutLiveLocalAccount_409HeldByUnregistered_noWrite() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.found("uid-phantom"));
+        when(users.findByFirebaseUid("uid-phantom")).thenReturn(Optional.empty());
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("declared-phone-held-by-unregistered-account");
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        // Échec fermé : rien n'est validé, rien n'est libéré côté Firebase.
+        verify(users, never()).saveAndFlush(any());
+        verify(firebase, never()).clearPhone(any());
+        verify(firebase, never()).deleteAccount(any());
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void verify_smsOwnerWithLiveLocalAccount_409Conflict() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.found("uid-sms"));
+        UserEntity smsOwner = new UserEntity();
+        smsOwner.setFirebaseUid("uid-sms");
+        when(users.findByFirebaseUid("uid-sms")).thenReturn(Optional.of(smsOwner));
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("declared-phone-conflict"));
+        verify(users, never()).saveAndFlush(any());
+    }
+
+    // ── Constat 2 : deux validations simultanées, l'index unique partiel tranche ──
+
+    @Test
+    void verify_uniqueIndexViolation_409Conflict_noAudit() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        when(users.saveAndFlush(user)).thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+                "could not execute statement", new RuntimeException(
+                        "ERROR: duplicate key value violates unique constraint \"uq_users_declared_phone_yadony\"")));
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("declared-phone-conflict");
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        verify(audit, never()).log(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void verify_otherIntegrityViolation_isNotDisguisedAsConflict() {
+        DeclaredPhoneHasher hasher = new DeclaredPhoneHasher("k");
+        UserEntity user = declaredUser(hasher, PHONE);
+        UUID id = UUID.randomUUID();
+        when(users.findById(id)).thenReturn(Optional.of(user));
+        when(firebase.isAvailable()).thenReturn(true);
+        when(firebase.readContactStrict("u")).thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, PHONE)));
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        var other = new org.springframework.dao.DataIntegrityViolationException("value too long for column");
+        when(users.saveAndFlush(user)).thenThrow(other);
+        var service = new AdminDeclaredPhoneService(users, firebase, hasher, audit);
+
+        assertThatThrownBy(() -> service.verify(id, UUID.randomUUID(), PHONE)).isSameAs(other);
     }
 
     private static final String PHONE = "+2250707070707";
