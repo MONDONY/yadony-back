@@ -67,8 +67,10 @@ class TripRescheduleRulesTest {
         AnnouncementEntity paris = trip(LocalDate.of(2026, 10, 20), LocalTime.NOON);
         paris.setTimezone("Europe/Paris");
 
-        assertThat(TripRescheduleRules.decisionOpen(bid, paris, java.time.Instant.parse("2026-10-19T16:33:00Z"))).isTrue();
-        assertThat(TripRescheduleRules.decisionOpen(bid, paris, java.time.Instant.parse("2026-10-19T18:31:00Z"))).isFalse();
+        assertThat(TripRescheduleRules.decisionOpen(bid, bid.getStatus(), paris,
+                java.time.Instant.parse("2026-10-19T16:33:00Z"))).isTrue();
+        assertThat(TripRescheduleRules.decisionOpen(bid, bid.getStatus(), paris,
+                java.time.Instant.parse("2026-10-19T18:31:00Z"))).isFalse();
     }
 
     @Test

@@ -89,6 +89,11 @@ public record CancellationFeeProperties(boolean enabled, Instant effectiveFrom, 
                 capEur, tiers);
     }
 
+    /** Frais en vigueur : interrupteur allumé ET date d'effet posée (allumé sans date, il reste éteint). */
+    public boolean active() {
+        return enabled && effectiveFrom != null;
+    }
+
     /**
      * Date d'effet stricte : instant ISO-8601 avec date, heure ET fuseau ou décalage ({@code 2026-12-15T00:00:00Z},
      * {@code 2026-12-15T00:00:00+01:00}). Vide ou absente : {@code null} (aucun frais).

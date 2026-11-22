@@ -2,7 +2,8 @@ package com.yadony.api.payments.fee;
 
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.payments.PaymentEntity;
-import com.yadony.api.payments.PaymentRepository;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.currency.ExchangeRateLookup;
 import com.yadony.api.payments.currency.ExchangeRateService;
@@ -45,7 +46,7 @@ class CancellationFeeSettlementTest {
     private static final String PI = "pi_fee";
 
     @Mock CancellationFeeRatePort port;
-    @Mock PaymentRepository payments;
+    @Mock BidRepository bids;
     @Mock StripeFeeSource stripeFees;
     @Mock com.yadony.api.payments.wallet.fees.PawapayFeeTable pawapayFees;
     @Mock CommissionRateResolver commissionRates;
@@ -56,7 +57,7 @@ class CancellationFeeSettlementTest {
 
     @BeforeEach
     void setUp() {
-        settlement = new CancellationFeeSettlement(port, payments, stripeFees, pawapayFees, commissionRates,
+        settlement = new CancellationFeeSettlement(port, bids, stripeFees, pawapayFees, commissionRates,
                 new ExchangeRateService(rateLookup), events);
         lenient().when(port.capEur()).thenReturn(new BigDecimal("30"));
         // Le règlement lit le taux sous verrou (dueRateForUpdate) ; ici le port répond comme sa lecture simple.
@@ -178,7 +179,7 @@ class CancellationFeeSettlementTest {
         PaymentEntity payment = payment("100.00", "4.76", "EUR");
         payment.setBidId(null);
         payment.setNegotiationThreadId(threadId);
-        when(payments.findBidIdLinkedToThread(threadId)).thenReturn(Optional.of(bidId));
+        when(bids.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid(bidId)));
         when(port.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("0.30")));
         when(stripeFees.fee(PI, "EUR")).thenReturn(new BigDecimal("1.75"));
 
@@ -518,7 +519,7 @@ class CancellationFeeSettlementTest {
         PaymentEntity payment = payment("100.00", "4.76", "EUR");
         payment.setBidId(null);
         payment.setNegotiationThreadId(threadId);
-        when(payments.findBidIdLinkedToThread(threadId)).thenReturn(Optional.of(bidId));
+        when(bids.findByLinkedNegotiationThreadId(threadId)).thenReturn(Optional.of(bid(bidId)));
         when(port.dueRate(bidId)).thenReturn(Optional.of(new BigDecimal("0.30")));
 
         settlement.waiveAfterAdminFullRefund(payment);
@@ -549,6 +550,13 @@ class CancellationFeeSettlementTest {
         assertThat(preview.retainable()).isFalse();
         assertThat(preview.grossFee()).isEqualByComparingTo("0");
         assertThat(preview.senderRefund()).isEqualByComparingTo(paid);
+    }
+
+    /** Colis matérialisé depuis un fil de négociation. */
+    private static BidEntity bid(UUID id) {
+        BidEntity bid = new BidEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(bid, "id", id);
+        return bid;
     }
 
     private static PaymentEntity payment(String amount, String commission, String currency) {

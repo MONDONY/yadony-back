@@ -164,7 +164,7 @@ public class CancellationFeePayoutPortAdapter implements CancellationFeePayoutPo
     }
 
     private static Optional<PayableCancellationFee> payable(CancellationFeeEntity fee) {
-        if (fee.getStatus() != CancellationFeeStatus.RETAINED && fee.getStatus() != CancellationFeeStatus.PAYOUT_PENDING) {
+        if (!isPayable(fee.getStatus())) {
             return Optional.empty();
         }
         return Optional.of(new PayableCancellationFee(fee.getId(), fee.getBidId(), fee.getTravelerId(),

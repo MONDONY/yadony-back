@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Chemin unique de remboursement d'un paiement (bid classique ou thread de négociation).
@@ -65,8 +66,9 @@ import java.util.UUID;
  * traitement par lot (annulation de trajet) n'annule pas les remboursements déjà réussis.
  *
  * <p><b>Rail mobile money</b> — {@code payment.getRail() == PAWAPAY} bascule sur un
- * second chemin, complètement séparé du chemin Stripe ci-dessus (aucune ligne du chemin Stripe
- * n'est modifiée par cette branche) : voir {@link #refundMobileMoney}. Les six listeners
+ * second chemin, distinct du chemin Stripe ci-dessus : voir {@link #refundMobileMoney}. Les deux
+ * rails ne partagent que le claim {@code markRefundedIfEscrow}, le règlement de la retenue
+ * d'annulation ({@link CancellationFeeSettlement}) et l'audit. Les six listeners
  * appelants existants de {@link #processRefund} (annulations, litiges, rejets d'annonce) ne
  * changent pas — le dispatch sur le rail est entièrement interne à cette classe. Même retenue d'annulation sur ce
  * rail : remboursement pawaPay PARTIEL du dépôt (payé moins le dédommagement), frais perdus lus dans le barème
@@ -187,18 +189,13 @@ public class RefundProcessor {
             log.error("Échec annulation PI {} : {}", payment.getStripePaymentIntentId(), e.getMessage(), e);
             // Plus avalé en silence : l'autorisation reste posée sur la carte de l'expéditeur
             // tant que personne n'agit. Alerte unique par paiement (préfixe 14 + UUID 36 = 50).
-            try {
-                alerts.raiseOnce(PENDING_CANCEL_FAILED_ALERT_PREFIX + payment.getId(),
-                        "Annulation du PaymentIntent " + payment.getStripePaymentIntentId() + " (paiement "
-                                + payment.getId() + ") refusée par Stripe : " + e.getMessage()
-                                + " ; l'autorisation carte de l'expéditeur reste posée, à annuler à la main",
-                        Map.of("paymentId", payment.getId().toString(),
-                                "piId", String.valueOf(payment.getStripePaymentIntentId()),
-                                "error", String.valueOf(e.getMessage())));
-            } catch (RuntimeException alertFailure) {
-                log.error("Alerte {} non levée pour le paiement {}", PENDING_CANCEL_FAILED_ALERT_PREFIX,
-                        payment.getId(), alertFailure);
-            }
+            raiseOnceQuietly(PENDING_CANCEL_FAILED_ALERT_PREFIX, payment.getId(),
+                    () -> "Annulation du PaymentIntent " + payment.getStripePaymentIntentId() + " (paiement "
+                            + payment.getId() + ") refusée par Stripe : " + e.getMessage()
+                            + " ; l'autorisation carte de l'expéditeur reste posée, à annuler à la main",
+                    () -> Map.of("paymentId", payment.getId().toString(),
+                            "piId", String.valueOf(payment.getStripePaymentIntentId()),
+                            "error", String.valueOf(e.getMessage())));
             return false;
         }
     }
@@ -249,13 +246,7 @@ public class RefundProcessor {
                     refundMinusCancellationFee(payment, paymentId, retainedFee.get());
                     stripeAction = "remboursement partiel émis (PI capturé, frais d'annulation retenus)";
                 } else {
-                    Refund.create(
-                            RefundCreateParams.builder()
-                                    .setPaymentIntent(payment.getStripePaymentIntentId())
-                                    .build(),
-                            RequestOptions.builder()
-                                    .setIdempotencyKey("refund-" + paymentId)
-                                    .build());
+                    refundCharge(payment.getStripePaymentIntentId(), paymentId, null);
                     stripeAction = "remboursement émis (PI capturé)";
                 }
             } else if (!"canceled".equals(piStatus)) {
@@ -282,13 +273,10 @@ public class RefundProcessor {
         // retenue reste alors due et rien n'est réglé.
         Map<String, Object> enriched = enrich(auditPayload, payment);
         if (retainedFee.isPresent()) {
-            CancellationFeeBreakdown fee = retainedFee.get();
-            paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
-            cancellationFees.retain(payment, fee);
-            enriched.put("refundedAmount", fee.senderRefund().toPlainString());
-            enriched.put("cancellationFee", fee.grossFee().toPlainString());
+            recordRetainedFee(payment, paymentId, retainedFee.get(), enriched);
         } else if (feeComputationFailure != null) {
-            raiseFeeComputationAlert(payment, paymentId, feeComputationFailure);
+            raiseFeeComputationAlert(payment, paymentId, feeComputationFailure,
+                    "l'expéditeur a été remboursé en entier");
             cancellationFees.waiveAfterFailedComputation(payment);
         } else {
             cancellationFees.waiveIfDue(payment, piStatus);
@@ -330,39 +318,62 @@ public class RefundProcessor {
                                                    CancellationFeeBreakdown fee) throws StripeException {
         long amountMinor = CurrencyAmount.of(fee.senderRefund(),
                 SupportedCurrency.fromCodeOrDefault(payment.getCurrency())).minor();
-        Refund.create(
-                RefundCreateParams.builder()
-                        .setPaymentIntent(payment.getStripePaymentIntentId())
-                        .setAmount(amountMinor)
-                        .build(),
-                RequestOptions.builder()
-                        .setIdempotencyKey("refund-" + paymentId)
-                        .build());
+        refundCharge(payment.getStripePaymentIntentId(), paymentId, amountMinor);
     }
 
     /**
-     * Alerte unique par paiement, levée APRÈS le remboursement intégral (un échec Stripe l'aurait sinon
-     * annoncé à tort). Une alerte qui échoue ne remet pas en cause le remboursement déjà émis.
+     * Seul {@code Refund.create} de cette classe : la charge du PaymentIntent {@code piId}, en entier
+     * ({@code amountMinor} nul) ou du seul montant donné en unités mineures. Une clé d'idempotence par paiement,
+     * {@code refund-<paymentId>}, quel que soit le chemin : un paiement n'a jamais qu'un remboursement.
      */
-    private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure) {
-        raiseFeeComputationAlert(payment, paymentId, failure, "l'expéditeur a été remboursé en entier");
+    private static void refundCharge(String piId, UUID paymentId, Long amountMinor) throws StripeException {
+        RefundCreateParams.Builder params = RefundCreateParams.builder().setPaymentIntent(piId);
+        if (amountMinor != null) {
+            params.setAmount(amountMinor);
+        }
+        Refund.create(params.build(), RequestOptions.builder().setIdempotencyKey("refund-" + paymentId).build());
     }
 
-    /** @param refundOutcome ce que l'expéditeur a reçu, dit en clair dans l'alerte */
+    /**
+     * Remboursement partiel réussi, sur l'un ou l'autre rail : montant rendu enregistré (UPDATE ciblé), retenue
+     * réglée (versement au voyageur après commit), montants ajoutés à l'audit.
+     */
+    private void recordRetainedFee(PaymentEntity payment, UUID paymentId, CancellationFeeBreakdown fee,
+                                   Map<String, Object> enriched) {
+        paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
+        cancellationFees.retain(payment, fee);
+        enriched.put("refundedAmount", fee.senderRefund().toPlainString());
+        enriched.put("cancellationFee", fee.grossFee().toPlainString());
+    }
+
+    /**
+     * Alerte admin unique par paiement ({@code prefix + paymentId}). Une alerte qui échoue est journalisée et ne remet
+     * pas en cause l'argent déjà rendu ; texte et contexte sont construits sous la même garde.
+     */
+    private void raiseOnceQuietly(String prefix, UUID paymentId, Supplier<String> detail,
+                                  Supplier<Map<String, Object>> context) {
+        try {
+            alerts.raiseOnce(prefix + paymentId, detail.get(), context.get());
+        } catch (RuntimeException alertFailure) {
+            log.error("Alerte {} non levée pour le paiement {}", prefix, paymentId, alertFailure);
+        }
+    }
+
+    /**
+     * Alerte unique par paiement, levée APRÈS le remboursement (un échec du prestataire l'aurait sinon annoncé à
+     * tort). Une alerte qui échoue ne remet pas en cause le remboursement déjà émis.
+     *
+     * @param refundOutcome ce que l'expéditeur a reçu, dit en clair dans l'alerte
+     */
     private void raiseFeeComputationAlert(PaymentEntity payment, UUID paymentId, RuntimeException failure,
                                           String refundOutcome) {
-        try {
-            alerts.raiseOnce(FEE_COMPUTE_FAILED_ALERT_PREFIX + paymentId,
-                    "Retenue d'annulation incalculable pour le paiement " + paymentId + " : "
-                            + failure.getMessage() + " ; " + refundOutcome + ", le voyageur "
-                            + "n'est pas dédommagé, à régler à la main",
-                    Map.of("paymentId", paymentId.toString(),
-                            "bidId", String.valueOf(payment.getBidId()),
-                            "error", String.valueOf(failure.getMessage())));
-        } catch (RuntimeException alertFailure) {
-            log.error("Alerte {} non levée pour le paiement {}", FEE_COMPUTE_FAILED_ALERT_PREFIX, paymentId,
-                    alertFailure);
-        }
+        raiseOnceQuietly(FEE_COMPUTE_FAILED_ALERT_PREFIX, paymentId,
+                () -> "Retenue d'annulation incalculable pour le paiement " + paymentId + " : "
+                        + failure.getMessage() + " ; " + refundOutcome + ", le voyageur "
+                        + "n'est pas dédommagé, à régler à la main",
+                () -> Map.of("paymentId", paymentId.toString(),
+                        "bidId", String.valueOf(payment.getBidId()),
+                        "error", String.valueOf(failure.getMessage())));
     }
 
     /**
@@ -372,21 +383,16 @@ public class RefundProcessor {
      */
     private void raiseRefundMismatchAlert(PaymentEntity payment, UUID paymentId, PawapayOperationEntity refund,
                                           CancellationFeeBreakdown expected) {
-        try {
-            alerts.raiseOnce(FEE_REFUND_MISMATCH_ALERT_PREFIX + paymentId,
-                    "Retenue d'annulation non réglée pour le paiement " + paymentId + " : un remboursement pawaPay "
-                            + refund.getId() + " de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
-                            + " était déjà en vol, " + expected.senderRefund().toPlainString() + " attendus ; retenue "
-                            + "close, voyageur non dédommagé, à régler à la main",
-                    Map.of("paymentId", paymentId.toString(),
-                            "bidId", String.valueOf(payment.getBidId()),
-                            "operationId", refund.getId().toString(),
-                            "refundAmount", refund.getAmount().toPlainString(),
-                            "expectedRefund", expected.senderRefund().toPlainString()));
-        } catch (RuntimeException alertFailure) {
-            log.error("Alerte {} non levée pour le paiement {}", FEE_REFUND_MISMATCH_ALERT_PREFIX, paymentId,
-                    alertFailure);
-        }
+        raiseOnceQuietly(FEE_REFUND_MISMATCH_ALERT_PREFIX, paymentId,
+                () -> "Retenue d'annulation non réglée pour le paiement " + paymentId + " : un remboursement pawaPay "
+                        + refund.getId() + " de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
+                        + " était déjà en vol, " + expected.senderRefund().toPlainString() + " attendus ; retenue "
+                        + "close, voyageur non dédommagé, à régler à la main",
+                () -> Map.of("paymentId", paymentId.toString(),
+                        "bidId", String.valueOf(payment.getBidId()),
+                        "operationId", refund.getId().toString(),
+                        "refundAmount", refund.getAmount().toPlainString(),
+                        "expectedRefund", expected.senderRefund().toPlainString()));
     }
 
     /**
@@ -426,9 +432,7 @@ public class RefundProcessor {
             }
             log.warn("PaymentIntent {} capturé pendant le remboursement du paiement {} : remboursement de la charge",
                     piId, paymentId);
-            Refund.create(
-                    RefundCreateParams.builder().setPaymentIntent(piId).build(),
-                    RequestOptions.builder().setIdempotencyKey("refund-" + paymentId).build());
+            refundCharge(piId, paymentId, null);
             return "remboursement émis (PI capturé pendant l'annulation)";
         }
     }
@@ -585,11 +589,7 @@ public class RefundProcessor {
         Map<String, Object> enriched = enrich(auditPayload, payment);
         enriched.put("refundOperationId", refund.getId().toString());
         if (retainedFee.isPresent()) {
-            CancellationFeeBreakdown fee = retainedFee.get();
-            paymentRepository.recordRefundedAmount(paymentId, fee.senderRefund());
-            cancellationFees.retain(payment, fee);
-            enriched.put("refundedAmount", fee.senderRefund().toPlainString());
-            enriched.put("cancellationFee", fee.grossFee().toPlainString());
+            recordRetainedFee(payment, paymentId, retainedFee.get(), enriched);
         } else if (feeComputationFailure != null) {
             raiseFeeComputationAlert(payment, paymentId, feeComputationFailure,
                     "l'expéditeur est remboursé de " + refund.getAmount().toPlainString() + " " + refund.getCurrency()
@@ -630,22 +630,17 @@ public class RefundProcessor {
     private void raisePartialRefundUnsettledAlert(PaymentEntity payment, UUID paymentId, PawapayOperationEntity refund,
                                                   PawapayOperationEntity deposit) {
         BigDecimal held = deposit.getAmount().subtract(refund.getAmount());
-        try {
-            alerts.raiseOnce(PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX + paymentId,
-                    "Remboursement pawaPay " + refund.getId() + " repris pour le paiement " + paymentId + " : "
-                            + refund.getAmount().toPlainString() + " " + refund.getCurrency() + " rendus sur un dépôt de "
-                            + deposit.getAmount().toPlainString() + ", sans retenue d'annulation réglée. "
-                            + held.toPlainString() + " " + refund.getCurrency() + " restent chez Yadony, dus à "
-                            + "l'expéditeur : à rendre à la main",
-                    Map.of("paymentId", paymentId.toString(),
-                            "bidId", String.valueOf(payment.getBidId()),
-                            "operationId", refund.getId().toString(),
-                            "refundAmount", refund.getAmount().toPlainString(),
-                            "depositAmount", deposit.getAmount().toPlainString()));
-        } catch (RuntimeException alertFailure) {
-            log.error("Alerte {} non levée pour le paiement {}", PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX, paymentId,
-                    alertFailure);
-        }
+        raiseOnceQuietly(PARTIAL_REFUND_UNSETTLED_ALERT_PREFIX, paymentId,
+                () -> "Remboursement pawaPay " + refund.getId() + " repris pour le paiement " + paymentId + " : "
+                        + refund.getAmount().toPlainString() + " " + refund.getCurrency() + " rendus sur un dépôt de "
+                        + deposit.getAmount().toPlainString() + ", sans retenue d'annulation réglée. "
+                        + held.toPlainString() + " " + refund.getCurrency() + " restent chez Yadony, dus à "
+                        + "l'expéditeur : à rendre à la main",
+                () -> Map.of("paymentId", paymentId.toString(),
+                        "bidId", String.valueOf(payment.getBidId()),
+                        "operationId", refund.getId().toString(),
+                        "refundAmount", refund.getAmount().toPlainString(),
+                        "depositAmount", deposit.getAmount().toPlainString()));
     }
 
     private Map<String, Object> enrich(Map<String, String> payload, PaymentEntity payment) {

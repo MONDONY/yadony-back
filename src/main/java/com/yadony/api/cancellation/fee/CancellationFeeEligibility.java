@@ -70,9 +70,9 @@ public class CancellationFeeEligibility {
         }
     }
 
-    /** Interrupteur allumé ET date d'effet posée. */
+    /** Interrupteur allumé ET date d'effet posée ({@link CancellationFeeProperties#active}). */
     public boolean active() {
-        return properties.enabled() && properties.effectiveFrom() != null;
+        return properties.active();
     }
 
     /**

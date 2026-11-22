@@ -2,20 +2,20 @@ package com.yadony.api.payments.fee;
 
 import com.stripe.exception.StripeException;
 import com.stripe.model.Transfer;
-import com.stripe.model.TransferCollection;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.TransferCreateParams;
-import com.stripe.param.TransferListParams;
 import com.yadony.api.admin.AdminAlertEscalator;
 import com.yadony.api.auth.StripeAccountStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.disputes.DisputeRepository;
 import com.yadony.api.disputes.DisputeTypes;
+import com.yadony.api.payments.EscrowCaptureService;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.StripeTransferLookup;
 import com.yadony.api.payments.currency.CurrencyAmount;
 import com.yadony.api.payments.currency.SupportedCurrency;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
@@ -31,14 +31,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionOperations;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -48,9 +47,9 @@ import java.util.stream.Collectors;
  *
  * <p><b>Jamais deux versements.</b> Clé d'idempotence stable {@code cancel-fee-transfer-<feeId>} pour tous les
  * essais (écouteur, rejeu, planificateur) ; Stripe ne la garde que 24 h, donc chaque essai cherche d'abord le
- * Transfer du groupe {@code cancel_fee_<feeId>} (même parade que {@code StripeTransferLookup} pour la livraison) et
- * le reprend s'il existe. Une recherche impossible n'envoie rien. La ligne passe en {@code PAID_OUT} sous verrou et
- * n'en sort plus : un rejeu sur une ligne versée ne fait rien.
+ * Transfer du groupe {@code cancel_fee_<feeId>} ({@link StripeTransferLookup#findByGroup}, même parade que pour la
+ * livraison) et le reprend s'il existe. Une recherche impossible n'envoie rien. La ligne passe en {@code PAID_OUT}
+ * sous verrou et n'en sort plus : un rejeu sur une ligne versée ne fait rien.
  *
  * <p><b>Jamais bloquée en {@code RETAINED} après un essai.</b> Garde non remplie, refus Stripe ou erreur imprévue :
  * la ligne passe en {@code PAYOUT_PENDING} et une alerte admin unique ({@link #ALERT_PREFIX} + id de la retenue)
@@ -72,9 +71,9 @@ import java.util.stream.Collectors;
  * vivant par retenue), une fois le remboursement pawaPay de l'expéditeur abouti. L'issue est asynchrone : la ligne
  * passe en {@code PAID_OUT} à la confirmation ({@link #mobileMoneyPayoutCompleted}, écouteur
  * {@link CancellationFeePayoutOutcomeListener}), en attente à l'échec. Mêmes gardes communes (paiement remboursé,
- * litige, voyageur gelé), même alerte unique, même planificateur. Après {@code MobileMoneyPayoutInitiator}
- * {@code MAX_FAILED_FEE_PAYOUTS} versements échoués, plus d'essai automatique : alerte distincte
- * {@link #STOPPED_ALERT_PREFIX}, jusqu'à la relance d'un administrateur ({@link #resumeAfterAdminRetry}).
+ * litige, voyageur gelé), même alerte unique, même planificateur. Après
+ * {@code MobileMoneyPayoutInitiator.MAX_FAILED_FEE_PAYOUTS} versements échoués, plus d'essai automatique : alerte
+ * distincte {@link #STOPPED_ALERT_PREFIX}, jusqu'à la relance d'un administrateur ({@link #resumeAfterAdminRetry}).
  */
 @Component
 public class CancellationFeePayoutService {
@@ -100,6 +99,7 @@ public class CancellationFeePayoutService {
     private final AdminAlertEscalator alerts;
     private final MobileMoneyPayoutInitiator mobileMoneyPayouts;
     private final PawapayOperationService pawapayOperations;
+    private final StripeTransferLookup transferLookup;
     /** Transactions courtes et neuves ({@code REQUIRES_NEW}) : jamais de transaction autour d'un appel Stripe. */
     private final TransactionOperations transaction;
 
@@ -109,9 +109,10 @@ public class CancellationFeePayoutService {
                                         DisputeRepository disputes, AdminAlertEscalator alerts,
                                         MobileMoneyPayoutInitiator mobileMoneyPayouts,
                                         PawapayOperationService pawapayOperations,
+                                        StripeTransferLookup transferLookup,
                                         PlatformTransactionManager transactionManager) {
         this(port, payments, users, holdPolicy, disputes, alerts, mobileMoneyPayouts, pawapayOperations,
-                requiresNew(transactionManager));
+                transferLookup, EscrowCaptureService.requiresNew(transactionManager));
     }
 
     CancellationFeePayoutService(CancellationFeePayoutPort port, PaymentRepository payments,
@@ -119,6 +120,7 @@ public class CancellationFeePayoutService {
                                  DisputeRepository disputes, AdminAlertEscalator alerts,
                                  MobileMoneyPayoutInitiator mobileMoneyPayouts,
                                  PawapayOperationService pawapayOperations,
+                                 StripeTransferLookup transferLookup,
                                  TransactionOperations transaction) {
         this.port = port;
         this.payments = payments;
@@ -128,6 +130,7 @@ public class CancellationFeePayoutService {
         this.alerts = alerts;
         this.mobileMoneyPayouts = mobileMoneyPayouts;
         this.pawapayOperations = pawapayOperations;
+        this.transferLookup = transferLookup;
         this.transaction = transaction;
     }
 
@@ -179,12 +182,6 @@ public class CancellationFeePayoutService {
     public boolean resumeAfterAdminRetry(UUID feeId) {
         resolveOpen(STOPPED_ALERT_PREFIX + feeId);
         return payOut(feeId);
-    }
-
-    static TransactionTemplate requiresNew(PlatformTransactionManager transactionManager) {
-        TransactionTemplate template = new TransactionTemplate(transactionManager);
-        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        return template;
     }
 
     /**
@@ -352,7 +349,7 @@ public class CancellationFeePayoutService {
     private boolean transfer(PayableCancellationFee fee, Plan plan) {
         String existing;
         try {
-            existing = existingTransfer(fee.feeId());
+            existing = transferLookup.findByGroup(TRANSFER_GROUP_PREFIX + fee.feeId()).orElse(null);
         } catch (StripeException e) {
             return leavePending(fee.feeId(), fee, "STRIPE_LOOKUP_FAILED: " + describe(e));
         }
@@ -392,22 +389,6 @@ public class CancellationFeePayoutService {
         return builder.build();
     }
 
-    /** Transfer non annulé du groupe de la retenue, ou {@code null}. */
-    private static String existingTransfer(UUID feeId) throws StripeException {
-        TransferCollection page = Transfer.list(TransferListParams.builder()
-                .setTransferGroup(TRANSFER_GROUP_PREFIX + feeId)
-                .setLimit(10L)
-                .build());
-        if (page == null || page.getData() == null) {
-            return null;
-        }
-        return page.getData().stream()
-                .filter(t -> !Boolean.TRUE.equals(t.getReversed()))
-                .map(Transfer::getId)
-                .findFirst()
-                .orElse(null);
-    }
-
     private boolean paidOut(PayableCancellationFee fee, String payoutRef) {
         boolean paid = Boolean.TRUE.equals(transaction.execute(tx -> port.markPaidOut(fee.feeId(), payoutRef)));
         if (!paid) {
@@ -419,7 +400,7 @@ public class CancellationFeePayoutService {
         log.info("Dédommagement {} versé au voyageur {} pour le colis {} : {} {} ({})", fee.feeId(), fee.travelerId(),
                 fee.bidId(), fee.travelerNet().toPlainString(), fee.currency(),
                 payoutRef != null ? payoutRef : "rien à transférer");
-        resolveAlert(fee.feeId());
+        resolveOpen(ALERT_PREFIX + fee.feeId());
         resolveOpen(STOPPED_ALERT_PREFIX + fee.feeId());
         return true;
     }
@@ -444,6 +425,23 @@ public class CancellationFeePayoutService {
     }
 
     private void raiseAlert(UUID feeId, PayableCancellationFee fee, String reason) {
+        raiseOnceQuietly(ALERT_PREFIX + feeId, feeId, fee, reason, () -> {
+            String what = fee == null ? "la retenue " + feeId
+                    : fee.travelerNet().toPlainString() + " " + fee.currency() + " au voyageur " + fee.travelerId()
+                            + " (colis " + fee.bidId() + ")";
+            return "Dédommagement d'annulation non versé : " + what + ", motif " + reason
+                    + ". La somme reste chez Yadony, nouvel essai chaque heure.";
+        });
+    }
+
+    /**
+     * Alerte unique {@code type}, contexte commun : retenue, et si elle a pu être lue, colis, voyageur, net et devise,
+     * puis le motif. Ne lève jamais : contexte et texte sont construits sous la même garde, un échec est journalisé.
+     *
+     * @param fee retenue lue, ou {@code null} si sa lecture a échoué (contexte réduit à son id)
+     */
+    private void raiseOnceQuietly(String type, UUID feeId, PayableCancellationFee fee, String reason,
+                                  Supplier<String> detail) {
         try {
             Map<String, Object> context = new LinkedHashMap<>();
             context.put("feeId", feeId.toString());
@@ -454,20 +452,10 @@ public class CancellationFeePayoutService {
                 context.put("currency", fee.currency());
             }
             context.put("reason", reason);
-            String what = fee == null ? "la retenue " + feeId
-                    : fee.travelerNet().toPlainString() + " " + fee.currency() + " au voyageur " + fee.travelerId()
-                            + " (colis " + fee.bidId() + ")";
-            alerts.raiseOnce(ALERT_PREFIX + feeId,
-                    "Dédommagement d'annulation non versé : " + what + ", motif " + reason
-                            + ". La somme reste chez Yadony, nouvel essai chaque heure.",
-                    context);
+            alerts.raiseOnce(type, detail.get(), context);
         } catch (RuntimeException e) {
-            log.error("Alerte {}{} non levée", ALERT_PREFIX, feeId, e);
+            log.error("Alerte {} non levée", type, e);
         }
-    }
-
-    private void resolveAlert(UUID feeId) {
-        resolveOpen(ALERT_PREFIX + feeId);
     }
 
     private void resolveOpen(String type) {
@@ -484,23 +472,12 @@ public class CancellationFeePayoutService {
      * relance admin ou par le versement.
      */
     private void raiseStoppedAlert(PayableCancellationFee fee, String detail) {
-        try {
-            Map<String, Object> context = new LinkedHashMap<>();
-            context.put("feeId", fee.feeId().toString());
-            context.put("bidId", fee.bidId().toString());
-            context.put("travelerId", fee.travelerId().toString());
-            context.put("travelerNet", fee.travelerNet().toPlainString());
-            context.put("currency", fee.currency());
-            context.put("reason", MobileMoneyPayoutInitiator.TOO_MANY_FAILED_PAYOUTS);
-            alerts.raiseOnce(STOPPED_ALERT_PREFIX + fee.feeId(),
-                    "Dédommagement d'annulation : essais automatiques ARRÊTÉS (" + detail + "). "
-                            + fee.travelerNet().toPlainString() + " " + fee.currency() + " restent dus au voyageur "
-                            + fee.travelerId() + " (colis " + fee.bidId() + "). Action manuelle : vérifier son compte "
-                            + "mobile money puis POST /admin/cancellation-fees/" + fee.feeId() + "/retry-payout.",
-                    context);
-        } catch (RuntimeException e) {
-            log.error("Alerte {}{} non levée", STOPPED_ALERT_PREFIX, fee.feeId(), e);
-        }
+        raiseOnceQuietly(STOPPED_ALERT_PREFIX + fee.feeId(), fee.feeId(), fee,
+                MobileMoneyPayoutInitiator.TOO_MANY_FAILED_PAYOUTS,
+                () -> "Dédommagement d'annulation : essais automatiques ARRÊTÉS (" + detail + "). "
+                        + fee.travelerNet().toPlainString() + " " + fee.currency() + " restent dus au voyageur "
+                        + fee.travelerId() + " (colis " + fee.bidId() + "). Action manuelle : vérifier son compte "
+                        + "mobile money puis POST /admin/cancellation-fees/" + fee.feeId() + "/retry-payout.");
     }
 
     private static String describe(Exception e) {

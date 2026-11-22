@@ -1,6 +1,7 @@
 package com.yadony.api.payments.fee;
 
 import com.yadony.api.cancellation.events.CancellationFeePayoutRetryRequestedEvent;
+import com.yadony.api.payments.EscrowCaptureService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +36,7 @@ public class CancellationFeePayoutListener {
     @Autowired
     public CancellationFeePayoutListener(CancellationFeePayoutPort port, CancellationFeePayoutService payoutService,
                                          PlatformTransactionManager transactionManager) {
-        this(port, payoutService, CancellationFeePayoutService.requiresNew(transactionManager));
+        this(port, payoutService, EscrowCaptureService.requiresNew(transactionManager));
     }
 
     CancellationFeePayoutListener(CancellationFeePayoutPort port, CancellationFeePayoutService payoutService,
