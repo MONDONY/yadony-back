@@ -237,7 +237,7 @@ class RecipientInvitationServiceTest {
 
     @Test
     void send_integrityViolationWithoutLiveInvitation_isNotSwallowed() {
-        when(firebaseContact.findUidByPhone(PHONE)).thenReturn(Optional.empty());
+        when(phoneLookup.findByPhone(PHONE)).thenReturn(new PhoneMatch.None());
         doThrow(new DataIntegrityViolationException("chk")).when(repository).saveAndFlush(any());
 
         assertThatThrownBy(() -> service.send("uid-inviter", new CreateRecipientInvitationRequest(PHONE, null)))
