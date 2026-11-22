@@ -82,7 +82,7 @@ class RecipientInvitationLookupIT {
     @Test
     void foundReturnsOnlyUsernameAndInitial() throws Exception {
         lookup("lkp.awa").andExpect(status().isOk())
-                .andExpect(content().json("{\"username\":\"lkp.awa\",\"initial\":\"A\"}", true))
+                .andExpect(content().json("{\"username\":\"lkp.awa\",\"initial\":\"A\",\"parcelDesignation\":true}", true))
                 .andExpect(jsonPath("$.phoneNumber").doesNotExist())
                 .andExpect(jsonPath("$.phone").doesNotExist())
                 .andExpect(jsonPath("$.email").doesNotExist())

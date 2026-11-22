@@ -47,4 +47,4 @@ Back d'abord, puis app (la PR app cite la PR back et tolère l'ancien contrat). 
 
 ## Tests
 - Base de connaissances (`KnowledgeBase*Test`, `AssistantServiceTest`) : 183 tests, 0 rouge.
-- Résultat de la suite complète : _à remplir_ (la vague de correctifs n'a été vérifiée que par tests ciblés).
+Suite complète locale (./mvnw test jacoco:report, 18 218 tests) : 1 échec réel dû à ce changement, corrigé (RecipientInvitationLookupIT attendait le JSON exact sans `parcelDesignation`, relancé vert). Les 16 erreurs restantes et le scénario Cucumber viennent de PostgreSQL embarqué qui ne démarre pas sur ce Mac (initdb, limite de 32 segments de mémoire partagée ; « Connection refused » localhost) : à trancher par la CI Linux. Couverture JaCoCo locale non exploitable (rapport faussé par les forks tombés) : à lire sur la CI.
