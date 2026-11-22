@@ -1,7 +1,7 @@
 ---
 id: numero-sans-sms
 title: Enregistrer mon numéro sans code SMS
-keywords: sms ne arrive pas, code non reçu, pas de code, aucun sms, enregistrer sans vérifier, numéro non vérifié, vérifié par Yadony, numéro déclaré, badge, vérifier mon numéro, sans sms
+keywords: sms ne arrive pas, code non reçu, enregistrer sans vérifier, numéro non vérifié, vérifié par Yadony, numéro déclaré, vérifier mon numéro
 routes:
   - path: /profile/edit/phone
     label: Ajouter mon numéro

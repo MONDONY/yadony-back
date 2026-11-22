@@ -1,7 +1,7 @@
 ---
 id: numero-sans-sms
 title: Save my number without an SMS code
-keywords: sms does not arrive, code not received, no code, no text message, save without verifying, number not verified, verified by Yadony, declared number, badge, verify my number, without sms
+keywords: sms does not arrive, code not received, save without verifying, number not verified, verified by Yadony, declared number, verify my number
 routes:
   - path: /profile/edit/phone
     label: Add my number
