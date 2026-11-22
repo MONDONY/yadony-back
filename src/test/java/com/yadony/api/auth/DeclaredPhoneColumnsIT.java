@@ -50,4 +50,29 @@ class DeclaredPhoneColumnsIT {
         assertThat(u.getDeclaredPhoneVerifiedBy()).isEqualTo(admin);
         assertThat(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash("+2250101010101"))).isEmpty();
     }
+
+    @Test
+    void findTop3ByHashAndLevel_readsOnlyLiveAccountsAtThatLevel() {
+        String hash = hasher.hash("+2250708080808");
+        UserEntity yadony = saved(hash, DeclaredPhoneLevel.YADONY_VERIFIED);
+        saved(hash, DeclaredPhoneLevel.DECLARED);
+        UserEntity gone = saved(hash, DeclaredPhoneLevel.DECLARED);
+        gone.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
+        gone.setDeletedAt(LocalDateTime.now());
+        userRepository.saveAndFlush(gone);
+
+        assertThat(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(hash,
+                DeclaredPhoneLevel.YADONY_VERIFIED)).extracting(UserEntity::getId).containsExactly(yadony.getId());
+    }
+
+    private UserEntity saved(String hash, DeclaredPhoneLevel level) {
+        UserEntity user = new UserEntity();
+        user.setFirebaseUid("uid-declared-" + UUID.randomUUID());
+        user.setStatus(UserStatus.ACTIVE);
+        user.setKycStatus(KycStatus.PENDING);
+        user.setRoles(new HashSet<>(Set.of(Role.TRAVELER)));
+        user.setDeclaredPhoneHash(hash);
+        user.setDeclaredPhoneLevel(level);
+        return userRepository.saveAndFlush(user);
+    }
 }

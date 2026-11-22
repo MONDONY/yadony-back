@@ -135,15 +135,165 @@ class PhoneLookupServiceTest {
         when(firebaseContact.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.found(uid));
     }
 
+    /**
+     * Comme la base : la lecture mixte rend tous les déclarants, la lecture dédiée seulement les comptes
+     * validés par Yadony. Lenient : selon le chemin (findByPhone ou findAllByPhone), une seule sert.
+     */
     private void candidates(UserEntity... users) {
-        when(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(PHONE))).thenReturn(List.of(users));
+        lenient().when(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(PHONE))).thenReturn(List.of(users));
+        lenient().when(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(
+                        hasher.hash(PHONE), DeclaredPhoneLevel.YADONY_VERIFIED))
+                .thenReturn(java.util.Arrays.stream(users)
+                        .filter(u -> u.getDeclaredPhoneLevel() == DeclaredPhoneLevel.YADONY_VERIFIED)
+                        .toList());
+    }
+
+    // ── Constat 1 : des déclarants en nombre ne masquent jamais le compte validé par Yadony ──
+
+    @Test
+    void findByPhone_twelveDeclarantsPlusOneYadony_foundYadony() {
+        UserEntity y = yadonyVerified("uid-y");
+        List<UserEntity> declarants = new java.util.ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            declarants.add(declaredUser("uid-d" + i));
+        }
+        ownerNotFound();
+        // La lecture mixte plafonnée et sans ordre peut rendre 10 déclarants sans le compte validé.
+        lenient().when(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(PHONE)))
+                .thenReturn(declarants.subList(0, 10));
+        when(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(
+                hasher.hash(PHONE), DeclaredPhoneLevel.YADONY_VERIFIED)).thenReturn(List.of(y));
+        claims(Map.of("uid-y", PHONE));
+
+        assertThat(service.findByPhone(PHONE)).isEqualTo(new PhoneMatch.Found(y, PhoneMatch.Trust.YADONY));
+        assertThat(service.trustedDeclaredPhone(y, new FirebaseContactService.Contact(null, null, PHONE)))
+                .contains(PHONE);
+    }
+
+    @Test
+    void findAllByPhone_twelveDeclarantsPlusOneYadony_yadonyListedFirst() {
+        UserEntity y = yadonyVerified("uid-y");
+        List<UserEntity> declarants = new java.util.ArrayList<>();
+        Map<String, String> claimed = new java.util.HashMap<>(Map.of("uid-y", PHONE));
+        for (int i = 0; i < 12; i++) {
+            declarants.add(declaredUser("uid-d" + i));
+            claimed.put("uid-d" + i, PHONE);
+        }
+        ownerNotFound();
+        when(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(PHONE))).thenReturn(declarants.subList(0, 10));
+        when(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(
+                hasher.hash(PHONE), DeclaredPhoneLevel.YADONY_VERIFIED)).thenReturn(List.of(y));
+        claims(claimed);
+
+        List<UserEntity> all = service.findAllByPhone(PHONE);
+
+        assertThat(all).first().isEqualTo(y);
+        assertThat(all).hasSize(PhoneLookupService.MAX_CANDIDATES).doesNotHaveDuplicates();
+        verify(firebaseContact, times(1)).getContacts(any());
+    }
+
+    @Test
+    void findByPhone_declarantsOnly_mixedReadNeverUsed() {
+        ownerNotFound();
+        candidates(declaredUser("uid-a"));
+
+        assertThat(service.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
+        verify(userRepository, never()).findTop10ByDeclaredPhoneHash(anyString());
+    }
+
+    // ── Constat 6 : cache court de trustedDeclaredPhone ──
+
+    @Test
+    void trustedDeclaredPhone_twoCalls_firebaseHitOnce() {
+        UserEntity u = yadonyVerified("u");
+        ownerNotFound();
+        candidates(u);
+        claims(Map.of("u", PHONE));
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+
+        assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
+        assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
+
+        verify(firebaseContact, times(1)).findPhoneOwner(PHONE);
+        verify(firebaseContact, times(1)).getContacts(any());
+    }
+
+    @Test
+    void trustedDeclaredPhone_levelOrHashChange_bypassesCache() {
+        UserEntity u = yadonyVerified("u");
+        ownerNotFound();
+        candidates(u);
+        claims(Map.of("u", PHONE));
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+        assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
+
+        // Redéclaration : niveau retombé à DECLARED, plus de confiance, sans relire le cache.
+        u.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
+        assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
+
+        // Nouveau numéro validé : autre empreinte, autre claim, donc autre clé : Firebase est relu.
+        String other = "+224629999999";
+        u.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
+        u.setDeclaredPhoneHash(hasher.hash(other));
+        when(firebaseContact.findPhoneOwner(other)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        when(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(
+                hasher.hash(other), DeclaredPhoneLevel.YADONY_VERIFIED)).thenReturn(List.of(u));
+        claims(Map.of("u", other));
+        assertThat(service.trustedDeclaredPhone(u, new FirebaseContactService.Contact(null, null, other)))
+                .contains(other);
+
+        verify(firebaseContact, times(1)).findPhoneOwner(PHONE);
+        verify(firebaseContact, times(1)).findPhoneOwner(other);
+    }
+
+    @Test
+    void trustedDeclaredPhone_ownerLookupError_notCached() {
+        UserEntity u = yadonyVerified("u");
+        when(firebaseContact.findPhoneOwner(PHONE)).thenReturn(
+                FirebaseContactService.PhoneOwnerLookup.error(), FirebaseContactService.PhoneOwnerLookup.notFound());
+        candidates(u);
+        claims(Map.of("u", PHONE));
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+
+        assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
+        // La panne n'est pas retenue : l'appel suivant relit Firebase et trouve le numéro.
+        assertThat(service.trustedDeclaredPhone(u, contact)).contains(PHONE);
+        verify(firebaseContact, times(2)).findPhoneOwner(PHONE);
+    }
+
+    @Test
+    void trustedDeclaredPhone_smsOwnerElsewhere_definitiveRefusalCached() {
+        UserEntity u = yadonyVerified("u");
+        ownerIs("uid-sms");
+        when(userRepository.findByFirebaseUid("uid-sms")).thenReturn(java.util.Optional.of(user("uid-sms")));
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, PHONE);
+
+        assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
+        assertThat(service.trustedDeclaredPhone(u, contact)).isEmpty();
+        verify(firebaseContact, times(1)).findPhoneOwner(PHONE);
+    }
+
+    @Test
+    void findByPhone_neverCached_eachCallReadsFirebase() {
+        UserEntity u = yadonyVerified("u");
+        ownerNotFound();
+        candidates(u);
+        claims(Map.of("u", PHONE));
+
+        service.findByPhone(PHONE);
+        service.findByPhone(PHONE);
+
+        verify(firebaseContact, times(2)).findPhoneOwner(PHONE);
     }
 
     private void claims(Map<String, String> declaredByUid) {
         when(firebaseContact.getContacts(any())).thenAnswer(inv -> {
             Collection<String> uids = inv.getArgument(0);
             Map<String, FirebaseContactService.Contact> out = new java.util.HashMap<>();
-            uids.forEach(uid -> out.put(uid, new FirebaseContactService.Contact(null, null, declaredByUid.get(uid))));
+            // Nul seulement quand un test restubbe la méthode (any() vaut null pendant when(...)).
+            if (uids != null) {
+                uids.forEach(uid -> out.put(uid, new FirebaseContactService.Contact(null, null, declaredByUid.get(uid))));
+            }
             return out;
         });
     }
@@ -290,6 +440,7 @@ class PhoneLookupServiceTest {
 
         assertThat(s.findByPhone(PHONE)).isInstanceOf(PhoneMatch.None.class);
         verify(userRepository, never()).findTop10ByDeclaredPhoneHash(any());
+        verify(userRepository, never()).findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(any(), any());
     }
 
     @Test

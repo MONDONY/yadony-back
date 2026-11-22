@@ -326,7 +326,8 @@ class DeclaredPhoneIsolationTest {
 
         UserEntity yadony = userWith(DeclaredPhoneLevel.YADONY_VERIFIED);
         yadony.setDeclaredPhoneHash(hasher.hash(DECLARED));
-        when(userRepository.findTop10ByDeclaredPhoneHash(hasher.hash(DECLARED))).thenReturn(List.of(yadony));
+        when(userRepository.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(
+                hasher.hash(DECLARED), DeclaredPhoneLevel.YADONY_VERIFIED)).thenReturn(List.of(yadony));
         assertThat(lookup.trustedDeclaredPhone(yadony, claimOnly)).contains(DECLARED);
 
         // Un compte qui a un numéro vérifié par SMS : le numéro déclaré ne compte plus.

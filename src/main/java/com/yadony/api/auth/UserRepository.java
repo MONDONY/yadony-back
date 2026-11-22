@@ -36,12 +36,27 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     @Query("select u.preferredLanguage from UserEntity u where u.id = :id")
     Optional<String> findPreferredLanguageById(@Param("id") UUID id);
 
-    /** Comptes portant l'empreinte d'un numéro déclaré, plafonnés à 10 (voir {@code PhoneLookupService.MAX_CANDIDATES}) : au-delà de quelques comptes, le numéro est de toute façon ambigu. */
+    /**
+     * Comptes portant l'empreinte d'un numéro déclaré, tous niveaux confondus, plafonnés à 10 et sans ordre
+     * (voir {@code PhoneLookupService.MAX_CANDIDATES}). Recherche admin seulement : le plafond peut y laisser
+     * de côté un compte validé par Yadony, d'où la lecture dédiée ci-dessous, toujours faite en premier.
+     */
     List<UserEntity> findTop10ByDeclaredPhoneHash(String declaredPhoneHash);
+
+    /**
+     * Comptes (non supprimés) portant l'empreinte au niveau donné, plafonnés à 3 (voir
+     * {@code PhoneLookupService.MAX_YADONY_ROWS}) : deux comptes validés suffisent à rendre le numéro ambigu.
+     * Lecture séparée de {@link #findTop10ByDeclaredPhoneHash} : des déclarants en nombre ne doivent jamais
+     * masquer le compte validé par Yadony. L'index unique partiel de V393 n'en laisse qu'un en PostgreSQL.
+     */
+    List<UserEntity> findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(String declaredPhoneHash,
+                                                                       DeclaredPhoneLevel declaredPhoneLevel);
 
     /**
      * Un AUTRE compte (non supprimé) porte-t-il cette empreinte au niveau donné ? Sans plafond, contrairement à
      * {@link #findTop10ByDeclaredPhoneHash} : dix déclarants ne doivent pas masquer un compte validé par Yadony.
+     * Contrôle de confort (message clair) ; deux validations simultanées passent toutes les deux ce test, c'est
+     * l'index unique partiel de V393 qui tranche.
      */
     boolean existsByDeclaredPhoneHashAndDeclaredPhoneLevelAndIdNot(String declaredPhoneHash,
                                                                     DeclaredPhoneLevel declaredPhoneLevel, UUID id);

@@ -91,7 +91,8 @@ class ReceptionCatchUpPrecedenceTest {
     void soleYadonyAccount_linksTheParcel() {
         UserEntity me = yadony("uid-a");
         when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
-        when(users.findTop10ByDeclaredPhoneHash(hasher.hash(PHONE))).thenReturn(List.of(me));
+        when(users.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(hasher.hash(PHONE), DeclaredPhoneLevel.YADONY_VERIFIED))
+                .thenReturn(List.of(me));
         claimsFor("uid-a");
 
         assertThat(linker.catchUp(me)).isEqualTo(1);
@@ -102,7 +103,8 @@ class ReceptionCatchUpPrecedenceTest {
         UserEntity a = yadony("uid-a");
         UserEntity b = yadony("uid-b");
         when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
-        when(users.findTop10ByDeclaredPhoneHash(hasher.hash(PHONE))).thenReturn(List.of(a, b));
+        when(users.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(hasher.hash(PHONE), DeclaredPhoneLevel.YADONY_VERIFIED))
+                .thenReturn(List.of(a, b));
         claimsFor("uid-a", "uid-b");
 
         assertThat(linker.catchUp(a)).isZero();
