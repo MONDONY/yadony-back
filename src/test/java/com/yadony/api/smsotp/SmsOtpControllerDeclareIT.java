@@ -31,6 +31,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -68,6 +69,8 @@ class SmsOtpControllerDeclareIT {
         phone = "+22507" + String.format("%08d", Math.abs(UUID.randomUUID().getMostSignificantBits() % 100_000_000L));
         when(firebaseContact.isAvailable()).thenReturn(true);
         when(firebaseContact.getContact(anyString())).thenReturn(FirebaseContactService.Contact.EMPTY);
+        when(firebaseContact.readContactStrict(anyString()))
+                .thenReturn(Optional.of(FirebaseContactService.Contact.EMPTY));
         // Côte d'Ivoire bloquée, le reste non.
         when(platformSettings.smsBlockedCallingCode(anyString())).thenAnswer(inv ->
                 ((String) inv.getArgument(0)).startsWith("+225") ? Optional.of("225") : Optional.empty());
@@ -94,8 +97,8 @@ class SmsOtpControllerDeclareIT {
 
     @Test
     void declare_accountHasVerifiedPhone_409() throws Exception {
-        when(firebaseContact.getContact(uid))
-                .thenReturn(new FirebaseContactService.Contact("+2250102030405", null, null));
+        when(firebaseContact.readContactStrict(uid))
+                .thenReturn(Optional.of(new FirebaseContactService.Contact("+2250102030405", null, null)));
 
         mockMvc.perform(declare(as(uid), phone))
                 .andExpect(status().isConflict())
@@ -161,6 +164,30 @@ class SmsOtpControllerDeclareIT {
         verify(auditService).log(eq("USER"), eq(user.getId()), eq("USER_PHONE_DECLARED"), eq(user.getId()),
                 argThat(payload -> !payload.toString().contains(phone)
                         && !payload.toString().contains(phone.substring(4))));
+    }
+
+    @Test
+    void declare_sameNumberTwice_secondCallWritesNoAuditNorClaim() throws Exception {
+        mockMvc.perform(declare(as(uid), phone)).andExpect(status().isOk());
+        // Firebase porte désormais le claim (le mock ne l'écrit pas de lui-même).
+        when(firebaseContact.readContactStrict(uid))
+                .thenReturn(Optional.of(new FirebaseContactService.Contact(null, null, phone)));
+
+        mockMvc.perform(declare(as(uid), phone)).andExpect(status().isOk());
+
+        verify(auditService, org.mockito.Mockito.times(1))
+                .log(eq("USER"), eq(user.getId()), eq("USER_PHONE_DECLARED"), any(), any());
+        verify(firebaseContact, org.mockito.Mockito.times(1)).setDeclaredPhone(uid, phone);
+    }
+
+    @Test
+    void declare_firebaseReadFails_503() throws Exception {
+        when(firebaseContact.readContactStrict(uid)).thenReturn(Optional.empty());
+
+        mockMvc.perform(declare(as(uid), phone))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("declared-phone-unavailable"));
+        verify(firebaseContact, never()).setDeclaredPhone(anyString(), anyString());
     }
 
     @Test

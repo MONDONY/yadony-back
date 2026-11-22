@@ -166,6 +166,41 @@ class RateLimitInterceptorTest {
     }
 
     @Test
+    @DisplayName("numéro déclaré : 10 par compte et par 24 h, une IP changeante ne rouvre pas le budget")
+    void declarePerAccount_defaultBudget() {
+        loggedInAs("uid-declare");
+        for (int i = 0; i < 10; i++) {
+            assertThat(pass(request("POST", "/auth/sms-otp/declare", "10.0.0." + i))).isTrue();
+        }
+        assertThatThrownBy(() -> pass(request("POST", "/auth/sms-otp/declare", "10.0.1.1")))
+                .isInstanceOf(RateLimitExceededException.class);
+        assertThat(meters.counter("yadony.rate_limit.rejected", "rule", "sms-otp-declare-account").count())
+                .isEqualTo(1);
+
+        // Un autre compte garde son budget ; l'envoi de code SMS n'est pas concerné.
+        loggedInAs("uid-other-declare");
+        assertThat(pass(request("POST", "/auth/sms-otp/declare", "10.0.1.1"))).isTrue();
+        loggedInAs("uid-declare");
+        assertThat(pass(request("POST", "/auth/sms-otp/send", "10.0.1.1"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("numéro déclaré : règle réglable, par défaut 10 par compte et par 24 h")
+    void declarePerAccount_defaultsAndOverride() {
+        assertThat(RateLimitRule.SMS_OTP_DECLARE_ACCOUNT.propertyName()).isEqualTo("sms-otp-declare-account");
+        assertThat(properties.limitOf(RateLimitRule.SMS_OTP_DECLARE_ACCOUNT)).isEqualTo(10);
+        assertThat(properties.windowOf(RateLimitRule.SMS_OTP_DECLARE_ACCOUNT)).isEqualTo(Duration.ofDays(1));
+
+        limit(properties, RateLimitRule.SMS_OTP_DECLARE_ACCOUNT, 1);
+        loggedInAs("uid-declare-override");
+        assertThat(pass(request("POST", "/auth/sms-otp/declare", "1.1.1.1"))).isTrue();
+        assertThatThrownBy(() -> pass(request("POST", "/auth/sms-otp/declare", "2.2.2.2")))
+                .isInstanceOf(RateLimitExceededException.class);
+        // La lecture de profil n'est pas concernée.
+        assertThat(pass(request("GET", "/auth/sms-otp/declare", "2.2.2.2"))).isTrue();
+    }
+
+    @Test
     @DisplayName("vérification OTP et rattachement partagent le budget par IP")
     void otpVerifyPerIp() {
         limit(properties, RateLimitRule.OTP_VERIFY_IP, 2);

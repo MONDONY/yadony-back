@@ -63,6 +63,7 @@ class DeclaredPhoneServiceTest {
         when(userRepository.findByFirebaseUid(UID)).thenReturn(Optional.of(user));
         when(firebaseContact.isAvailable()).thenReturn(true);
         when(firebaseContact.getContact(UID)).thenReturn(Contact.EMPTY);
+        when(firebaseContact.readContactStrict(UID)).thenReturn(Optional.of(Contact.EMPTY));
         when(properties.isCountryAllowed(anyString())).thenReturn(true);
         when(smsOtpService.blockedCallingCode(anyString())).thenReturn(Optional.of("225"));
     }
@@ -104,7 +105,7 @@ class DeclaredPhoneServiceTest {
 
     @Test
     void declare_accountHasVerifiedPhone_409() {
-        when(firebaseContact.getContact(UID)).thenReturn(new Contact("+33612345678", null, null));
+        when(firebaseContact.readContactStrict(UID)).thenReturn(Optional.of(new Contact("+33612345678", null, null)));
 
         assertThatThrownBy(() -> service.declare(UID, PHONE))
                 .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
@@ -161,7 +162,7 @@ class DeclaredPhoneServiceTest {
         org.springframework.test.util.ReflectionTestUtils.setField(second, "id", UUID.randomUUID());
         second.setFirebaseUid("uid-2");
         when(userRepository.findByFirebaseUid("uid-2")).thenReturn(Optional.of(second));
-        when(firebaseContact.getContact("uid-2")).thenReturn(Contact.EMPTY);
+        when(firebaseContact.readContactStrict("uid-2")).thenReturn(Optional.of(Contact.EMPTY));
 
         service.declare(UID, PHONE);
         service.declare("uid-2", PHONE);
@@ -181,6 +182,75 @@ class DeclaredPhoneServiceTest {
         assertThat(payload.getValue().toString())
                 .doesNotContain(PHONE).doesNotContain(PHONE.substring(4)).doesNotContain(hasher.hash(PHONE));
         assertThat(payload.getValue()).containsEntry("level", "DECLARED");
+    }
+
+    // ── Constat 7 : la garde « numéro SMS déjà là » lit Firebase sans cache et échoue fermée ──
+
+    @Test
+    void declare_strictContactReadFails_503_noWrite() {
+        when(firebaseContact.readContactStrict(UID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.declare(UID, PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                    assertThat(e.getErrorCode()).isEqualTo("declared-phone-unavailable");
+                });
+        verify(firebaseContact, never()).getContact(anyString());
+        verify(userRepository, never()).saveAndFlush(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+        verify(firebaseContact, never()).setDeclaredPhone(anyString(), any());
+    }
+
+    @Test
+    void declare_smsNumberOnlyInFreshRead_409() {
+        // Le cache de 5 min ne voit pas encore le numéro rattaché par SMS sur une autre instance.
+        when(firebaseContact.getContact(UID)).thenReturn(Contact.EMPTY);
+        when(firebaseContact.readContactStrict(UID)).thenReturn(Optional.of(new Contact("+33612345678", null, null)));
+
+        assertThatThrownBy(() -> service.declare(UID, PHONE))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("phone-already-set"));
+        verify(firebaseContact, never()).setDeclaredPhone(anyString(), any());
+    }
+
+    // ── Constat 4 : même numéro, déjà en place : ni audit ni écriture Firebase ──
+
+    @Test
+    void declare_sameNumber_noAuditNoFirebaseWrite() {
+        user.setDeclaredPhoneHash(hasher.hash(PHONE));
+        user.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
+        when(firebaseContact.readContactStrict(UID)).thenReturn(Optional.of(new Contact(null, null, PHONE)));
+
+        service.declare(UID, PHONE);
+
+        assertThat(user.getDeclaredPhoneLevel()).isEqualTo(DeclaredPhoneLevel.YADONY_VERIFIED);
+        verify(userRepository, never()).saveAndFlush(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any());
+        verify(firebaseContact, never()).setDeclaredPhone(anyString(), any());
+    }
+
+    @Test
+    void declare_sameHashButClaimMissing_rewritesClaimAndAudits() {
+        // Empreinte en place mais claim absent (écriture Firebase perdue) : on répare, ce n'est pas un doublon.
+        user.setDeclaredPhoneHash(hasher.hash(PHONE));
+        user.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
+
+        service.declare(UID, PHONE);
+
+        verify(userRepository).saveAndFlush(user);
+        verify(auditService).log(anyString(), any(), eq("USER_PHONE_DECLARED"), any(), any());
+        verify(firebaseContact).setDeclaredPhone(UID, PHONE);
+    }
+
+    @Test
+    void declare_claimMatchesButLevelMissing_isWritten() {
+        user.setDeclaredPhoneHash(hasher.hash(PHONE));
+        when(firebaseContact.readContactStrict(UID)).thenReturn(Optional.of(new Contact(null, null, PHONE)));
+
+        service.declare(UID, PHONE);
+
+        assertThat(user.getDeclaredPhoneLevel()).isEqualTo(DeclaredPhoneLevel.DECLARED);
+        verify(firebaseContact).setDeclaredPhone(UID, PHONE);
     }
 
     @Test

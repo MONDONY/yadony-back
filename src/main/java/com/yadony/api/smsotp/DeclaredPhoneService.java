@@ -55,13 +55,15 @@ public class DeclaredPhoneService {
      * Déclare (ou remplace) le numéro du compte. Refusé (409) hors des indicatifs bloqués : le
      * compte doit alors passer par le SMS, sans quoi cette route contournerait la vérification.
      * Un autre numéro remet le niveau à {@code DECLARED} et efface la validation d'un administrateur ;
-     * le même numéro la conserve.
+     * le même numéro la conserve. La garde « numéro SMS déjà là » lit Firebase sans cache et échoue
+     * fermée (503 si la lecture rate). Le même numéro déjà en place (empreinte, niveau ET claim) ne
+     * fait rien : ni audit (ligne immuable) ni écriture Firebase ; la limite de débit par compte
+     * ({@code SMS_OTP_DECLARE_ACCOUNT}) borne le reste.
      */
     @Transactional
     public void declare(String firebaseUid, String e164) {
         if (!hasher.isConfigured() || !firebaseContact.isAvailable()) {
-            throw YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE,
-                    "declared-phone-unavailable", "problem.declared-phone-unavailable");
+            throw unavailable();
         }
         if (!properties.isCountryAllowed(e164)) {
             throw YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -73,7 +75,11 @@ public class DeclaredPhoneService {
         }
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid).orElseThrow(() ->
                 YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
-        if (firebaseContact.getContact(firebaseUid).phoneNumber() != null) {
+        // Lecture stricte : le cache de 5 min peut ignorer un numéro rattaché par SMS à l'instant, et une
+        // panne Firebase ne doit pas passer pour « aucun numéro vérifié ».
+        FirebaseContactService.Contact contact = firebaseContact.readContactStrict(firebaseUid)
+                .orElseThrow(DeclaredPhoneService::unavailable);
+        if (contact.phoneNumber() != null) {
             throw YadonyBusinessException.localized(HttpStatus.CONFLICT,
                     "phone-already-set", "problem.phone-already-set");
         }
@@ -81,6 +87,10 @@ public class DeclaredPhoneService {
         String hash = hasher.hash(e164);
         boolean sameNumber = hash.equals(user.getDeclaredPhoneHash())
                 && user.getDeclaredPhoneLevel() != null;
+        if (sameNumber && e164.equals(contact.declaredPhone())) {
+            // Rien ne change : pas de ligne d'audit immuable ni d'écriture Firebase à chaque appel.
+            return;
+        }
         if (!sameNumber) {
             user.setDeclaredPhoneHash(hash);
             user.setDeclaredPhoneLevel(DeclaredPhoneLevel.DECLARED);
@@ -96,6 +106,11 @@ public class DeclaredPhoneService {
         auditService.log("USER", user.getId(), "USER_PHONE_DECLARED", user.getId(),
                 Map.of("level", user.getDeclaredPhoneLevel().name()));
         firebaseContact.setDeclaredPhone(firebaseUid, e164);
+    }
+
+    private static YadonyBusinessException unavailable() {
+        return YadonyBusinessException.localized(HttpStatus.SERVICE_UNAVAILABLE,
+                "declared-phone-unavailable", "problem.declared-phone-unavailable");
     }
 
     /**

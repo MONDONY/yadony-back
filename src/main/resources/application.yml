@@ -604,6 +604,9 @@ yadony:
       # Codes SMS par compte connecté (invité compris) et par 24 h.
       sms-otp-send-account:
         limit: ${YADONY_RATE_LIMIT_SMS_OTP_SEND_PER_ACCOUNT:10}
+      # Numéros déclarés sans SMS par compte connecté et par 24 h.
+      sms-otp-declare-account:
+        limit: ${YADONY_RATE_LIMIT_SMS_OTP_DECLARE_PER_ACCOUNT:10}
       otp-verify-ip:
         limit: ${YADONY_RATE_LIMIT_OTP_VERIFY_PER_IP:60}
   referral:

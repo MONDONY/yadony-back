@@ -82,6 +82,14 @@ public enum RateLimitRule {
     SMS_OTP_SEND_ACCOUNT(Key.ACCOUNT, Set.of("POST"), List.of("/auth/sms-otp/send"), 10, Duration.ofDays(1)),
 
     /**
+     * Déclarations de numéro sans SMS par un même compte sur 24 h. La limite par IP
+     * ({@link #OTP_VERIFY_IP}) se contourne en changeant d'adresse, et chaque déclaration d'un
+     * nouveau numéro écrit une ligne d'audit immuable et un claim Firebase. Même budget que
+     * l'envoi de codes SMS.
+     */
+    SMS_OTP_DECLARE_ACCOUNT(Key.ACCOUNT, Set.of("POST"), List.of("/auth/sms-otp/declare"), 10, Duration.ofDays(1)),
+
+    /**
      * Vérifications de code depuis une même IP. Le budget par adresse (5 essais) borne
      * la force brute sur UN compte ; celle-ci borne l'essai d'un même code sur des
      * milliers d'adresses.
