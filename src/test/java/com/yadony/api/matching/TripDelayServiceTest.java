@@ -10,6 +10,8 @@ import com.yadony.api.matching.events.TripDelayedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -19,6 +21,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -278,12 +281,43 @@ class TripDelayServiceTest {
     void delay_endingToday_isAccepted_andTheCodeStillGetsAtLeast24Hours() {
         BidEntity handedOver = bid(BidStatus.HANDED_OVER, "123456");
         when(bidRepository.findHandedOverByAnnouncementIdForUpdate(announcementId)).thenReturn(List.of(handedOver));
-        LocalDate today = LocalDate.now(java.time.ZoneOffset.UTC);
+        // « Aujourd'hui » se lit dans le fuseau du trajet, comme le fait le service : en UTC ce test
+        // échouait chaque soir entre 23 h et minuit UTC (la date de Paris est déjà celle du lendemain).
+        LocalDate today = LocalDate.now(ZoneId.of(announcement.getTimezone()));
 
         service.announce(announcementId, "uid-traveler", delay(today, today));
 
         assertThat(handedOver.getConfirmationCodeExpiry())
                 .isAfter(LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(23));
+    }
+
+    /**
+     * Quel que soit l'écart du fuseau du trajet avec UTC (de UTC-11 à UTC+14), un retard qui se termine
+     * « aujourd'hui » dans CE fuseau est accepté, à toute heure de la journée.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"Pacific/Pago_Pago", "America/Los_Angeles", "Europe/Paris", "Africa/Abidjan",
+            "Asia/Tokyo", "Pacific/Kiritimati"})
+    void delay_endingToday_inTheTripsOwnTimezone_isAcceptedWhateverTheOffset(String zone) {
+        announcement.setTimezone(zone);
+        BidEntity handedOver = bid(BidStatus.HANDED_OVER, "123456");
+        when(bidRepository.findHandedOverByAnnouncementIdForUpdate(announcementId)).thenReturn(List.of(handedOver));
+        LocalDate today = LocalDate.now(ZoneId.of(zone));
+
+        service.announce(announcementId, "uid-traveler", delay(today, today));
+
+        assertThat(handedOver.getConfirmationCodeExpiry())
+                .isAfter(LocalDateTime.now(java.time.ZoneOffset.UTC).plusHours(23));
+    }
+
+    @Test
+    void delay_endingYesterday_inTheTripsTimezone_422() {
+        announcement.setTimezone("Pacific/Kiritimati");
+        LocalDate yesterday = LocalDate.now(ZoneId.of("Pacific/Kiritimati")).minusDays(1);
+
+        assertThatThrownBy(() -> service.announce(announcementId, "uid-traveler", delay(yesterday, yesterday)))
+                .isInstanceOf(YadonyBusinessException.class)
+                .hasMessageContaining("antérieure à aujourd'hui");
     }
 
     @Test
