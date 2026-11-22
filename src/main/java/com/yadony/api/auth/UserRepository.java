@@ -402,8 +402,12 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
     /**
      * Recherche admin. Le terme libre {@code queryLike} ne balaie plus que les noms :
      * téléphone et email ont quitté la base pour Firebase. Une recherche sur l'un des
-     * deux est résolue en amont en UID Firebase, passé ici via {@code queryFirebaseUid} (plusieurs UID séparés par des virgules si le numéro désigne plusieurs comptes ; {@code POSITION} plutôt qu'une fonction de tableau, pour rester portable entre H2 et PostgreSQL)
-     * et apparié exactement.
+     * deux est résolue en amont en UID Firebase (plusieurs si le numéro désigne plusieurs comptes),
+     * passés ici via {@code queryFirebaseUids} et appariés exactement par {@code IN} : portable entre H2 et
+     * PostgreSQL, et indexable, contrairement à l'ancien {@code POSITION} dans une chaîne jointe, calculé
+     * ligne à ligne. Limite : tant que les noms sont cherchés par {@code ILIKE '%…%'} dans le même {@code OR},
+     * PostgreSQL parcourt la table de toute façon dès qu'un terme est saisi. Une liste vide ou nulle
+     * n'apparie rien : appeler la méthode par défaut {@code findAdminFiltered}, jamais celle-ci directement.
      *
      * <p>Le terme brut {@code queryRaw} est aussi comparé exactement à l'UID Firebase
      * (sensible à la casse, comme les UID), et {@code queryId}, non nul seulement quand le
@@ -423,8 +427,8 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             AND (CAST(:queryLike AS VARCHAR) IS NULL
                  OR u.first_name ILIKE :queryLike
                  OR u.last_name  ILIKE :queryLike
-                 OR (CAST(:queryFirebaseUid AS VARCHAR) IS NOT NULL
-                     AND POSITION(',' || u.firebase_uid || ',' IN ',' || CAST(:queryFirebaseUid AS VARCHAR) || ',') > 0)
+                 OR (CAST(:hasFirebaseUids AS BOOLEAN)
+                     AND u.firebase_uid IN (:queryFirebaseUids))
                  OR (CAST(:queryRaw AS VARCHAR) IS NOT NULL
                      AND u.firebase_uid = :queryRaw)
                  OR (CAST(:queryId AS UUID) IS NOT NULL
@@ -444,8 +448,8 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             AND (CAST(:queryLike AS VARCHAR) IS NULL
                  OR u.first_name ILIKE :queryLike
                  OR u.last_name  ILIKE :queryLike
-                 OR (CAST(:queryFirebaseUid AS VARCHAR) IS NOT NULL
-                     AND POSITION(',' || u.firebase_uid || ',' IN ',' || CAST(:queryFirebaseUid AS VARCHAR) || ',') > 0)
+                 OR (CAST(:hasFirebaseUids AS BOOLEAN)
+                     AND u.firebase_uid IN (:queryFirebaseUids))
                  OR (CAST(:queryRaw AS VARCHAR) IS NOT NULL
                      AND u.firebase_uid = :queryRaw)
                  OR (CAST(:queryId AS UUID) IS NOT NULL
@@ -455,18 +459,34 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
             AND (:recetteTester IS NULL OR u.recette_tester = :recetteTester)
             """,
            nativeQuery = true)
-    Page<UserEntity> findAdminFiltered(
+    Page<UserEntity> findAdminFilteredNative(
             @Param("status") String status,
             @Param("kycStatus") String kycStatus,
             @Param("pro") Boolean pro,
             @Param("city") String city,
             @Param("queryLike") String queryLike,
-            @Param("queryFirebaseUid") String queryFirebaseUid,
+            @Param("hasFirebaseUids") boolean hasFirebaseUids,
+            @Param("queryFirebaseUids") java.util.Collection<String> queryFirebaseUids,
             @Param("queryRaw") String queryRaw,
             @Param("queryId") UUID queryId,
             @Param("role") String role,
             @Param("recetteTester") Boolean recetteTester,
             Pageable pageable);
+
+    /**
+     * Recherche admin (voir {@link #findAdminFilteredNative}). {@code queryFirebaseUids} vide ou nul : la
+     * branche UID est coupée par {@code hasFirebaseUids} et la liste remplacée par un UID impossible (Firebase
+     * n'émet jamais d'UID vide), pour que le SQL ne contienne jamais {@code IN ()}, invalide en PostgreSQL.
+     */
+    default Page<UserEntity> findAdminFiltered(String status, String kycStatus, Boolean pro, String city,
+                                               String queryLike, java.util.Collection<String> queryFirebaseUids,
+                                               String queryRaw, UUID queryId, String role, Boolean recetteTester,
+                                               Pageable pageable) {
+        boolean hasFirebaseUids = queryFirebaseUids != null && !queryFirebaseUids.isEmpty();
+        return findAdminFilteredNative(status, kycStatus, pro, city, queryLike, hasFirebaseUids,
+                hasFirebaseUids ? queryFirebaseUids : List.of(""), queryRaw, queryId, role, recetteTester,
+                pageable);
+    }
 
     java.util.List<UserEntity> findAllByCreatedAtBetweenOrderByCreatedAtAsc(
             java.time.LocalDateTime from, java.time.LocalDateTime to);

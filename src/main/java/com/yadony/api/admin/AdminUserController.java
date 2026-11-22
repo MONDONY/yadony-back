@@ -129,7 +129,7 @@ public class AdminUserController {
                 pro,
                 normalizedCity,
                 queryLike,
-                resolveQueryToFirebaseUid(normalizedQuery),
+                resolveQueryToFirebaseUids(normalizedQuery),
                 normalizedQuery,
                 parseCanonicalUuid(normalizedQuery),
                 role != null ? role.name() : null,
@@ -151,21 +151,20 @@ public class AdminUserController {
      * <p>La forme du terme choisit le lookup, sinon toute recherche par nom, le cas
      * dominant, paierait deux appels réseau voués à échouer avant même que le SQL parte.
      */
-    private String resolveQueryToFirebaseUid(String normalizedQuery) {
+    private List<String> resolveQueryToFirebaseUids(String normalizedQuery) {
         if (normalizedQuery == null) {
-            return null;
+            return List.of();
         }
         if (normalizedQuery.contains("@")) {
-            return firebaseContact.findUidByEmail(normalizedQuery).orElse(null);
+            return firebaseContact.findUidByEmail(normalizedQuery).map(List::of).orElse(List.of());
         }
         // Les numéros sont stockés en E.164 côté Firebase, donc préfixés de « + ».
         if (normalizedQuery.startsWith("+")) {
-            // Plusieurs comptes déclarant le même numéro : tous remontent (UID séparés par des virgules).
-            List<String> uids = phoneLookup.findAllByPhone(normalizedQuery).stream()
+            // Plusieurs comptes déclarant le même numéro : tous remontent.
+            return phoneLookup.findAllByPhone(normalizedQuery).stream()
                     .map(UserEntity::getFirebaseUid).toList();
-            return uids.isEmpty() ? null : String.join(",", uids);
         }
-        return null;
+        return List.of();
     }
 
     /**

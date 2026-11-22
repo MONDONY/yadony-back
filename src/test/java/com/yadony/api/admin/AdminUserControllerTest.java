@@ -225,7 +225,7 @@ class AdminUserControllerTest {
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("%awa@example.com%"),
-                org.mockito.ArgumentMatchers.eq("uid-awa"),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of("uid-awa")),
                 org.mockito.ArgumentMatchers.eq("awa@example.com"),
                 org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any());
@@ -274,7 +274,22 @@ class AdminUserControllerTest {
 
         verify(userRepository).findAdminFiltered(
                 any(), any(), any(), any(), any(),
-                org.mockito.ArgumentMatchers.eq("uid-a,uid-b"),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of("uid-a", "uid-b")),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void listUsers_queryOnUnknownEmail_passesEmptyUidList() {
+        AdminUserController controller = newController();
+        when(firebaseContact.findUidByEmail("ghost@example.com")).thenReturn(java.util.Optional.empty());
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        controller.listUsers(null, null, null, null, null, "ghost@example.com", null, 0, 20);
+
+        verify(userRepository).findAdminFiltered(
+                any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of()),
                 any(), any(), any(), any(), any());
     }
 
@@ -297,7 +312,7 @@ class AdminUserControllerTest {
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("%" + id + "%"),
-                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of()),
                 org.mockito.ArgumentMatchers.eq(id.toString()),
                 org.mockito.ArgumentMatchers.eq(id),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any());
