@@ -10,8 +10,8 @@ routes:
 ---
 Un numéro s'ajoute depuis le profil si votre compte n'en a pas encore : Moi › ☰ › Modifier le profil › Coordonnées › Téléphone.
 Saisissez le numéro, puis le code de vérification reçu par SMS pour le confirmer.
-Dans certains pays d'Afrique, la vérification par SMS peut être momentanément indisponible : continuez à vous connecter avec votre e-mail, Google ou Apple.
+Dans certains pays, le SMS n'arrive pas : l'app propose alors « Enregistrer sans vérifier » (numéro affiché « Non vérifié », corrigeable librement, jamais utilisé pour se connecter ni payer). Continuez à vous connecter avec votre e-mail, Google ou Apple.
 
-Vous ne pouvez pas encore remplacer vous-même un numéro déjà enregistré : l'app répond « Numéro déjà défini ». Pour changer de numéro, écrivez au support (Moi › Aide › Contacter le support, catégorie Compte).
+Vous ne pouvez pas encore remplacer vous-même un numéro vérifié par SMS : l'app répond « Numéro déjà défini ». Pour changer de numéro, écrivez au support (Moi › Aide › Contacter le support, catégorie Compte).
 
 « Ce numéro a déjà son propre compte Yadony » : un autre compte utilise ce numéro. Connectez-vous avec ce numéro, ou contactez le support pour regrouper vos comptes. Numéro « en cours de suppression » : connectez-vous avec ce numéro pour annuler la suppression. Un numéro resté sur une inscription jamais terminée est libéré dès que vous saisissez le bon code.

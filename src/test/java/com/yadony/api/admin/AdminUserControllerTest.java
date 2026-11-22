@@ -34,12 +34,13 @@ class AdminUserControllerTest {
     @Mock com.yadony.api.billing.ProSubscriptionService proSubscriptionService;
     @Mock com.yadony.api.billing.ProSubscriptionRepository proSubscriptionRepository;
     @Mock com.yadony.api.payments.hold.PayoutHoldService payoutHoldService;
+    @Mock com.yadony.api.auth.PhoneLookupService phoneLookup;
 
     // ── Délégation du contrôleur ────────────────────────────────────────────
 
     @Test
     void setCommissionRate_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         // Coordonnées servies par Firebase, plus par la base
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
@@ -56,7 +57,7 @@ class AdminUserControllerTest {
 
     @Test
     void setCommissionRate_nullRate_delegatesNull_forGlobalReset() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         // Coordonnées servies par Firebase, plus par la base
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
@@ -73,7 +74,7 @@ class AdminUserControllerTest {
 
     @Test
     void unsuspend_propagatesAdminId() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -86,7 +87,7 @@ class AdminUserControllerTest {
 
     @Test
     void suspendPublishing_propagatesAdminId() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID userId = UUID.randomUUID();
 
         ResponseEntity<Void> resp = controller.suspendPublishing(userId, "retour non rendu", adminAuth());
@@ -97,7 +98,7 @@ class AdminUserControllerTest {
 
     @Test
     void liftPublishingSuspension_propagatesAdminId() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID userId = UUID.randomUUID();
 
         ResponseEntity<Void> resp = controller.liftPublishingSuspension(userId, adminAuth());
@@ -125,7 +126,7 @@ class AdminUserControllerTest {
 
     @Test
     void getUser_returnsTravelerStatusFieldsForAdmin() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -146,7 +147,7 @@ class AdminUserControllerTest {
 
     @Test
     void muteMessaging_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -162,7 +163,7 @@ class AdminUserControllerTest {
 
     @Test
     void muteMessaging_nullDuration_delegatesNull_forIndefiniteMute() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -177,7 +178,7 @@ class AdminUserControllerTest {
 
     @Test
     void unmuteMessaging_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(firebaseContact.getContact(any())).thenReturn(
                 com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
@@ -206,7 +207,7 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_queryOnEmail_resolvesFirebaseUid_andMapsContacts() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         user.setFirebaseUid("uid-awa");
 
@@ -224,7 +225,7 @@ class AdminUserControllerTest {
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("%awa@example.com%"),
-                org.mockito.ArgumentMatchers.eq("uid-awa"),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of("uid-awa")),
                 org.mockito.ArgumentMatchers.eq("awa@example.com"),
                 org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any());
@@ -235,8 +236,8 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_queryOnPhone_usesPhoneLookupOnly() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
-        when(firebaseContact.findUidByPhone("+221701234567")).thenReturn(java.util.Optional.of("uid-awa"));
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
+        when(phoneLookup.findAllByPhone("+221701234567")).thenReturn(java.util.List.of(userWithUid("uid-awa")));
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
@@ -244,13 +245,13 @@ class AdminUserControllerTest {
 
         // Un terme en E.164 ne déclenche que le lookup téléphone : le lookup email
         // était un aller-retour réseau voué à échouer.
-        verify(firebaseContact).findUidByPhone("+221701234567");
+        verify(phoneLookup).findAllByPhone("+221701234567");
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
     }
 
     @Test
     void listUsers_queryOnName_hitsNoFirebaseLookup() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
@@ -258,12 +259,49 @@ class AdminUserControllerTest {
 
         // Cas dominant d'une liste admin : aucun appel Firebase ne doit partir.
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
-        verify(firebaseContact, org.mockito.Mockito.never()).findUidByPhone(any());
+        verify(phoneLookup, org.mockito.Mockito.never()).findAllByPhone(any());
+    }
+
+    @Test
+    void listUsers_queryOnPhone_ambiguous_passesAllMatchingUids() {
+        AdminUserController controller = newController();
+        when(phoneLookup.findAllByPhone("+224621234567"))
+                .thenReturn(java.util.List.of(userWithUid("uid-a"), userWithUid("uid-b")));
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        controller.listUsers(null, null, null, null, null, "+224621234567", null, 0, 20);
+
+        verify(userRepository).findAdminFiltered(
+                any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of("uid-a", "uid-b")),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void listUsers_queryOnUnknownEmail_passesEmptyUidList() {
+        AdminUserController controller = newController();
+        when(firebaseContact.findUidByEmail("ghost@example.com")).thenReturn(java.util.Optional.empty());
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        controller.listUsers(null, null, null, null, null, "ghost@example.com", null, 0, 20);
+
+        verify(userRepository).findAdminFiltered(
+                any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of()),
+                any(), any(), any(), any(), any());
+    }
+
+    private static com.yadony.api.auth.UserEntity userWithUid(String uid) {
+        com.yadony.api.auth.UserEntity u = new com.yadony.api.auth.UserEntity();
+        u.setFirebaseUid(uid);
+        return u;
     }
 
     @Test
     void listUsers_queryShapedLikeUuid_passesTypedIdAndRawTerm() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID id = UUID.fromString("3f2b8c1e-9a4d-4e6f-8b21-7c5d0e9a1b34");
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
@@ -274,17 +312,17 @@ class AdminUserControllerTest {
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("%" + id + "%"),
-                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(java.util.List.of()),
                 org.mockito.ArgumentMatchers.eq(id.toString()),
                 org.mockito.ArgumentMatchers.eq(id),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any());
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
-        verify(firebaseContact, org.mockito.Mockito.never()).findUidByPhone(any());
+        verify(phoneLookup, org.mockito.Mockito.never()).findAllByPhone(any());
     }
 
     @Test
     void listUsers_queryNotStrictUuid_passesNoTypedId() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
@@ -304,14 +342,14 @@ class AdminUserControllerTest {
 
     @Test
     void listUsers_withoutQuery_doesNotHitFirebaseLookups() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
 
         controller.listUsers(null, null, null, null, null, "   ", null, 0, 20);
 
         verify(firebaseContact, org.mockito.Mockito.never()).findUidByEmail(any());
-        verify(firebaseContact, org.mockito.Mockito.never()).findUidByPhone(any());
+        verify(phoneLookup, org.mockito.Mockito.never()).findAllByPhone(any());
     }
 
     // ── Bean validation du DTO (@DecimalMin / @DecimalMax) ───────────────────
@@ -350,7 +388,7 @@ class AdminUserControllerTest {
 
     @Test
     void grantPro_userNotFound_throws404_beforeCallingService() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID userId = UUID.randomUUID();
         when(userRepository.findById(userId)).thenReturn(Optional.empty());
 
@@ -367,7 +405,7 @@ class AdminUserControllerTest {
 
     @Test
     void grantPro_userExists_delegatesToService_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID userId = UUID.randomUUID();
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
@@ -383,7 +421,7 @@ class AdminUserControllerTest {
 
     @Test
     void revokePro_delegatesToRevokeAdminGrant_andReturnsDetail() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID userId = UUID.randomUUID();
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
@@ -398,7 +436,7 @@ class AdminUserControllerTest {
 
     @Test
     void getUser_exposeLeGelDesVersements() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         UUID userId = UUID.randomUUID();
         com.yadony.api.auth.UserEntity user = new com.yadony.api.auth.UserEntity();
         org.springframework.test.util.ReflectionTestUtils.setField(user, "id", userId);
@@ -419,7 +457,7 @@ class AdminUserControllerTest {
 
     private AdminUserController newController() {
         return new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService,
-                deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+                deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
     }
 
     @Test
@@ -485,7 +523,7 @@ class AdminUserControllerTest {
 
     @Test
     void setMonthlyTripLimit_delegatesToService_andReturnsDetailWithLimitAndUsed() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         com.yadony.api.travelerstatus.PublishingEligibilityService eligibility =
                 org.mockito.Mockito.mock(com.yadony.api.travelerstatus.PublishingEligibilityService.class);
         controller.setPublishingEligibilityService(eligibility);
@@ -505,7 +543,7 @@ class AdminUserControllerTest {
 
     @Test
     void setMonthlyTripLimit_nullDelegatesNull_forNoLimit() {
-        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService);
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(firebaseContact.getContact(any())).thenReturn(com.yadony.api.auth.FirebaseContactService.Contact.EMPTY);
         UUID userId = UUID.randomUUID();
         when(userService.setMonthlyTripLimit(userId, null, ADMIN_ID)).thenReturn(new com.yadony.api.auth.UserEntity());

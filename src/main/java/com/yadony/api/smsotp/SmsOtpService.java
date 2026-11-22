@@ -112,7 +112,7 @@ public class SmsOtpService {
      * numéro, lu à chaque envoi comme {@link #registeredNumbersOnly()}. Sans le réglage (tests
      * unitaires) : aucun pays bloqué.
      */
-    private Optional<String> blockedCallingCode(String phoneNumber) {
+    Optional<String> blockedCallingCode(String phoneNumber) {
         return platformSettings != null
                 ? platformSettings.smsBlockedCallingCode(phoneNumber)
                 : Optional.empty();

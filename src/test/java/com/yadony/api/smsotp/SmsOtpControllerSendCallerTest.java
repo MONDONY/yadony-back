@@ -27,7 +27,7 @@ class SmsOtpControllerSendCallerTest {
     private static final String PHONE = "+2250700000000";
 
     private final SmsOtpService service = mock(SmsOtpService.class);
-    private final SmsOtpController controller = new SmsOtpController(service, mock(AuthService.class));
+    private final SmsOtpController controller = new SmsOtpController(service, mock(AuthService.class), mock(DeclaredPhoneService.class));
 
     @AfterEach
     void clear() {

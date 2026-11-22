@@ -7,6 +7,8 @@ import com.yadony.api.addressbook.invitation.dto.SentInvitationDto;
 import com.yadony.api.addressbook.recipient.RecipientEntity;
 import com.yadony.api.addressbook.recipient.RecipientRepository;
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
+import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -73,6 +75,7 @@ public class RecipientInvitationService {
     private final RecipientRepository recipientRepository;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
+    private final PhoneLookupService phoneLookup;
     private final BlockVisibility blockVisibility;
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
@@ -87,7 +90,9 @@ public class RecipientInvitationService {
                                       NotificationDispatcher notificationDispatcher,
                                       AuditService auditService,
                                       ApplicationEventPublisher eventPublisher,
+                                      PhoneLookupService phoneLookup,
                                       UsernameLookupService usernameLookup) {
+        this.phoneLookup = phoneLookup;
         this.repository = repository;
         this.recipientRepository = recipientRepository;
         this.userRepository = userRepository;
@@ -122,7 +127,7 @@ public class RecipientInvitationService {
         // Recherche faite dans tous les cas, avant tout court-circuit : la durée de la
         // réponse ne doit pas dépendre de l'existence d'un compte ni d'un doublon.
         Optional<String> foundUid = target.channel() == InvitationChannel.PHONE
-                ? firebaseContact.findUidByPhone(target.value())
+                ? uidOf(phoneLookup.findByPhone(target.value()))
                 : firebaseContact.findUidByEmail(target.value());
 
         if (foundUid.filter(uid -> uid.equals(inviter.getFirebaseUid())).isPresent()) {
@@ -161,6 +166,16 @@ public class RecipientInvitationService {
                     invitation.getId(), inviter.getId(), inviteeId));
         }
         return InvitationSentResponse.SENT;
+    }
+
+    /**
+     * Seul un numéro vérifié par SMS ou validé par Yadony désigne un invité. Un numéro simplement
+     * déclaré, ambigu ou inconnu donne le même résultat vide : rien ne fuit, aucun compte n'est choisi.
+     */
+    private static Optional<String> uidOf(PhoneMatch match) {
+        return match instanceof PhoneMatch.Found found && (found.trust() == PhoneMatch.Trust.SMS || found.trust() == PhoneMatch.Trust.YADONY)
+                ? Optional.of(found.user().getFirebaseUid())
+                : Optional.empty();
     }
 
     /**
@@ -263,11 +278,17 @@ public class RecipientInvitationService {
                 .toList();
     }
 
+    /** Téléphone de l'invité : celui vérifié par SMS, sinon le numéro déclaré que Yadony a validé (jamais un simple déclaré). */
+    private String inviteePhone(UserEntity me, FirebaseContactService.Contact contact) {
+        String sms = contact.phoneNumber();
+        return sms != null && !sms.isBlank() ? sms : phoneLookup.trustedDeclaredPhone(me, contact).orElse(null);
+    }
+
     /** Pose {@code invitee_user_id} sur les invitations sans compte dont l'empreinte est la sienne. */
     private void catchUp(UserEntity me) {
         FirebaseContactService.Contact contact = firebaseContact.getContact(me.getFirebaseUid());
         Set<String> hashes = Stream.concat(
-                        InvitationTargets.phone(contact.phoneNumber()).stream(),
+                        InvitationTargets.phone(inviteePhone(me, contact)).stream(),
                         InvitationTargets.email(contact.email()).stream())
                 .map(InvitationTargets::hash)
                 .collect(Collectors.toCollection(HashSet::new));
@@ -297,7 +318,7 @@ public class RecipientInvitationService {
             return toIncoming(invitation);
         }
         requirePending(invitation);
-        String phone = InvitationTargets.phone(firebaseContact.getContact(me.getFirebaseUid()).phoneNumber())
+        String phone = InvitationTargets.phone(inviteePhone(me, firebaseContact.getContact(me.getFirebaseUid())))
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.CONFLICT, "recipient-invitation-phone-required", "problem.recipient-invitation-phone-required"));
 
         RecipientEntity entry = upsertAddressBookEntry(invitation, me, phone);

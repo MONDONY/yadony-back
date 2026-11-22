@@ -63,7 +63,7 @@ class BidQuoteServiceTest {
                 org.mockito.Mockito.mock(com.yadony.api.common.commission.CommissionGridService.class),
                 org.mockito.Mockito.mock(com.yadony.api.tracking.TravelerTrackingQuery.class),
                 org.mockito.Mockito.mock(PayoutTriggerPolicy.class),
-                org.mockito.Mockito.mock(BidRecipientDesignation.class));
+                org.mockito.Mockito.mock(BidRecipientDesignation.class), null);
     }
 
     @AfterEach

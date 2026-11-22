@@ -152,6 +152,28 @@ class AccountFinalizationServiceTest {
     }
 
     @Test
+    @DisplayName("efface l'empreinte du numéro déclaré, son niveau et la validation Yadony")
+    void clearsDeclaredPhoneColumns() {
+        UserEntity user = makeUser();
+        // Avec la base et la clé, HMAC(+225…) retrouverait le compte supprimé : l'empreinte doit partir.
+        user.setDeclaredPhoneHash("a".repeat(64));
+        user.setDeclaredPhoneLevel(DeclaredPhoneLevel.YADONY_VERIFIED);
+        user.setDeclaredPhoneVerifiedAt(java.time.LocalDateTime.now());
+        user.setDeclaredPhoneVerifiedBy(UUID.randomUUID());
+        com.google.firebase.auth.FirebaseAuth mockAuth = mock(com.google.firebase.auth.FirebaseAuth.class);
+
+        try (MockedStatic<FirebaseAuth> staticAuth = mockStatic(FirebaseAuth.class)) {
+            staticAuth.when(FirebaseAuth::getInstance).thenReturn(mockAuth);
+            service.finalize(user, FinalizationReason.HARD_IMMEDIATE);
+        }
+
+        assertThat(user.getDeclaredPhoneHash()).isNull();
+        assertThat(user.getDeclaredPhoneLevel()).isNull();
+        assertThat(user.getDeclaredPhoneVerifiedAt()).isNull();
+        assertThat(user.getDeclaredPhoneVerifiedBy()).isNull();
+    }
+
+    @Test
     @DisplayName("efface le statut légal du voyageur : statut, date, version, raison sociale, numéro et pays")
     void clearsTravelerStatusColumns() {
         UserEntity user = makeUser();

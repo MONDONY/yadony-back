@@ -26,7 +26,7 @@ class SmsOtpControllerAttachHeaderTest {
 
     private final SmsOtpService service = mock(SmsOtpService.class);
     private final AuthService authService = mock(AuthService.class);
-    private final SmsOtpController controller = new SmsOtpController(service, authService);
+    private final SmsOtpController controller = new SmsOtpController(service, authService, mock(DeclaredPhoneService.class));
     private final UserResponse profile = mock(UserResponse.class);
 
     @BeforeEach

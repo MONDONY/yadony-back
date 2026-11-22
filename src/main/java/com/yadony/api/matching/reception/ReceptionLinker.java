@@ -1,6 +1,8 @@
 package com.yadony.api.matching.reception;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
+import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
@@ -46,6 +48,7 @@ public class ReceptionLinker {
     private final UserRepository userRepository;
     private final BidRecipientLinkRepository linkRepository;
     private final FirebaseContactService firebaseContact;
+    private final PhoneLookupService phoneLookup;
     private final BlockVisibility blockVisibility;
     private final NotificationDispatcher notificationDispatcher;
     private final AuditService auditService;
@@ -61,7 +64,9 @@ public class ReceptionLinker {
                            NotificationDispatcher notificationDispatcher,
                            AuditService auditService,
                            RecipientTrust recipientTrust,
-                           DesignatedRecipientNaming designatedNaming) {
+                           DesignatedRecipientNaming designatedNaming,
+                           PhoneLookupService phoneLookup) {
+        this.phoneLookup = phoneLookup;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -139,8 +144,10 @@ public class ReceptionLinker {
 
     /**
      * Compte destinataire du colis : le compte désigné par identifiant quand il y en a un (actif : un compte
-     * supprimé, suspendu, banni ou en cours de suppression ne reçoit aucun lien), sinon celui du numéro saisi
-     * (recherche Firebase).
+     * supprimé, suspendu, banni ou en cours de suppression ne reçoit aucun lien), sinon celui du numéro saisi.
+     * Pour le numéro, seuls un numéro vérifié par SMS ou validé par Yadony rattachent un colis
+     * ({@link PhoneLookupService#findByPhone}) : numéro simplement déclaré, ambigu ou inconnu, aucun
+     * rattachement. Ces règles du numéro ne touchent pas le chemin par identifiant.
      */
     private Optional<UserEntity> resolveRecipient(BidEntity bid) {
         if (bid.getRecipientUserId() != null) {
@@ -151,7 +158,10 @@ public class ReceptionLinker {
         if (e164.isEmpty()) {
             return Optional.empty();
         }
-        return firebaseContact.findUidByPhone(e164.get()).flatMap(userRepository::findByFirebaseUid);
+        return phoneLookup.findByPhone(e164.get()) instanceof PhoneMatch.Found found
+                && (found.trust() == PhoneMatch.Trust.SMS || found.trust() == PhoneMatch.Trust.YADONY)
+                ? Optional.of(found.user())
+                : Optional.empty();
     }
 
     /**
@@ -179,7 +189,10 @@ public class ReceptionLinker {
     }
 
     private int catchUp(UserEntity user, boolean notify) {
-        String phone = firebaseContact.getContact(user.getFirebaseUid()).phoneNumber();
+        FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
+        // SMS d'abord ; sinon le numéro déclaré que Yadony a validé (jamais un simple déclaré).
+        String phone = contact.phoneNumber() != null && !contact.phoneNumber().isBlank()
+                ? contact.phoneNumber() : phoneLookup.trustedDeclaredPhone(user, contact).orElse(null);
         String key = ReceptionPhones.digitsKey(phone);
         if (key.isEmpty()) {
             return 0;

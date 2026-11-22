@@ -54,6 +54,8 @@ public class AuthService {
     private final UsernameGenerator usernameGenerator;
     private final MessagesResolver messagesResolver;
 
+    private final DeclaredPhoneResolver declaredPhoneResolver;
+
     public AuthService(UserRepository userRepository,
                        AuditService auditService,
                        UserService userService,
@@ -64,7 +66,9 @@ public class AuthService {
                        AdminAuthService adminAuthService,
                        FirebaseContactService firebaseContact,
                        UsernameGenerator usernameGenerator,
-                       MessagesResolver messagesResolver) {
+                       MessagesResolver messagesResolver,
+                       DeclaredPhoneResolver declaredPhoneResolver) {
+        this.declaredPhoneResolver = declaredPhoneResolver;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.userService = userService;
@@ -700,6 +704,7 @@ public class AuthService {
         }
 
         FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
+        DeclaredPhoneResolver.Resolved declared = declaredPhoneResolver.resolve(user, contact);
 
         return new UserResponse(
                 user.getId(),
@@ -734,7 +739,9 @@ public class AuthService {
                 user.getTravelerStatus() == null ? null : user.getTravelerStatus().name(),
                 user.getBusinessName(),
                 user.getBusinessRegistrationNumber(),
-                user.getBusinessCountry()
+                user.getBusinessCountry(),
+                declared.number(),
+                declared.level() == null ? null : declared.level().name()
         );
     }
 

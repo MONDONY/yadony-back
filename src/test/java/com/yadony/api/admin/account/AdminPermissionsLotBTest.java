@@ -46,8 +46,8 @@ class AdminPermissionsLotBTest {
     // USER_PRO_GRANT. Passe a 33 avec la messagerie support, qui ajoute
     // SUPPORT_TICKET_VIEW et SUPPORT_TICKET_MANAGE. Passe a 34 avec REPORT_DELETE, puis a 35
     // avec WALLET_ADJUST (correction de solde wallet), puis a 36 avec KYC_DECIDE, puis a 37 avec TOPUP_CODE_MANAGE, puis a 38 avec ASSISTANT_MANAGE.
-    // GP_PRO_REVIEW — 38 → 39. DAC7_REPORT (déclaration DAC7, lot 3b) — 39 → 40.
+    // GP_PRO_REVIEW — 38 → 39. DAC7_REPORT (déclaration DAC7, lot 3b) — 39 → 40. USER_PHONE_VERIFY — 40 → 41.
     void enumHasExactlyThirtyNineValues() {
-        assertThat(AdminPermission.values()).hasSize(40);
+        assertThat(AdminPermission.values()).hasSize(41);
     }
 }

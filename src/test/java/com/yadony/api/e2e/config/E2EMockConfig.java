@@ -71,6 +71,8 @@ public class E2EMockConfig {
         Mockito.lenient().when(mock.getContact(Mockito.any())).thenReturn(contact);
         // Lecture hors cache de la garde contact-email-required (StripeV2AccountProvisioner).
         Mockito.lenient().when(mock.getFreshContact(Mockito.any())).thenReturn(contact);
+        // Lecture stricte des gardes du numéro déclaré : un mock nu rendrait Optional.empty(), lu comme une panne.
+        Mockito.lenient().when(mock.readContactStrict(Mockito.any())).thenReturn(java.util.Optional.of(contact));
         // Le contrat des methodes rendant un objet est reproduit explicitement : un mock nu
         // rendrait `null` la ou le vrai service garantit une map par UID demande et un
         // Optional vide, ce qui ferait tomber en NPE les scenarios qui les traversent.
@@ -87,6 +89,8 @@ public class E2EMockConfig {
                 .thenReturn(java.util.Optional.empty());
         Mockito.lenient().when(mock.findUidByPhone(Mockito.any()))
                 .thenReturn(java.util.Optional.empty());
+        Mockito.lenient().when(mock.findPhoneOwner(Mockito.any()))
+                .thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
         return mock;
     }
 

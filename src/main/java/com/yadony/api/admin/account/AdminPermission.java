@@ -31,6 +31,12 @@ public enum AdminPermission {
      * {@link #USER_COMMISSION}, donc accordée aux mêmes rôles.
      */
     USER_PRO_GRANT,
+    /**
+     * Valider à la main le numéro déclaré sans SMS d'un utilisateur (« Vérifié par Yadony »). Même
+     * portée que {@link #USER_SUSPEND} : ADMIN et SUPER_ADMIN, jamais le support. Le numéro validé
+     * rattache les colis et résout les invitations, mais ne sert jamais à la connexion ni aux paiements.
+     */
+    USER_PHONE_VERIFY,
 
     // Payment management
     PAYMENT_VIEW,

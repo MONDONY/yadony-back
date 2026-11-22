@@ -135,6 +135,9 @@ public class SecurityConfig {
                 // exactement le tunnel d'inscription qu'ils servent.
                 .requestMatchers("/auth/email-otp/attach").access(authenticatedNonGuest())
                 .requestMatchers("/auth/sms-otp/attach").access(authenticatedNonGuest())
+                // Déclaration d'un numéro sans SMS (pays bloqués) : écrit sur la ligne `users`
+                // réelle, donc jamais un invité (même motif que attach).
+                .requestMatchers("/auth/sms-otp/declare").access(authenticatedNonGuest())
                 // Même motif : mutent une ligne `users` réelle (adresse de résidence,
                 // indicateur d'onboarding). Un invité matérialisé par un favori pourrait
                 // sinon écrire sur sa propre ligne invitée, promise à la purge.

@@ -11,6 +11,7 @@ import com.yadony.api.admin.dto.ProGrantRequest;
 import com.yadony.api.admin.dto.RestoreRequest;
 import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.KycStatus;
+import com.yadony.api.auth.PhoneLookupService;
 import com.yadony.api.auth.Role;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
@@ -37,6 +38,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -48,6 +50,7 @@ public class AdminUserController {
     private final UserService userService;
     private final UserRepository userRepository;
     private final FirebaseContactService firebaseContact;
+    private final PhoneLookupService phoneLookup;
     private final UserDeletionImpactService deletionImpactService;
     private final AdminUserDeletionService deletionService;
     private final ProSubscriptionService proSubscriptionService;
@@ -72,6 +75,17 @@ public class AdminUserController {
         this.individualFrequencyAdminService = individualFrequencyAdminService;
     }
 
+    /** Validation d'un numéro déclaré et niveau exposé ; injectés par setter (constructeur inchangé). */
+    private AdminDeclaredPhoneService declaredPhoneService;
+    private com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeclaredPhone(AdminDeclaredPhoneService declaredPhoneService,
+                          com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver) {
+        this.declaredPhoneService = declaredPhoneService;
+        this.declaredPhoneResolver = declaredPhoneResolver;
+    }
+
     public AdminUserController(UserService userService,
                                UserRepository userRepository,
                                FirebaseContactService firebaseContact,
@@ -79,7 +93,9 @@ public class AdminUserController {
                                AdminUserDeletionService deletionService,
                                ProSubscriptionService proSubscriptionService,
                                ProSubscriptionRepository proSubscriptionRepository,
-                               PayoutHoldService payoutHoldService) {
+                               PayoutHoldService payoutHoldService,
+                               PhoneLookupService phoneLookup) {
+        this.phoneLookup = phoneLookup;
         this.payoutHoldService = payoutHoldService;
         this.userService = userService;
         this.userRepository = userRepository;
@@ -113,7 +129,7 @@ public class AdminUserController {
                 pro,
                 normalizedCity,
                 queryLike,
-                resolveQueryToFirebaseUid(normalizedQuery),
+                resolveQueryToFirebaseUids(normalizedQuery),
                 normalizedQuery,
                 parseCanonicalUuid(normalizedQuery),
                 role != null ? role.name() : null,
@@ -135,18 +151,20 @@ public class AdminUserController {
      * <p>La forme du terme choisit le lookup, sinon toute recherche par nom, le cas
      * dominant, paierait deux appels réseau voués à échouer avant même que le SQL parte.
      */
-    private String resolveQueryToFirebaseUid(String normalizedQuery) {
+    private List<String> resolveQueryToFirebaseUids(String normalizedQuery) {
         if (normalizedQuery == null) {
-            return null;
+            return List.of();
         }
         if (normalizedQuery.contains("@")) {
-            return firebaseContact.findUidByEmail(normalizedQuery).orElse(null);
+            return firebaseContact.findUidByEmail(normalizedQuery).map(List::of).orElse(List.of());
         }
         // Les numéros sont stockés en E.164 côté Firebase, donc préfixés de « + ».
         if (normalizedQuery.startsWith("+")) {
-            return firebaseContact.findUidByPhone(normalizedQuery).orElse(null);
+            // Plusieurs comptes déclarant le même numéro : tous remontent.
+            return phoneLookup.findAllByPhone(normalizedQuery).stream()
+                    .map(UserEntity::getFirebaseUid).toList();
         }
-        return null;
+        return List.of();
     }
 
     /**
@@ -224,6 +242,15 @@ public class AdminUserController {
             @RequestBody @jakarta.validation.Valid MonthlyTripLimitRequest request,
             Authentication authentication) {
         return detail(userService.setMonthlyTripLimit(userId, request.limit(), adminId(authentication)));
+    }
+
+    /** Valide à la main le numéro déclaré du compte (« Vérifié par Yadony ») ; jamais le numéro Firebase officiel. */
+    @PreAuthorize("hasRole('ADMIN') and hasAuthority('USER_PHONE_VERIFY')")
+    @PostMapping("/{userId}/declared-phone/verify")
+    public AdminUserDetailResponse verifyDeclaredPhone(@PathVariable UUID userId,
+            @RequestBody @Valid com.yadony.api.admin.dto.VerifyDeclaredPhoneRequest request,
+            Authentication authentication) {
+        return detail(declaredPhoneService.verify(userId, adminId(authentication), request.declaredPhone()));
     }
 
     // Lot B — Coupure de messagerie. SUPPORT ne détient plus USER_SUSPEND, USER_BAN ni
@@ -322,14 +349,16 @@ public class AdminUserController {
     }
 
     private AdminUserDetailResponse detail(UserEntity user) {
+        FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
         return AdminUserDetailResponse.from(
                 user,
-                firebaseContact.getContact(user.getFirebaseUid()),
+                contact,
                 proSubscriptionRepository.findByUserId(user.getId()).orElse(null),
                 payoutHoldService.summaryOf(user.getId()),
                 publishingEligibilityService == null ? 0 : publishingEligibilityService.usedThisMonth(user),
                 individualFrequencyAdminService == null ? null
-                        : individualFrequencyAdminService.openAlertFor(user.getId()));
+                        : individualFrequencyAdminService.openAlertFor(user.getId()),
+                declaredPhoneResolver == null ? null : declaredPhoneResolver.resolve(user, contact));
     }
 
     /** Résout l'utilisateur ou lève le 404 métier standard — réutilisé partout où

@@ -69,6 +69,8 @@ app:
     block-when-quota-exceeded: false
 
 yadony:
+  declared-phone:
+    hash-key: e2e-only-declared-phone-hash-key
   # Frais d'annulation : ÉTEINTS ici comme en production (défaut d'application.yml), toute la suite tourne donc
   # comme sans la fonction. Seuls les tests de la fonction les allument, par le profil cancellation-fee
   # (application-cancellation-fee.yml) : @ActiveProfiles({"e2e", "cancellation-fee"}).
