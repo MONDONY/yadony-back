@@ -4327,6 +4327,99 @@ class BidServiceTest {
             assertThat(bidService.toResponse(bid, sender, SENDER_ID).travelerTracking()).isNull();
         }
 
+        private UserEntity designatedAccount(String username) {
+            UserEntity u = new UserEntity();
+            u.setUsername(username);
+            UUID id = UUID.randomUUID();
+            setId(u, id);
+            lenient().when(userRepository.findById(id)).thenReturn(Optional.of(u));
+            return u;
+        }
+
+        private BidEntity designatedBid(UserEntity account) {
+            BidEntity bid = buildBid();
+            bid.setStatus(BidStatus.ACCEPTED);
+            bid.setRecipientUserId(account.getId());
+            bid.setRecipientName("@" + account.getUsername());
+            bid.setRecipientPhone(null);
+            return bid;
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, vue expéditeur, lien absent : drapeau et identifiant actuel")
+        void designatedByUsername_senderView_noLink_exposesUsername() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+
+            BidResponse resp = bidService.toResponse(bid, buildSender(), SENDER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isTrue();
+            assertThat(resp.recipientUsername()).isEqualTo("awa.diallo");
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant : l'identifiant servi est l'actuel du compte, pas celui du libellé")
+        void designatedByUsername_servesCurrentUsername() {
+            UserEntity account = designatedAccount("awa.nouveau");
+            BidEntity bid = designatedBid(account);
+            bid.setRecipientName("@awa.ancien");
+
+            assertThat(bidService.toResponse(bid, buildSender(), SENDER_ID).recipientUsername())
+                    .isEqualTo("awa.nouveau");
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, lien PENDING ou DECLINED : identifiant servi")
+        void designatedByUsername_pendingOrDeclined_exposesUsername() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.PENDING)));
+            assertThat(bidService.toResponse(bid, buildSender(), SENDER_ID).recipientUsername())
+                    .isEqualTo("awa.diallo");
+
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.DECLINED)));
+            BidResponse declined = bidService.toResponse(bid, buildSender(), SENDER_ID);
+            assertThat(declined.recipientUsername()).isEqualTo("awa.diallo");
+            assertThat(declined.recipientDesignatedByUsername()).isTrue();
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, lien CONFIRMED : drapeau vrai, identifiant nul")
+        void designatedByUsername_confirmed_noUsername() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+            when(recipientLinkRepository.findByBidId(BID_ID)).thenReturn(Optional.of(
+                    recipientLink(com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)));
+
+            BidResponse resp = bidService.toResponse(bid, buildSender(), SENDER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isTrue();
+            assertThat(resp.recipientUsername()).isNull();
+        }
+
+        @Test
+        @DisplayName("désigné par identifiant, vue voyageur : jamais de drapeau ni d'identifiant")
+        void designatedByUsername_travelerView_neverExposed() {
+            UserEntity account = designatedAccount("awa.diallo");
+            BidEntity bid = designatedBid(account);
+
+            BidResponse resp = bidService.toResponse(bid, buildSender(), TRAVELER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isFalse();
+            assertThat(resp.recipientUsername()).isNull();
+        }
+
+        @Test
+        @DisplayName("colis par numéro : drapeau faux, identifiant nul")
+        void byNumber_notDesignated() {
+            BidResponse resp = bidService.toResponse(buildBid(), buildSender(), SENDER_ID);
+
+            assertThat(resp.recipientDesignatedByUsername()).isFalse();
+            assertThat(resp.recipientUsername()).isNull();
+        }
+
         @Test
         @DisplayName("destinataire DECLINED, vue expéditeur → tout reste visible")
         void toResponse_declinedRecipient_senderView_seesEverything() {

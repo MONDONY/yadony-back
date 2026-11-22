@@ -1591,6 +1591,8 @@ public class BidService {
         java.util.Set<UUID> userIds = new java.util.HashSet<>();
         announcements.forEach(a -> userIds.add(a.getTravelerId()));
         links.values().forEach(l -> userIds.add(l.getRecipientUserId()));
+        // Comptes désignés par identifiant (identifiant actuel servi à l'expéditeur), lien ou non.
+        bids.forEach(b -> userIds.add(b.getRecipientUserId()));
         userIds.remove(null);
         BidResponsePrefetch.loadInChunks(userIds, userRepository::findAllById);
 
@@ -1979,8 +1981,25 @@ public class BidService {
                 announcement != null ? announcement.getArrivalDateMax() : null,
                 (bid.getPayoutTrigger() != null ? bid.getPayoutTrigger() : PayoutTrigger.DELIVERY).name(),
                 bid.getVolumeM3(),
-                depositedAt(bid, prefetch)
+                depositedAt(bid, prefetch),
+                callerIsSender && bid.getRecipientUserId() != null,
+                designatedUsername(bid, recipientLink, callerIsSender)
         );
+    }
+
+    /**
+     * Identifiant actuel du compte désigné par identifiant, pour l'expéditeur seulement et tant que le destinataire
+     * n'a pas confirmé. Lu dans le contexte de persistance (les comptes désignés sont préchargés par
+     * {@link #prefetchFor}), jamais pour le voyageur.
+     */
+    private String designatedUsername(BidEntity bid,
+                                      com.yadony.api.matching.reception.BidRecipientLinkEntity link,
+                                      boolean callerIsSender) {
+        if (!callerIsSender || bid.getRecipientUserId() == null
+                || (link != null && link.getStatus() == com.yadony.api.matching.reception.ReceptionLinkStatus.CONFIRMED)) {
+            return null;
+        }
+        return userRepository.findById(bid.getRecipientUserId()).map(UserEntity::getUsername).orElse(null);
     }
 
     /**
