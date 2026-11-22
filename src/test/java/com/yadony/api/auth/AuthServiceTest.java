@@ -78,7 +78,7 @@ class AuthServiceTest {
         authService = new AuthService(userRepository, auditService, userService,
                 accountFinalizationService, eventPublisher, connectedDevicesService,
                 storageService, adminAuthService, firebaseContact, usernameGenerator,
-                TestMessages.resolver());
+                TestMessages.resolver(), new DeclaredPhoneResolver(new DeclaredPhoneHasher("")));
     }
 
     @AfterEach

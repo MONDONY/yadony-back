@@ -44,9 +44,26 @@ public class FirebaseContactService {
     /** Plafond imposé par l'API Firebase {@code getUsers}. */
     private static final int BATCH_SIZE = 100;
 
-    /** Coordonnées de contact d'un utilisateur (peuvent être nulles). */
-    public record Contact(String phoneNumber, String email) {
-        public static final Contact EMPTY = new Contact(null, null);
+    /** Claim Firebase portant le numéro déclaré sans SMS (jamais {@code phoneNumber}, réservé au vérifié). */
+    static final String DECLARED_PHONE_CLAIM = "declared_phone";
+
+    /**
+     * Coordonnées de contact d'un utilisateur (peuvent être nulles). {@code phoneNumber}
+     * est le numéro vérifié par SMS ; {@code declaredPhone} celui déclaré sans SMS.
+     */
+    public record Contact(String phoneNumber, String email, String declaredPhone) {
+        public static final Contact EMPTY = new Contact(null, null, null);
+
+        public Contact(String phoneNumber, String email) {
+            this(phoneNumber, email, null);
+        }
+    }
+
+    private static Contact toContact(UserRecord record) {
+        Map<String, Object> claims = record.getCustomClaims();
+        Object declared = claims == null ? null : claims.get(DECLARED_PHONE_CLAIM);
+        return new Contact(record.getPhoneNumber(), record.getEmail(),
+                declared instanceof String s && !s.isBlank() ? s : null);
     }
 
     private final FirebaseAuth firebaseAuth;
@@ -68,6 +85,14 @@ public class FirebaseContactService {
     }
 
     /**
+     * Faux sans FirebaseAuth (test/CI). Les écritures se taisent alors ; un appelant qui ne peut
+     * pas faire semblant de réussir (numéro déclaré) le vérifie d'abord.
+     */
+    public boolean isAvailable() {
+        return !unavailable();
+    }
+
+    /**
      * Coordonnées de l'utilisateur pour un UID Firebase. Échec réseau / UID
      * inconnu → {@link Contact#EMPTY} (dégradation gracieuse, jamais d'exception
      * propagée pour ne pas casser un envoi SMS ou une réponse d'API).
@@ -79,7 +104,7 @@ public class FirebaseContactService {
         return cache.get(firebaseUid, uid -> {
             try {
                 UserRecord record = firebaseAuth.getUser(uid);
-                return new Contact(record.getPhoneNumber(), record.getEmail());
+                return toContact(record);
             } catch (FirebaseAuthException e) {
                 log.warn("Firebase getUser({}) a échoué : {}", uid, e.getAuthErrorCode());
                 return Contact.EMPTY;
@@ -101,6 +126,34 @@ public class FirebaseContactService {
             cache.invalidate(firebaseUid);
         }
         return getContact(firebaseUid);
+    }
+
+    /**
+     * Lecture fraîche ET stricte, pour les gardes qui ne doivent jamais échouer ouvertes (numéro déclaré :
+     * déclaration et validation par un administrateur). Contrairement à {@link #getFreshContact}, une panne
+     * n'est pas maquillée en {@link Contact#EMPTY} : vide = « impossible de savoir », l'appelant refuse (503).
+     * Un UID inconnu de Firebase est en revanche une réponse sûre : {@link Contact#EMPTY}. Le succès réamorce
+     * le cache ; l'échec l'invalide, pour qu'aucune valeur ancienne ne survive à une lecture ratée.
+     */
+    public Optional<Contact> readContactStrict(String firebaseUid) {
+        if (unavailable() || firebaseUid == null || firebaseUid.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            Contact contact = toContact(firebaseAuth.getUser(firebaseUid));
+            cache.put(firebaseUid, contact);
+            return Optional.of(contact);
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() == AuthErrorCode.USER_NOT_FOUND) {
+                cache.put(firebaseUid, Contact.EMPTY);
+                return Optional.of(Contact.EMPTY);
+            }
+            log.warn("Firebase getUser({}) strict a échoué : {}", firebaseUid, e.getAuthErrorCode());
+        } catch (Exception e) {
+            log.warn("Firebase getUser({}) strict indisponible", firebaseUid, e);
+        }
+        cache.invalidate(firebaseUid);
+        return Optional.empty();
     }
 
     /**
@@ -145,7 +198,7 @@ public class FirebaseContactService {
                     .map(uid -> (UserIdentifier) new UidIdentifier(uid))
                     .toList();
             for (UserRecord record : firebaseAuth.getUsers(identifiers).getUsers()) {
-                Contact contact = new Contact(record.getPhoneNumber(), record.getEmail());
+                Contact contact = toContact(record);
                 cache.put(record.getUid(), contact);
                 result.put(record.getUid(), contact);
             }
@@ -295,6 +348,46 @@ public class FirebaseContactService {
         }
     }
 
+    /**
+     * Résultat strict de la recherche du propriétaire d'un numéro vérifié : contrairement à
+     * {@link #findUidByPhone}, une panne Firebase ({@code ERROR}) n'est pas confondue avec
+     * « aucun propriétaire » ({@code NOT_FOUND}).
+     */
+    public record PhoneOwnerLookup(Outcome outcome, String uid) {
+        public enum Outcome { FOUND, NOT_FOUND, ERROR }
+
+        public static PhoneOwnerLookup found(String uid) {
+            return new PhoneOwnerLookup(Outcome.FOUND, uid);
+        }
+
+        public static PhoneOwnerLookup notFound() {
+            return new PhoneOwnerLookup(Outcome.NOT_FOUND, null);
+        }
+
+        public static PhoneOwnerLookup error() {
+            return new PhoneOwnerLookup(Outcome.ERROR, null);
+        }
+    }
+
+    /** Propriétaire vérifié par SMS de ce numéro, en trois issues ; Firebase absent = ERROR. */
+    public PhoneOwnerLookup findPhoneOwner(String phoneNumber) {
+        if (unavailable()) {
+            return PhoneOwnerLookup.error();
+        }
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            return PhoneOwnerLookup.notFound();
+        }
+        try {
+            return PhoneOwnerLookup.found(firebaseAuth.getUserByPhoneNumber(phoneNumber).getUid());
+        } catch (FirebaseAuthException e) {
+            if (e.getAuthErrorCode() == AuthErrorCode.USER_NOT_FOUND) {
+                return PhoneOwnerLookup.notFound();
+            }
+            log.warn("Firebase getUserByPhoneNumber a échoué : {}", e.getAuthErrorCode());
+            return PhoneOwnerLookup.error();
+        }
+    }
+
     /** UID Firebase possédant ce numéro (lookup exact), ou vide si aucun. */
     public Optional<String> findUidByPhone(String phoneNumber) {
         if (unavailable() || phoneNumber == null || phoneNumber.isBlank()) {
@@ -352,6 +445,40 @@ public class FirebaseContactService {
     }
 
     /**
+     * Écrit (ou retire si {@code null}) le numéro déclaré sans SMS dans le claim
+     * {@code declared_phone}, jamais dans {@code phoneNumber}. {@code setCustomUserClaims}
+     * remplace tout le dictionnaire : on relit donc les claims existants et on ne touche
+     * qu'à celui-ci. Contrairement à {@link #updatePhone}, ni révocation de session ni jeton.
+     * Le numéro n'est jamais journalisé.
+     */
+    public void setDeclaredPhone(String firebaseUid, String e164OrNull) {
+        if (unavailable() || firebaseUid == null || firebaseUid.isBlank()) {
+            return;
+        }
+        try {
+            UserRecord record = firebaseAuth.getUser(firebaseUid);
+            Map<String, Object> claims = new HashMap<>();
+            if (record.getCustomClaims() != null) {
+                claims.putAll(record.getCustomClaims());
+            }
+            if (e164OrNull == null) {
+                claims.remove(DECLARED_PHONE_CLAIM);
+            } else {
+                claims.put(DECLARED_PHONE_CLAIM, e164OrNull);
+            }
+            firebaseAuth.setCustomUserClaims(firebaseUid, claims);
+            cache.put(firebaseUid, new Contact(record.getPhoneNumber(), record.getEmail(), e164OrNull));
+        } catch (FirebaseAuthException e) {
+            cache.invalidate(firebaseUid);
+            log.error("Firebase setCustomUserClaims({}) refusé : {} — {}",
+                    firebaseUid, e.getAuthErrorCode(), e.getMessage());
+            throw new YadonyBusinessException(
+                    HttpStatus.INTERNAL_SERVER_ERROR, "firebase-error", "Firebase Error",
+                    "Mise à jour du numéro déclaré Firebase impossible");
+        }
+    }
+
+    /**
      * Applique une mutation Firebase et réamorce le cache avec le {@link UserRecord}
      * renvoyé, plutôt que d'invalider : tous les appelants relisent les coordonnées
      * dans la foulée (réponse de profil), une invalidation leur coûterait un
@@ -360,7 +487,7 @@ public class FirebaseContactService {
     private void applyUpdate(String firebaseUid, UserRecord.UpdateRequest request, String errorDetail) {
         try {
             UserRecord updated = firebaseAuth.updateUser(request);
-            cache.put(updated.getUid(), new Contact(updated.getPhoneNumber(), updated.getEmail()));
+            cache.put(updated.getUid(), toContact(updated));
         } catch (FirebaseAuthException e) {
             // Le code d'erreur Firebase est la seule information qui distingue une
             // adresse déjà prise par un autre compte d'une panne de service. Sans

@@ -1,6 +1,8 @@
 package com.yadony.api.matching.reception;
 
 import com.yadony.api.auth.FirebaseContactService;
+import com.yadony.api.auth.PhoneLookupService;
+import com.yadony.api.auth.PhoneMatch;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -46,6 +48,7 @@ class ReceptionLinkerTest {
     @Mock UserRepository userRepository;
     @Mock BidRecipientLinkRepository linkRepository;
     @Mock FirebaseContactService firebaseContact;
+    @Mock PhoneLookupService phoneLookup;
     @Mock BlockVisibility blockVisibility;
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock AuditService auditService;
@@ -97,8 +100,7 @@ class ReceptionLinkerTest {
     }
 
     private void recipientFound(UUID id) {
-        when(firebaseContact.findUidByPhone("+221771234567")).thenReturn(Optional.of("uid-r"));
-        when(userRepository.findByFirebaseUid("uid-r")).thenReturn(Optional.of(user(id, "uid-r", "Fatou")));
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Found(user(id, "uid-r", "Fatou"), PhoneMatch.Trust.SMS));
     }
 
     // ── linkIfPossible ──────────────────────────────────────────────────────
@@ -135,7 +137,7 @@ class ReceptionLinkerTest {
     void linkIfPossible_inactiveStatus_doesNothing(BidStatus status) {
         bid.setStatus(status);
         assertThat(linker.linkIfPossible(bidId)).isEmpty();
-        verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(phoneLookup, never()).findByPhone(anyString());
     }
 
     @Test
@@ -155,7 +157,7 @@ class ReceptionLinkerTest {
     void linkIfPossible_localNumber_doesNothing() {
         bid.setRecipientPhone("77 123 45 67");
         assertThat(linker.linkIfPossible(bidId)).isEmpty();
-        verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(phoneLookup, never()).findByPhone(anyString());
     }
 
     @Test
@@ -167,15 +169,31 @@ class ReceptionLinkerTest {
 
     @Test
     void linkIfPossible_noAccountForNumber_doesNothing() {
-        when(firebaseContact.findUidByPhone("+221771234567")).thenReturn(Optional.empty());
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.None());
         assertThat(linker.linkIfPossible(bidId)).isEmpty();
     }
 
     @Test
-    void linkIfPossible_firebaseUidWithoutLocalUser_doesNothing() {
-        when(firebaseContact.findUidByPhone("+221771234567")).thenReturn(Optional.of("uid-r"));
-        when(userRepository.findByFirebaseUid("uid-r")).thenReturn(Optional.empty());
+    void linkIfPossible_declaredNumber_doesNotLink() {
+        when(phoneLookup.findByPhone("+221771234567"))
+                .thenReturn(new PhoneMatch.Found(user(recipientId, "uid-r", "Fatou"), PhoneMatch.Trust.DECLARED));
         assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void linkIfPossible_yadonyVerifiedNumber_links() {
+        when(phoneLookup.findByPhone("+221771234567"))
+                .thenReturn(new PhoneMatch.Found(user(recipientId, "uid-r", "Fatou"), PhoneMatch.Trust.YADONY));
+        assertThat(linker.linkIfPossible(bidId)).isPresent();
+    }
+
+    @Test
+    void linkIfPossible_ambiguous_doesNotLink() {
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Ambiguous());
+        assertThat(linker.linkIfPossible(bidId)).isEmpty();
+        verify(linkRepository, never()).save(any());
+        verify(notificationDispatcher, never()).notifyUser(any(), any(), any(), any());
     }
 
     @Test
@@ -196,8 +214,7 @@ class ReceptionLinkerTest {
     private UserEntity testerSenderFound() {
         UserEntity me = user(senderId, "uid-s", "Awa");
         me.setRecetteTester(true);
-        when(firebaseContact.findUidByPhone("+221771234567")).thenReturn(Optional.of("uid-s"));
-        when(userRepository.findByFirebaseUid("uid-s")).thenReturn(Optional.of(me));
+        when(phoneLookup.findByPhone("+221771234567")).thenReturn(new PhoneMatch.Found(me, PhoneMatch.Trust.SMS));
         return me;
     }
 
@@ -346,6 +363,41 @@ class ReceptionLinkerTest {
     // ── catchUp ─────────────────────────────────────────────────────────────
 
     @Test
+    void catchUp_yadonyTrustedDeclaredPhone_linksBids() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, "+221771234567");
+        when(firebaseContact.getContact("uid-r")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(me, contact)).thenReturn(Optional.of("+221771234567"));
+        bid.setRecipientPhone("00221 77-123-45-67");
+        when(linkRepository.findCatchUpCandidates(recipientId, BidStatus.IN_FLIGHT, "%7"))
+                .thenReturn(List.of(bid));
+
+        assertThat(linker.catchUp(me)).isEqualTo(1);
+    }
+
+    @Test
+    void catchUp_plainDeclaredPhone_linksNothing() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        FirebaseContactService.Contact contact = new FirebaseContactService.Contact(null, null, "+221771234567");
+        when(firebaseContact.getContact("uid-r")).thenReturn(contact);
+        when(phoneLookup.trustedDeclaredPhone(me, contact)).thenReturn(Optional.empty());
+
+        assertThat(linker.catchUp(me)).isZero();
+        verify(linkRepository, never()).save(any());
+    }
+
+    @Test
+    void catchUp_smsPhone_neverConsultsTheDeclaredNumber() {
+        UserEntity me = user(recipientId, "uid-r", "Fatou");
+        when(firebaseContact.getContact("uid-r"))
+                .thenReturn(new FirebaseContactService.Contact("+221771234567", null));
+
+        linker.catchUp(me);
+
+        verify(phoneLookup, never()).trustedDeclaredPhone(any(), any());
+    }
+
+    @Test
     void catchUp_linksMatchingBidsWithoutPush() {
         UserEntity me = user(recipientId, "uid-r", "Fatou");
         when(firebaseContact.getContact("uid-r"))
@@ -460,6 +512,7 @@ class ReceptionLinkerTest {
         assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.PENDING);
         assertThat(link.get().getRecipientUserId()).isEqualTo(recipientId);
         verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(phoneLookup, never()).findByPhone(anyString());
         verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Un colis pour vous ?"),
                 eq("Awa : colis Paris vers Dakar."), any());
         verify(auditService).log(eq("BID_RECIPIENT_LINK"), any(), eq("LINKED_ON_ACCEPT"), eq(null), any());
@@ -581,5 +634,6 @@ class ReceptionLinkerTest {
         assertThat(link.get().getRecipientUserId()).isEqualTo(senderId);
         assertThat(link.get().getStatus()).isEqualTo(ReceptionLinkStatus.PENDING);
         verify(firebaseContact, never()).findUidByPhone(anyString());
+        verify(phoneLookup, never()).findByPhone(anyString());
     }
 }

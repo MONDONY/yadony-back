@@ -38,6 +38,7 @@ public class ProfilePublicService {
     private final BlockVisibility blockVisibility;
     private final MessagesResolver messagesResolver;
     private final FirebaseContactService firebaseContact;
+    private final DeclaredPhoneResolver declaredPhoneResolver;
 
     public ProfilePublicService(UserRepository userRepository,
                                 RatingService ratingService,
@@ -45,7 +46,9 @@ public class ProfilePublicService {
                                 StorageService storageService,
                                 BlockVisibility blockVisibility,
                                 MessagesResolver messagesResolver,
-                                FirebaseContactService firebaseContact) {
+                                FirebaseContactService firebaseContact,
+                                DeclaredPhoneResolver declaredPhoneResolver) {
+        this.declaredPhoneResolver = declaredPhoneResolver;
         this.userRepository = userRepository;
         this.ratingService = ratingService;
         this.userBusinessPrefsRepository = userBusinessPrefsRepository;
@@ -85,6 +88,9 @@ public class ProfilePublicService {
         // numéro ni l'e-mail. Firebase indisponible → Contact vide → « non vérifié ».
         FirebaseContactService.Contact contact = firebaseContact.getContact(user.getFirebaseUid());
         boolean phoneVerified = contact.phoneNumber() != null && !contact.phoneNumber().isBlank();
+        // Badge distinct : jamais confondu avec phoneVerified (réservé au SMS).
+        boolean phoneYadonyVerified = declaredPhoneResolver.resolve(user, contact).level()
+                == DeclaredPhoneLevel.YADONY_VERIFIED;
         boolean emailVerified = contact.email() != null && !contact.email().isBlank();
         // Filtré ici, jamais côté app : sans consentement, le pays ne part pas.
         String residenceCountry = user.isShowResidenceCountry() ? user.getCountry() : null;
@@ -117,7 +123,8 @@ public class ProfilePublicService {
                 user.publicTravelerStatus(),
                 user.publicBusinessName(),
                 user.publicBusinessRegistrationNumber(),
-                user.publicBusinessCountry()
+                user.publicBusinessCountry(),
+                phoneYadonyVerified
         );
     }
 

@@ -9,6 +9,9 @@ package com.yadony.api.matching.dto;
  * journalisée dans {@code audit_log}.
  */
 public record ContactPhoneResponse(
-        /** Numéro E.164 de la contrepartie, ou null si son compte n'en porte aucun. */
-        String phoneNumber
-) {}
+        /** Numéro E.164 : celui vérifié par SMS s'il existe, sinon le numéro déclaré ; null si aucun. */
+        String phoneNumber,
+        /** {@code SMS}, {@code YADONY} (déclaré, vérifié par l'équipe) ou {@code NONE} (non vérifié). */
+        String verification
+) {
+}

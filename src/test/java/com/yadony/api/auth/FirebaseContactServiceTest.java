@@ -221,6 +221,30 @@ class FirebaseContactServiceTest {
         assertThat(service.findUidByPhone("")).isEmpty();
     }
 
+    @Test
+    @DisplayName("findPhoneOwner → FOUND / NOT_FOUND / ERROR, jamais d'erreur confondue avec « aucun »")
+    void findPhoneOwner_threeOutcomes() throws Exception {
+        UserRecord record = mock(UserRecord.class);
+        when(record.getUid()).thenReturn("uid-7");
+        when(firebaseAuth.getUserByPhoneNumber("+221701234567")).thenReturn(record);
+        FirebaseAuthException notFound = mock(FirebaseAuthException.class);
+        when(notFound.getAuthErrorCode()).thenReturn(com.google.firebase.auth.AuthErrorCode.USER_NOT_FOUND);
+        when(firebaseAuth.getUserByPhoneNumber("+221700000000")).thenThrow(notFound);
+        FirebaseAuthException boom = mock(FirebaseAuthException.class);
+        when(boom.getAuthErrorCode()).thenReturn(com.google.firebase.auth.AuthErrorCode.EMAIL_ALREADY_EXISTS);
+        when(firebaseAuth.getUserByPhoneNumber("+221711111111")).thenThrow(boom);
+
+        assertThat(service.findPhoneOwner("+221701234567"))
+                .isEqualTo(FirebaseContactService.PhoneOwnerLookup.found("uid-7"));
+        assertThat(service.findPhoneOwner("+221700000000"))
+                .isEqualTo(FirebaseContactService.PhoneOwnerLookup.notFound());
+        assertThat(service.findPhoneOwner("+221711111111"))
+                .isEqualTo(FirebaseContactService.PhoneOwnerLookup.error());
+        FirebaseContactService offline = new FirebaseContactService(null);
+        assertThat(offline.findPhoneOwner("+221701234567"))
+                .isEqualTo(FirebaseContactService.PhoneOwnerLookup.error());
+    }
+
     // ── issueSessionToken (FLUTTER-4C) ───────────────────────────────────────
 
     @Test

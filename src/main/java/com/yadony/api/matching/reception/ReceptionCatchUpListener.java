@@ -15,8 +15,10 @@ import java.util.UUID;
 /**
  * Retrouve les colis envoyés au numéro d'un utilisateur dès qu'il s'inscrit
  * ({@link UserRegisteredEvent}) ou rattache un numéro vérifié ({@link UserPhoneAttachedEvent}),
- * sans attendre qu'il ouvre ses réceptions (YADONY-FLUTTER-PROD-12). Seul le numéro Firebase,
- * vérifié par code, sert au rapprochement ({@link ReceptionLinker#catchUpAndNotify}).
+ * sans attendre qu'il ouvre ses réceptions (YADONY-FLUTTER-PROD-12). Le rapprochement
+ * ({@link ReceptionLinker#catchUpAndNotify}) se fait sur le numéro Firebase vérifié par code ou, à
+ * défaut, sur un numéro déclaré que Yadony a validé et qu'aucun autre compte ne conteste ; jamais sur
+ * un simple numéro déclaré.
  *
  * <p>Après validation et en asynchrone : l'inscription ou l'ajout du numéro est déjà acquis,
  * aucune erreur ici (Firebase injoignable, base) ne doit remonter jusqu'à eux.

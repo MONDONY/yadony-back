@@ -136,6 +136,39 @@ class UserRepositoryAdminSearchIT {
         assertThat(others.getContent()).extracting(UserEntity::getId).containsExactly(moussa.getId());
     }
 
+    @Test
+    @DisplayName("Deux UID Firebase → les deux comptes, IN (:queryFirebaseUids) exécuté (requête et comptage)")
+    void twoFirebaseUids_matchEachAccount() {
+        Page<UserEntity> page = userRepository.findAdminFiltered(
+                null, null, null, null, "%zzz%", java.util.List.of(awa.getFirebaseUid(), moussa.getFirebaseUid()),
+                null, null, null, null, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(UserEntity::getId)
+                .containsExactlyInAnyOrder(awa.getId(), moussa.getId());
+        assertThat(page.getTotalElements()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Liste d'UID vide → aucun IN () dans le SQL, aucun compte apparié par UID")
+    void emptyFirebaseUidList_matchesNothingByUid() {
+        Page<UserEntity> page = userRepository.findAdminFiltered(
+                null, null, null, null, "%zzz%", java.util.List.of(), null, null, null, null, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).isEmpty();
+        assertThat(page.getTotalElements()).isZero();
+    }
+
+    @Test
+    @DisplayName("Un UID dans la liste → seul ce compte, même avec un terme qui ne vise aucun nom")
+    void singleFirebaseUid_matchesOnlyThatAccount() {
+        Page<UserEntity> page = userRepository.findAdminFiltered(
+                null, null, null, null, "%+224621234567%", java.util.List.of(moussa.getFirebaseUid()),
+                "+224621234567", null, null, null, PageRequest.of(0, 20));
+
+        assertThat(page.getContent()).extracting(UserEntity::getId).containsExactly(moussa.getId());
+        assertThat(page.getTotalElements()).isEqualTo(1);
+    }
+
     private Page<UserEntity> search(String term) {
         UUID asId = asUuid(term);
         return userRepository.findAdminFiltered(

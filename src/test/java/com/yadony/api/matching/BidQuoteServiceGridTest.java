@@ -110,7 +110,7 @@ class BidQuoteServiceGridTest {
                 TestMessages.resolver(), rescheduleRepository, recipientLinkRepository, commissionGridService,
                 org.mockito.Mockito.mock(com.yadony.api.tracking.TravelerTrackingQuery.class),
                 org.mockito.Mockito.mock(PayoutTriggerPolicy.class),
-                org.mockito.Mockito.mock(BidRecipientDesignation.class));
+                org.mockito.Mockito.mock(BidRecipientDesignation.class), null);
         lenient().when(commissionGridService.require(GRID_7_6_5.id())).thenReturn(GRID_7_6_5);
     }
 

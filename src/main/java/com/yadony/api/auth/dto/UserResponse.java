@@ -31,6 +31,10 @@ import java.util.UUID;
  * @param businessRegistrationNumber numéro d'immatriculation d'un voyageur professionnel. Renvoyé à son
  *        seul propriétaire (il le voit pour le relire) ; jamais journalisé, jamais dans un audit.
  * @param businessCountry pays d'immatriculation (ISO 3166-1 alpha-2) d'un voyageur professionnel
+ * @param declaredPhone numéro déclaré sans SMS (claim Firebase), propriétaire seulement ; nul si le
+ *        compte porte un numéro vérifié par SMS ou aucun numéro déclaré
+ * @param declaredPhoneLevel {@code DECLARED} ou {@code YADONY_VERIFIED} (jamais retenu si l'empreinte du
+ *        numéro ne correspond plus), nul sans numéro déclaré
  */
 public record UserResponse(
     UUID id,
@@ -65,7 +69,9 @@ public record UserResponse(
     String travelerStatus,
     String businessName,
     String businessRegistrationNumber,
-    String businessCountry
+    String businessCountry,
+    String declaredPhone,
+    String declaredPhoneLevel
 ) {
     /** Forme d'avant le statut légal du voyageur (lot 2) : aucun statut déclaré. */
     public UserResponse(UUID id, String username, String phoneNumber, String email, String firstName,
@@ -80,7 +86,7 @@ public record UserResponse(
                 status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
                 languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
                 residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, recetteMode,
-                gpPro, null, null, null, null);
+                gpPro, null, null, null, null, null, null);
     }
 
     /** Forme d'avant le mode recette (FLUTTER-FA/FB) : mode fermé. */
@@ -96,6 +102,6 @@ public record UserResponse(
                 status, totalTrips, totalShipments, isProAccount, stripeAccountStatus, country, bio,
                 languages, avatarUrl, averageRating, admin, residenceStreet, residenceLine2,
                 residencePostalCode, onboardingSeenAt, preferredLanguage, messagingMutedUntil, false, false,
-                null, null, null, null);
+                null, null, null, null, null, null);
     }
 }

@@ -68,6 +68,12 @@ public class UserDataExportService {
                 user.getLastName(),
                 contact.email(),
                 contact.phoneNumber(),
+                // Numéro déclaré sans SMS : en clair seulement dans le claim Firebase (la base n'en garde
+                // que l'empreinte, donnée technique non exportée), avec le niveau et la date de validation
+                // tels qu'enregistrés. Pas l'identifiant de l'administrateur : c'est la donnée d'un tiers.
+                contact.declaredPhone(),
+                user.getDeclaredPhoneLevel() != null ? user.getDeclaredPhoneLevel().name() : null,
+                user.getDeclaredPhoneVerifiedAt(),
                 user.getBirthDate(),
                 user.getCity(),
                 user.getCountry(),

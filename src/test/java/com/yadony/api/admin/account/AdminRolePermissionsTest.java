@@ -50,4 +50,13 @@ class AdminRolePermissionsTest {
         assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.KYC_DECIDE);
         assertThat(AdminRole.SUPPORT.permissions()).contains(AdminPermission.USER_KYC);
     }
+
+    // Valider un numéro déclaré a la même portée que suspendre un compte : ADMIN et SUPER_ADMIN, jamais SUPPORT.
+    @Test
+    @DisplayName("USER_PHONE_VERIFY : ADMIN et SUPER_ADMIN, jamais SUPPORT")
+    void onlyAdminsVerifyDeclaredPhone() {
+        assertThat(AdminRole.SUPER_ADMIN.permissions()).contains(AdminPermission.USER_PHONE_VERIFY);
+        assertThat(AdminRole.ADMIN.permissions()).contains(AdminPermission.USER_PHONE_VERIFY);
+        assertThat(AdminRole.SUPPORT.permissions()).doesNotContain(AdminPermission.USER_PHONE_VERIFY);
+    }
 }

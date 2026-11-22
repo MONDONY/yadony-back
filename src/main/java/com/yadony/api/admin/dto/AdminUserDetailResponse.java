@@ -84,7 +84,14 @@ public record AdminUserDetailResponse(
          * Lot 4 : particulier qui voyage comme un professionnel, signalement ouvert (ni résolu ni écarté).
          * {@code null}, donc omis du JSON (NON_NULL), sans signalement ouvert.
          */
-        com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert individualFrequencyAlert
+        com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert individualFrequencyAlert,
+        /**
+         * Numéro déclaré sans SMS (claim Firebase), visible de l'admin ; {@code null} sans déclaration ou
+         * quand un numéro vérifié par SMS existe. Jamais un numéro de connexion ni de paiement.
+         */
+        String declaredPhone,
+        /** {@code DECLARED} ou {@code YADONY_VERIFIED} (jamais fiable sans empreinte concordante) ; {@code null} sans numéro. */
+        String declaredPhoneLevel
 ) {
     /**
      * Téléphone et email proviennent de Firebase : ils ne sont plus stockés en base.
@@ -111,6 +118,16 @@ public record AdminUserDetailResponse(
                                                 int monthlyTripsUsed,
                                                 com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert
                                                         individualFrequencyAlert) {
+        return from(u, contact, sub, payoutHold, monthlyTripsUsed, individualFrequencyAlert,
+                com.yadony.api.auth.DeclaredPhoneResolver.Resolved.NONE);
+    }
+
+    public static AdminUserDetailResponse from(UserEntity u, FirebaseContactService.Contact contact,
+                                                ProSubscriptionEntity sub, PayoutHoldSummary payoutHold,
+                                                int monthlyTripsUsed,
+                                                com.yadony.api.travelerstatus.dto.IndividualFrequencyAlert
+                                                        individualFrequencyAlert,
+                                                com.yadony.api.auth.DeclaredPhoneResolver.Resolved declared) {
         PayoutHoldSummary hold = payoutHold != null ? payoutHold : PayoutHoldSummary.NONE;
         return new AdminUserDetailResponse(
                 u.getId(),
@@ -165,7 +182,9 @@ public record AdminUserDetailResponse(
                 u.getBusinessCountry(),
                 u.getMonthlyTripLimit(),
                 monthlyTripsUsed,
-                individualFrequencyAlert
+                individualFrequencyAlert,
+                declared != null ? declared.number() : null,
+                declared != null && declared.level() != null ? declared.level().name() : null
         );
     }
 

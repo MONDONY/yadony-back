@@ -240,6 +240,44 @@ class UserDataExportServiceTest {
         org.mockito.Mockito.verifyNoMoreInteractions(tripLikeRepository);
     }
 
+    @Test
+    @DisplayName("exporte le numéro déclaré sans SMS (claim Firebase), son niveau et sa date de validation")
+    void export_includesDeclaredPhoneLevelAndValidationDate() {
+        UUID userId = UUID.randomUUID();
+        UserEntity user = makeUser(userId);
+        java.time.LocalDateTime validatedAt = java.time.LocalDateTime.of(2026, 11, 21, 15, 30);
+        user.setDeclaredPhoneHash("empreinte");
+        user.setDeclaredPhoneLevel(com.yadony.api.auth.DeclaredPhoneLevel.YADONY_VERIFIED);
+        user.setDeclaredPhoneVerifiedAt(validatedAt);
+        user.setDeclaredPhoneVerifiedBy(UUID.randomUUID());
+        when(firebaseContact.getContact("uid-aissatou")).thenReturn(
+                new com.yadony.api.auth.FirebaseContactService.Contact(null, "aissatou@example.com", "+224621234567"));
+
+        UserDataExportDto.ProfileExport profile = new UserDataExportService(
+                recipientRepository, pickupAddressRepository, deliveryAddressRepository,
+                favoriteRepository, kycRepository, firebaseContact, searchInterestRepository,
+                tripLikeRepository).export(user).profile();
+
+        assertThat(profile.phoneNumber()).isNull();
+        assertThat(profile.declaredPhoneNumber()).isEqualTo("+224621234567");
+        assertThat(profile.declaredPhoneLevel()).isEqualTo("YADONY_VERIFIED");
+        assertThat(profile.declaredPhoneVerifiedAt()).isEqualTo(validatedAt);
+        // Ni l'empreinte (donnée technique dérivée) ni l'identifiant de l'administrateur (donnée d'un tiers).
+        assertThat(profile.toString()).doesNotContain("empreinte")
+                .doesNotContain(user.getDeclaredPhoneVerifiedBy().toString());
+    }
+
+    @Test
+    @DisplayName("sans numéro déclaré, les trois champs sont nuls")
+    void export_withoutDeclaredPhone_fieldsNull() {
+        UserDataExportDto.ProfileExport profile = service().export(makeUser(UUID.randomUUID())).profile();
+
+        assertThat(profile.phoneNumber()).isEqualTo("+221771234567");
+        assertThat(profile.declaredPhoneNumber()).isNull();
+        assertThat(profile.declaredPhoneLevel()).isNull();
+        assertThat(profile.declaredPhoneVerifiedAt()).isNull();
+    }
+
     private static void setField(Object entity, String name, Object value) {
         Class<?> c = entity.getClass();
         while (c != null) {

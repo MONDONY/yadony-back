@@ -39,12 +39,20 @@ public record UserDataExportDto(
             LocalDateTime notifiedAt
     ) {}
 
+    /**
+     * {@code phoneNumber} est le numéro vérifié par SMS ; {@code declaredPhoneNumber} celui déclaré sans SMS
+     * (pays où le SMS n'arrive pas), avec {@code declaredPhoneLevel} ({@code DECLARED} ou
+     * {@code YADONY_VERIFIED}) et la date de sa validation par Yadony.
+     */
     public record ProfileExport(
             UUID id,
             String firstName,
             String lastName,
             String email,
             String phoneNumber,
+            String declaredPhoneNumber,
+            String declaredPhoneLevel,
+            LocalDateTime declaredPhoneVerifiedAt,
             LocalDate birthDate,
             String city,
             String country,

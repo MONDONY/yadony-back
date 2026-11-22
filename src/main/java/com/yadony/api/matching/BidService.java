@@ -158,6 +158,7 @@ public class BidService {
     private int contactGraceDays = 3;
 
     private final BidRecipientDesignation recipientDesignation;
+    private final com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver;
 
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
@@ -180,8 +181,10 @@ public class BidService {
                       CommissionGridService commissionGridService,
                       com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery,
                       PayoutTriggerPolicy payoutTriggerPolicy,
-                      BidRecipientDesignation recipientDesignation) {
+                      BidRecipientDesignation recipientDesignation,
+                      com.yadony.api.auth.DeclaredPhoneResolver declaredPhoneResolver) {
         this.recipientDesignation = recipientDesignation;
+        this.declaredPhoneResolver = declaredPhoneResolver;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -832,14 +835,25 @@ public class BidService {
             throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "phone-hidden-by-user", "problem.phone-hidden-by-user");
         }
 
-        String phone = firebaseContact.getContact(counterparty.getFirebaseUid()).phoneNumber();
+        FirebaseContactService.Contact contact = firebaseContact.getContact(counterparty.getFirebaseUid());
+        String phone;
+        String verification;
+        if (contact.phoneNumber() != null && !contact.phoneNumber().isBlank()) {
+            phone = contact.phoneNumber();
+            verification = "SMS";
+        } else {
+            var declared = declaredPhoneResolver.resolve(counterparty, contact);
+            phone = declared.number();
+            verification = declared.level() == com.yadony.api.auth.DeclaredPhoneLevel.YADONY_VERIFIED
+                    ? "YADONY" : "NONE";
+        }
 
         // Payload sans PII : le numéro lui-même ne doit pas atterrir dans audit_log.
         auditService.log("BID", bidId, "CONTACT_PHONE_REVEALED", requester.getId(),
                 Map.of("counterpartyId", counterpartyId.toString(),
                         "status", bid.getStatus().name()));
 
-        return new ContactPhoneResponse(phone);
+        return new ContactPhoneResponse(phone, verification);
     }
 
     @Transactional(readOnly = true)
