@@ -157,6 +157,8 @@ public class BidService {
     @org.springframework.beans.factory.annotation.Value("${yadony.calls.delivery-grace-days:3}")
     private int contactGraceDays = 3;
 
+    private final BidRecipientDesignation recipientDesignation;
+
     public BidService(BidRepository bidRepository, AnnouncementRepository announcementRepository,
                       UserRepository userRepository, AuditService auditService,
                       ApplicationEventPublisher eventPublisher, RatingRepository ratingRepository,
@@ -177,7 +179,9 @@ public class BidService {
                       com.yadony.api.matching.reception.BidRecipientLinkRepository recipientLinkRepository,
                       CommissionGridService commissionGridService,
                       com.yadony.api.tracking.TravelerTrackingQuery travelerTrackingQuery,
-                      PayoutTriggerPolicy payoutTriggerPolicy) {
+                      PayoutTriggerPolicy payoutTriggerPolicy,
+                      BidRecipientDesignation recipientDesignation) {
+        this.recipientDesignation = recipientDesignation;
         this.bidRepository = bidRepository;
         this.announcementRepository = announcementRepository;
         this.userRepository = userRepository;
@@ -401,8 +405,10 @@ public class BidService {
         bid.setPricingMode(bidMode);
         bid.setDescription(request.description());
         bid.setContentCategory(normalizedContentCategory);
-        bid.setRecipientName(request.recipientName());
-        bid.setRecipientPhone(request.recipientPhone());
+        recipientDesignation.requireRecipient(request.recipientName(), request.recipientPhone(),
+                request.recipientUsername());
+        recipientDesignation.apply(bid, sender.getId(), announcement.getTravelerId(),
+                request.recipientName(), request.recipientPhone(), request.recipientUsername());
         bid.setDisclaimerSignedAt(LocalDateTime.now(ZoneOffset.UTC));
         bid.setDisclaimerSignedIp(clientIp);
         bid.setPaymentMethod(pm);
@@ -421,6 +427,7 @@ public class BidService {
         }
 
         BidEntity saved = bidRepository.save(bid);
+        recipientDesignation.audit(saved, sender.getId());
 
         auditService.log("BID", saved.getId(), "BID_CREATED", sender.getId(),
                 Map.<String, Object>of(
