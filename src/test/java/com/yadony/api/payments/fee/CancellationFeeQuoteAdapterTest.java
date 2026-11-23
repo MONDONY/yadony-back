@@ -64,7 +64,6 @@ class CancellationFeeQuoteAdapterTest {
         Optional<CancellationFeeQuotePort.Quote> quote = adapter.quote(BID_ID, RATE);
 
         assertThat(quote).hasValueSatisfying(q -> {
-            assertThat(q.paid()).isEqualByComparingTo("100.00");
             assertThat(q.currency()).isEqualTo("EUR");
             assertThat(q.retainable()).isTrue();
             assertThat(q.grossFee()).isEqualByComparingTo("20.00");

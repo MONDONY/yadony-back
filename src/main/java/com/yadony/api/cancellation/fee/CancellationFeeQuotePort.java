@@ -5,7 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Montant payé d'un colis et brut que retiendrait son remboursement, vus du paquet {@code cancellation} pour l'aperçu
+ * Brut que retiendrait le remboursement d'un colis et montant rendu, vus du paquet {@code cancellation} pour l'aperçu
  * montré à l'expéditeur avant d'annuler ({@link CancellationFeePreviewService}).
  *
  * <p>Le paquet {@code cancellation} décide si un frais s'applique et à quel taux ({@link CancellationFeeEligibility}) ;
@@ -24,14 +24,12 @@ public interface CancellationFeeQuotePort {
     Optional<Quote> quote(UUID bidId, BigDecimal rate);
 
     /**
-     * @param paid         montant payé par l'expéditeur (frais de service compris)
      * @param currency     devise du paiement
      * @param retainable   le paiement peut porter une retenue (carte capturée ou dépôt mobile money abouti du même
      *                     montant, ni legacy ni déjà partiellement remboursé) ; faux : remboursé en entier quoi qu'il arrive
      * @param grossFee     brut retenu au taux donné, 0 si {@code retainable} est faux
-     * @param refundAmount rendu à l'expéditeur : {@code paid - grossFee}
+     * @param refundAmount rendu à l'expéditeur : le montant payé (frais de service compris) moins {@code grossFee}
      * @param capped       le plafond du barème a limité {@code grossFee} (calcul du règlement) ; faux sans retenue
      */
-    record Quote(BigDecimal paid, String currency, boolean retainable, BigDecimal grossFee, BigDecimal refundAmount,
-                 boolean capped) {}
+    record Quote(String currency, boolean retainable, BigDecimal grossFee, BigDecimal refundAmount, boolean capped) {}
 }

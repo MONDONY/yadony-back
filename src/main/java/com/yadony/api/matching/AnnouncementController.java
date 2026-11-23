@@ -32,6 +32,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -53,17 +54,20 @@ public class AnnouncementController {
     private final TripSeriesService tripSeriesService;
     private final TripPositionService tripPositionService;
     private final ApplicationEventPublisher eventPublisher;
+    private final TripCreationIdempotency tripCreationIdempotency;
 
     public AnnouncementController(AnnouncementService announcementService,
                                   TripGroupService tripGroupService,
                                   TripSeriesService tripSeriesService,
                                   TripPositionService tripPositionService,
-                                  ApplicationEventPublisher eventPublisher) {
+                                  ApplicationEventPublisher eventPublisher,
+                                  TripCreationIdempotency tripCreationIdempotency) {
         this.announcementService = announcementService;
         this.tripGroupService = tripGroupService;
         this.tripSeriesService = tripSeriesService;
         this.tripPositionService = tripPositionService;
         this.eventPublisher = eventPublisher;
+        this.tripCreationIdempotency = tripCreationIdempotency;
     }
 
     @GetMapping
@@ -154,22 +158,38 @@ public class AnnouncementController {
         }
     }
 
+    /**
+     * En-tête facultatif {@code Idempotency-Key} (8 à 64 caractères {@code [A-Za-z0-9_-]}) : la même clé
+     * renvoyée par le même compte rend le trajet déjà créé (201 + {@code Idempotent-Replayed: true}) au lieu
+     * d'en créer un second. Voir {@link TripCreationIdempotency}.
+     */
     @PostMapping
-    public ResponseEntity<AnnouncementResponse> createAnnouncement(@Valid @RequestBody AnnouncementRequest request) {
+    public ResponseEntity<AnnouncementResponse> createAnnouncement(
+            @RequestHeader(value = TripCreationIdempotency.KEY_HEADER, required = false) String idempotencyKey,
+            @Valid @RequestBody AnnouncementRequest request) {
         String firebaseUid = requireFirebaseUid();
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(announcementService.createAnnouncement(firebaseUid, request));
+        return created(tripCreationIdempotency.createAnnouncement(firebaseUid, request, idempotencyKey));
     }
 
     /**
      * Voyage à plusieurs étapes (FLUTTER-4D) : publie 2 à 5 annonces chaînées en une seule
      * transaction. Un trajet simple continue de passer par {@code POST /announcements}.
+     * Même en-tête {@code Idempotency-Key} que la création d'un trajet direct, porté par la première étape.
      */
     @PostMapping("/trips")
-    public ResponseEntity<TripResponse> createTrip(@Valid @RequestBody TripRequest request) {
+    public ResponseEntity<TripResponse> createTrip(
+            @RequestHeader(value = TripCreationIdempotency.KEY_HEADER, required = false) String idempotencyKey,
+            @Valid @RequestBody TripRequest request) {
         String firebaseUid = requireFirebaseUid();
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(tripGroupService.createTrip(firebaseUid, request));
+        return created(tripCreationIdempotency.createTrip(firebaseUid, request, idempotencyKey));
+    }
+
+    private static <T> ResponseEntity<T> created(TripCreationIdempotency.Outcome<T> outcome) {
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.CREATED);
+        if (outcome.replayed()) {
+            response.header(TripCreationIdempotency.REPLAYED_HEADER, "true");
+        }
+        return response.body(outcome.body());
     }
 
     /**

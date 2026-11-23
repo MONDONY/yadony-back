@@ -379,10 +379,6 @@ public interface PaymentRepository extends JpaRepository<PaymentEntity, UUID> {
     @Query("UPDATE PaymentEntity p SET p.refundedAmount = :refunded WHERE p.id = :id")
     int recordRefundedAmount(@Param("id") UUID id, @Param("refunded") java.math.BigDecimal refunded);
 
-    /** Colis matérialisé d'un fil de négociation : un seul par fil (index unique {@code idx_bids_linked_thread}). */
-    @Query("SELECT b.id FROM com.yadony.api.matching.BidEntity b WHERE b.linkedNegotiationThreadId = :threadId")
-    Optional<UUID> findBidIdLinkedToThread(@Param("threadId") UUID threadId);
-
     /**
      * Verrou pessimiste sur le paiement d'un bid : sérialise deux initiations de deposit
      * mobile money concurrentes (deux appuis, deux appareils).

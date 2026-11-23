@@ -75,7 +75,8 @@ public class EscrowCaptureService {
         this.transaction = transaction;
     }
 
-    static TransactionTemplate requiresNew(PlatformTransactionManager transactionManager) {
+    /** Transaction neuve ({@code REQUIRES_NEW}) des lectures et écritures courtes autour d'un appel au prestataire. */
+    public static TransactionTemplate requiresNew(PlatformTransactionManager transactionManager) {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         return template;

@@ -66,11 +66,7 @@ public final class TripRescheduleRules {
 
     /** L'expéditeur peut-il encore répondre au report en attente sur ce colis ? */
     public static boolean decisionOpen(BidEntity bid, AnnouncementEntity announcement) {
-        return decisionOpen(bid, announcement, Instant.now());
-    }
-
-    static boolean decisionOpen(BidEntity bid, AnnouncementEntity announcement, Instant now) {
-        return decisionOpen(bid, bid.getStatus(), announcement, now);
+        return decisionOpen(bid, bid.getStatus(), announcement, Instant.now());
     }
 
     /**

@@ -11,6 +11,7 @@ import com.yadony.api.common.AuditService;
 import com.yadony.api.common.CommissionRateResolver;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.AdminAlertService;
+import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.currency.ExchangeRateLookup;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.fee.CancellationFeeBreakdown;
@@ -83,8 +84,8 @@ class RefundProcessorCancellationFeeTest {
 
     @BeforeEach
     void setUp() {
-        CancellationFeeSettlement settlement = new CancellationFeeSettlement(feePort, paymentRepository, stripeFees,
-                mock(com.yadony.api.payments.wallet.fees.PawapayFeeTable.class), commissionRates, new ExchangeRateService(rateLookup), events);
+        CancellationFeeSettlement settlement = new CancellationFeeSettlement(feePort, mock(BidRepository.class),
+                stripeFees, mock(com.yadony.api.payments.wallet.fees.PawapayFeeTable.class), commissionRates, new ExchangeRateService(rateLookup), events);
         processor = new RefundProcessor(paymentRepository, auditService, adminAlert,
                 mock(PawapayOperationService.class), mock(PawapaySubmissionService.class),
                 alerts, mock(PlatformTransactionManager.class), settlement);

@@ -446,6 +446,8 @@ Les `IllegalStateException`, `IllegalArgumentException`, `LlmCallException`, `Pa
 | migré | écran | matching | `matching/TravelerStatsController.java:166` | YadonyBusinessException | Cette annonce ne vous appartient pas. |
 | migré | écran | matching | `matching/TravelerStatsController.java:172` | YadonyBusinessException | Demande introuvable. |
 | migré | écran | matching | `matching/TravelerStatsController.java:176` | YadonyBusinessException | Cette demande n'est plus disponible. |
+| migré | écran | matching | `matching/TripCreationIdempotency.java:80` | YadonyBusinessException | En-tête Idempotency-Key invalide / 8 à 64 caractères |
+| migré | écran | matching | `matching/TripCreationIdempotency.java:88` | YadonyBusinessException | Clé déjà utilisée / trajet d'un autre type |
 | migré | écran | matching | `matching/TripGroupService.java:156` | YadonyBusinessException | Annonce introuvable |
 | migré | écran | matching | `matching/TripLegRules.java:36` | YadonyBusinessException | Nombre d'étapes invalide / Un voyage compte de  /  étapes |
 | migré | écran | matching | `matching/TripRecurrenceController.java:61` | YadonyBusinessException | Utilisateur introuvable |

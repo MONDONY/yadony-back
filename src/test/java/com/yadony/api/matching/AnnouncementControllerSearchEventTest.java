@@ -43,7 +43,7 @@ class AnnouncementControllerSearchEventTest {
     private AnnouncementController controller(Page<AnnouncementSearchResponse> page) {
         AnnouncementService service = mock(AnnouncementService.class, invocation -> page);
         return new AnnouncementController(service, mock(TripGroupService.class), mock(TripSeriesService.class),
-                mock(TripPositionService.class), publisher);
+                mock(TripPositionService.class), publisher, mock(TripCreationIdempotency.class));
     }
 
     private void search(AnnouncementController c, String dep, String arr, Pageable pageable) {

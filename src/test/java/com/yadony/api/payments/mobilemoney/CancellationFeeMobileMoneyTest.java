@@ -7,11 +7,13 @@ import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.common.stripe.AdminAlertService;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.disputes.DisputeRepository;
+import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.RefundProcessor;
+import com.yadony.api.payments.StripeTransferLookup;
 import com.yadony.api.payments.currency.ExchangeRateLookup;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.fee.CancellationFeeBreakdown;
@@ -63,6 +65,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -135,8 +138,8 @@ class CancellationFeeMobileMoneyTest {
 
         @BeforeEach
         void setUp() {
-            CancellationFeeSettlement settlement = new CancellationFeeSettlement(feePort, paymentRepository, stripeFees,
-                    feeTable(), commissionRates, new ExchangeRateService(rateLookup), events);
+            CancellationFeeSettlement settlement = new CancellationFeeSettlement(feePort, mock(BidRepository.class),
+                    stripeFees, feeTable(), commissionRates, new ExchangeRateService(rateLookup), events);
             processor = new RefundProcessor(paymentRepository, auditService, adminAlert, operations, submission, alerts,
                     transactionManager, settlement);
             paymentId = UUID.randomUUID();
@@ -479,7 +482,7 @@ class CancellationFeeMobileMoneyTest {
                     new MobileMoneyPayoutAccounts(accountRepository, TestMessages.resolver()), operations, submission,
                     adminAlert, alerts, audit, transactionManager, holdPolicy, payments);
             service = new CancellationFeePayoutService(port, payments, users, holdPolicy, disputes, alerts, initiator,
-                    operations, transactionManager);
+                    operations, new StripeTransferLookup(), transactionManager);
             feeId = UUID.randomUUID();
             bidId = UUID.randomUUID();
             travelerId = UUID.randomUUID();

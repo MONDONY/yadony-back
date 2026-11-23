@@ -78,6 +78,7 @@ class ServerMessagesGuardTest {
             "matching/PriceGridController.java",
             "matching/PriceGridService.java",
             "matching/TravelerStatsController.java",
+            "matching/TripCreationIdempotency.java",
             "matching/TripGroupService.java",
             "matching/TripLegRules.java",
             "matching/TripRecurrenceController.java",

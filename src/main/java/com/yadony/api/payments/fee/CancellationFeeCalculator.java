@@ -23,18 +23,13 @@ public final class CancellationFeeCalculator {
             BigDecimal refundFees,
             BigDecimal commissionRate,
             int scale) {
-        require(paidAmount != null && paidAmount.signum() > 0, "paidAmount doit être strictement positif");
-        require(rate != null && rate.signum() >= 0 && rate.compareTo(BigDecimal.ONE) <= 0,
-                "rate doit être compris entre 0 et 1");
-        require(capInPaymentCurrency != null && capInPaymentCurrency.signum() >= 0,
-                "capInPaymentCurrency ne peut pas être négatif");
+        // grossFee valide payé, taux, plafond et échelle ; ne restent ici que les entrées propres à la ventilation.
+        BigDecimal gross = grossFee(paidAmount, rate, capInPaymentCurrency, scale);
         require(refundFees != null && refundFees.signum() >= 0, "refundFees ne peut pas être négatif");
         require(commissionRate != null && commissionRate.signum() >= 0
                         && commissionRate.compareTo(BigDecimal.ONE) <= 0,
                 "commissionRate doit être compris entre 0 et 1");
-        require(scale >= 0, "scale ne peut pas être négatif");
 
-        BigDecimal gross = grossFee(paidAmount, rate, capInPaymentCurrency, scale);
         BigDecimal fees = refundFees.setScale(scale, RoundingMode.HALF_UP);
         BigDecimal afterFees = gross.subtract(fees).max(BigDecimal.ZERO.setScale(scale));
         BigDecimal commission = afterFees.multiply(commissionRate).setScale(scale, RoundingMode.HALF_UP);

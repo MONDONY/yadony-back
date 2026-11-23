@@ -1,9 +1,11 @@
 package com.yadony.api.payments.fee;
 
 import com.yadony.api.common.CommissionRateResolver;
+import com.yadony.api.common.commission.CommissionResult;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRepository;
 import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
-import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.currency.ExchangeRateService;
 import com.yadony.api.payments.currency.SupportedCurrency;
@@ -54,23 +56,20 @@ public class CancellationFeeSettlement {
     private static final String SUCCEEDED = "succeeded";
     private static final String CANCELED = "canceled";
 
-    /** Taux effectif de commission tiré du paiement : 6 décimales, comme {@code bids.commission_rate}. */
-    private static final int RATE_SCALE = 6;
-
     private final CancellationFeeRatePort port;
-    private final PaymentRepository payments;
+    private final BidRepository bids;
     private final StripeFeeSource stripeFees;
     private final PawapayFeeTable pawapayFees;
     private final CommissionRateResolver commissionRates;
     private final ExchangeRateService exchangeRates;
     private final ApplicationEventPublisher events;
 
-    public CancellationFeeSettlement(CancellationFeeRatePort port, PaymentRepository payments,
+    public CancellationFeeSettlement(CancellationFeeRatePort port, BidRepository bids,
                                      StripeFeeSource stripeFees, PawapayFeeTable pawapayFees,
                                      CommissionRateResolver commissionRates, ExchangeRateService exchangeRates,
                                      ApplicationEventPublisher events) {
         this.port = port;
-        this.payments = payments;
+        this.bids = bids;
         this.stripeFees = stripeFees;
         this.pawapayFees = pawapayFees;
         this.commissionRates = commissionRates;
@@ -184,13 +183,11 @@ public class CancellationFeeSettlement {
         BigDecimal paid = payment.getAmount();
         int scale = scaleOf(payment.getCurrency());
         if (previewIneligibility(payment, mobileMoneyDepositAmount) != null) {
-            return new Preview(false, BigDecimal.ZERO.setScale(scale),
-                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale), false);
+            return previewWithoutFee(false, paid, scale);
         }
         try {
             if (rate.signum() == 0) {
-                BigDecimal none = BigDecimal.ZERO.setScale(scale);
-                return new Preview(true, none, CancellationFeeCalculator.senderRefund(paid, none, scale), false);
+                return previewWithoutFee(true, paid, scale);
             }
             BigDecimal cap = capIn(payment.getCurrency());
             BigDecimal gross = CancellationFeeCalculator.grossFee(paid, rate, cap, scale);
@@ -199,9 +196,14 @@ public class CancellationFeeSettlement {
         } catch (RuntimeException e) {
             log.warn("Aperçu de la retenue incalculable pour le paiement {} : aucun frais montré ({})",
                     payment.getId(), e.getMessage());
-            return new Preview(false, BigDecimal.ZERO.setScale(scale),
-                    CancellationFeeCalculator.senderRefund(paid, BigDecimal.ZERO.setScale(scale), scale), false);
+            return previewWithoutFee(false, paid, scale);
         }
+    }
+
+    /** Aperçu sans frais : brut nul à l'échelle de la devise, le payé rendu en entier, plafond sans objet. */
+    private static Preview previewWithoutFee(boolean retainable, BigDecimal paid, int scale) {
+        BigDecimal none = BigDecimal.ZERO.setScale(scale);
+        return new Preview(retainable, none, CancellationFeeCalculator.senderRefund(paid, none, scale), false);
     }
 
     /**
@@ -338,12 +340,17 @@ public class CancellationFeeSettlement {
         return SupportedCurrency.fromCodeOrDefault(currency).minorUnit();
     }
 
-    /** Colis du paiement : le sien, ou celui matérialisé depuis le fil de négociation payé. */
+    /**
+     * Colis du paiement : le sien, ou celui matérialisé depuis le fil de négociation payé (un seul par fil, index
+     * unique {@code idx_bids_linked_thread}).
+     */
     private Optional<UUID> bidIdOf(PaymentEntity payment) {
         if (payment.getBidId() != null) {
             return Optional.of(payment.getBidId());
         }
-        return Optional.ofNullable(payment.getNegotiationThreadId()).flatMap(payments::findBidIdLinkedToThread);
+        return Optional.ofNullable(payment.getNegotiationThreadId())
+                .flatMap(bids::findByLinkedNegotiationThreadId)
+                .map(BidEntity::getId);
     }
 
     /** Frais Stripe réels de la charge, perdus au remboursement ; repli configuré s'ils sont illisibles. */
@@ -364,6 +371,7 @@ public class CancellationFeeSettlement {
         if (net == null || net.signum() <= 0) {
             return commissionRates.resolve(travelerId, senderId);
         }
-        return commission.divide(net, RATE_SCALE, RoundingMode.HALF_UP).min(BigDecimal.ONE);
+        // 6 décimales, comme bids.commission_rate.
+        return commission.divide(net, CommissionResult.STORED_RATE_SCALE, RoundingMode.HALF_UP).min(BigDecimal.ONE);
     }
 }

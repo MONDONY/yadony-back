@@ -172,6 +172,12 @@ public interface AnnouncementRepository extends JpaRepository<AnnouncementEntity
     /** Étapes d'un voyage (FLUTTER-4D), dans l'ordre du voyage ; hors soft-delete. */
     List<AnnouncementEntity> findByTripGroupIdOrderByTripLegIndexAsc(UUID tripGroupId);
 
+    /**
+     * Trajet déjà créé par ce voyageur sous cette clé {@code Idempotency-Key} (V400), hors soft-delete :
+     * servi par l'index unique partiel {@code uq_announcements_traveler_idempotency_key}.
+     */
+    Optional<AnnouncementEntity> findByTravelerIdAndIdempotencyKey(UUID travelerId, String idempotencyKey);
+
     /** Étapes encore présentes d'un voyage (FLUTTER-4D). */
     long countByTripGroupId(UUID tripGroupId);
 

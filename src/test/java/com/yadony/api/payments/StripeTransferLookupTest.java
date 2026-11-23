@@ -92,4 +92,32 @@ class StripeTransferLookupTest {
         assertThat(lookup.findExistingTransfer(null, "acct_t", null)).isEmpty();
         verify(lookup, times(2)).list(any());
     }
+
+    @Test
+    void parGroupe_premierTransferNonAnnuleDeLaPremierePage() throws Exception {
+        StripeTransferLookup lookup = spy(new StripeTransferLookup());
+        TransferCollection page = new TransferCollection();
+        page.setData(List.of(transfer("tr_reversed", null, true), transfer("tr_live", null, null),
+                transfer("tr_other", null, false)));
+        ArgumentCaptor<TransferListParams> captor = ArgumentCaptor.forClass(TransferListParams.class);
+        doReturn(page).when(lookup).list(captor.capture());
+
+        assertThat(lookup.findByGroup("cancel_fee_x")).contains("tr_live");
+        assertThat(captor.getValue().getTransferGroup()).isEqualTo("cancel_fee_x");
+        assertThat(captor.getValue().getLimit()).isEqualTo(10L);
+        // Une seule page lue : aucune pagination automatique.
+        verify(lookup, times(1)).list(any());
+    }
+
+    @Test
+    void parGroupe_pageVideAbsenteOuToutAnnule_vide() throws Exception {
+        StripeTransferLookup lookup = spy(new StripeTransferLookup());
+        TransferCollection reversedOnly = new TransferCollection();
+        reversedOnly.setData(List.of(transfer("tr_reversed", null, true)));
+        doReturn(null, new TransferCollection(), reversedOnly).when(lookup).list(any());
+
+        assertThat(lookup.findByGroup("cancel_fee_x")).isEmpty();
+        assertThat(lookup.findByGroup("cancel_fee_x")).isEmpty();
+        assertThat(lookup.findByGroup("cancel_fee_x")).isEmpty();
+    }
 }

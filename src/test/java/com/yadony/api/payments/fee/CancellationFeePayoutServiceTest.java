@@ -17,6 +17,7 @@ import com.yadony.api.payments.PaymentEntity;
 import com.yadony.api.payments.PaymentRail;
 import com.yadony.api.payments.PaymentRepository;
 import com.yadony.api.payments.PaymentStatus;
+import com.yadony.api.payments.StripeTransferLookup;
 import com.yadony.api.payments.hold.PayoutHoldPolicy;
 import com.yadony.api.payments.hold.PayoutHoldReason;
 import com.yadony.api.payments.hold.PayoutHoldStatus;
@@ -94,7 +95,8 @@ class CancellationFeePayoutServiceTest {
     @BeforeEach
     void setUp() {
         service = new CancellationFeePayoutService(port, payments, users, holdPolicy, disputes, alerts,
-                mobileMoneyPayouts, pawapayOperations, TransactionOperations.withoutTransaction());
+                mobileMoneyPayouts, pawapayOperations, new StripeTransferLookup(),
+                TransactionOperations.withoutTransaction());
         transfers = mockStatic(Transfer.class);
 
         payment = new PaymentEntity();

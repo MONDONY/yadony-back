@@ -2,6 +2,7 @@ package com.yadony.api.payments;
 
 import com.stripe.exception.StripeException;
 import com.stripe.model.Transfer;
+import com.stripe.model.TransferCollection;
 import com.stripe.param.TransferListParams;
 import org.springframework.stereotype.Component;
 
@@ -70,13 +71,30 @@ public class StripeTransferLookup {
         return Optional.empty();
     }
 
+    /**
+     * Premier Transfer non annulé ({@code reversed}) du groupe Stripe {@code group}, lu sur la seule première page
+     * (10 au plus), ou vide. Sert aux versements dont chaque Transfer porte son groupe dès la création (dédommagement
+     * d'annulation, {@code cancel_fee_<feeId>}) : pas de repli par compte de destination. Un échec de lecture remonte
+     * en {@link StripeException}, l'appelant n'émet alors rien.
+     */
+    public Optional<String> findByGroup(String group) throws StripeException {
+        TransferCollection page = list(TransferListParams.builder().setTransferGroup(group).setLimit(10L).build());
+        if (page == null || page.getData() == null) {
+            return Optional.empty();
+        }
+        return page.getData().stream()
+                .filter(t -> !Boolean.TRUE.equals(t.getReversed()))
+                .map(Transfer::getId)
+                .findFirst();
+    }
+
     /** Groupe Stripe des Transfers du versement d'un paiement. */
     public static String transferGroup(UUID paymentId) {
         return "payment_" + paymentId;
     }
 
     /** Point d'appel du SDK, isolé pour les tests. */
-    com.stripe.model.TransferCollection list(TransferListParams params) throws StripeException {
+    TransferCollection list(TransferListParams params) throws StripeException {
         return Transfer.list(params);
     }
 }
