@@ -153,17 +153,35 @@ class TripCreationIdempotencyIntegrationTest {
     /**
      * Même corps, champ par champ. Les nombres sont comparés par valeur : la création rend les décimaux de la
      * requête ({@code 10}), le rejeu ceux relus en base ({@code 10.0}), comme {@code GET /announcements/{id}}.
+     * Les instants le sont à la milliseconde : l'horloge de Linux rend des nanosecondes à la création
+     * ({@code …084965Z}), la base les arrondit à la microseconde au rejeu ({@code …085Z}).
      */
     private static void assertSameBody(JsonNode replay, JsonNode original) {
         java.util.Comparator<JsonNode> byValue = (a, b) -> {
             if (a.isNumber() && b.isNumber()) {
                 return a.decimalValue().compareTo(b.decimalValue());
             }
+            if (a.isTextual() && b.isTextual()) {
+                java.time.Instant left = instantOrNull(a.textValue());
+                java.time.Instant right = instantOrNull(b.textValue());
+                if (left != null && right != null) {
+                    return left.truncatedTo(java.time.temporal.ChronoUnit.MILLIS)
+                            .compareTo(right.truncatedTo(java.time.temporal.ChronoUnit.MILLIS));
+                }
+            }
             return a.equals(b) ? 0 : 1;
         };
         assertThat(replay.equals(byValue, original))
                 .as("corps du rejeu identique à celui de la création%nrejeu : %s%norigine : %s", replay, original)
                 .isTrue();
+    }
+
+    private static java.time.Instant instantOrNull(String text) {
+        try {
+            return java.time.Instant.parse(text);
+        } catch (java.time.format.DateTimeParseException notAnInstant) {
+            return null;
+        }
     }
 
     private String storedKey(String announcementId) {
