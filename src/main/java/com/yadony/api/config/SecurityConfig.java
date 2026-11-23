@@ -60,14 +60,15 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        // Idempotency-Key : création de trajet idempotente (TripCreationIdempotency) depuis un navigateur.
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Internal-Secret", "X-Device-Id",
-                "X-Bootstrap-Secret", RequestCorrelationFilter.HEADER));
+                "X-Bootstrap-Secret", RequestCorrelationFilter.HEADER, "Idempotency-Key"));
         // Sans exposition explicite, un navigateur (portails admin/pro) ne peut pas lire
         // l'identifiant de corrélation renvoyé par RequestCorrelationFilter, ni, pour l'export
         // DAC7 de l'admin, le nom du fichier imposé par la DGFiP (Content-Disposition), le
-        // nombre de voyageurs exclus et l'état du chiffrement.
+        // nombre de voyageurs exclus et l'état du chiffrement, ni le rejeu d'une création de trajet.
         config.setExposedHeaders(List.of(RequestCorrelationFilter.HEADER, "Content-Disposition",
-                "X-Dac7-Excluded", "X-Dac7-Encrypted", "X-Dac7-Warnings", "X-Dac7-Run-Id"));
+                "X-Dac7-Excluded", "X-Dac7-Encrypted", "X-Dac7-Warnings", "X-Dac7-Run-Id", "Idempotent-Replayed"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

@@ -78,6 +78,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -1095,6 +1096,35 @@ public class AnnouncementService {
         return createAnnouncement(firebaseUid, request, null);
     }
 
+    /**
+     * Création ordinaire qui garde la clé {@code Idempotency-Key} avec le trajet. Le rejeu (même clé
+     * déjà vue) est traité AVANT, par {@link TripCreationIdempotency} ; ici, l'index unique de la clé
+     * départage deux requêtes simultanées.
+     */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementResponse createIdempotentAnnouncement(String firebaseUid, AnnouncementRequest request,
+                                                             String idempotencyKey) {
+        return createAnnouncement(firebaseUid, request, null, null, null, null, idempotencyKey);
+    }
+
+    /**
+     * Trajet direct déjà créé par ce voyageur sous cette clé, relu comme à sa création. Lecture seule :
+     * aucun contrôle (limites, date, capacité), aucun effet de bord. 409 si la clé a servi à un voyage
+     * à étapes ({@code POST /announcements/trips}).
+     */
+    @Transactional(readOnly = true)
+    public Optional<AnnouncementResponse> findIdempotentAnnouncement(String firebaseUid, String idempotencyKey) {
+        return userRepository.findByFirebaseUid(firebaseUid)
+                .flatMap(user -> announcementRepository.findByTravelerIdAndIdempotencyKey(user.getId(), idempotencyKey))
+                .map(existing -> {
+                    if (existing.getTripGroupId() != null) {
+                        throw TripCreationIdempotency.keyReused();
+                    }
+                    return toResponse(existing);
+                });
+    }
+
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementResponse createRecurringAnnouncement(
@@ -1118,7 +1148,20 @@ public class AnnouncementService {
             UUID tripGroupId,
             int legIndex
     ) {
-        return createAnnouncement(firebaseUid, request, null, tripGroupId, legIndex, null);
+        return createTripLeg(firebaseUid, request, tripGroupId, legIndex, null);
+    }
+
+    /** Comme {@link #createTripLeg(String, AnnouncementRequest, UUID, int)}, l'étape portant la clé du voyage. */
+    @Transactional
+    @CacheEvict(value = "announcements-search", allEntries = true)
+    public AnnouncementResponse createTripLeg(
+            String firebaseUid,
+            AnnouncementRequest request,
+            UUID tripGroupId,
+            int legIndex,
+            String idempotencyKey
+    ) {
+        return createAnnouncement(firebaseUid, request, null, tripGroupId, legIndex, null, idempotencyKey);
     }
 
     /**
@@ -1186,7 +1229,7 @@ public class AnnouncementService {
     @Transactional
     @CacheEvict(value = "announcements-search", allEntries = true)
     public AnnouncementResponse createSeriesCopy(String firebaseUid, AnnouncementRequest request, UUID seriesId) {
-        return createAnnouncement(firebaseUid, request, null, null, null, seriesId);
+        return createAnnouncement(firebaseUid, request, null, null, null, seriesId, null);
     }
 
     private AnnouncementResponse createAnnouncement(
@@ -1194,16 +1237,21 @@ public class AnnouncementService {
             AnnouncementRequest request,
             UUID recurrenceId
     ) {
-        return createAnnouncement(firebaseUid, request, recurrenceId, null, null, null);
+        return createAnnouncement(firebaseUid, request, recurrenceId, null, null, null, null);
     }
 
+    /**
+     * @param idempotencyKey clé {@code Idempotency-Key} validée, gardée avec le trajet ; {@code null} sans
+     *        clé (comportement historique inchangé)
+     */
     private AnnouncementResponse createAnnouncement(
             String firebaseUid,
             AnnouncementRequest request,
             UUID recurrenceId,
             UUID tripGroupId,
             Integer tripLegIndex,
-            UUID seriesId
+            UUID seriesId,
+            String idempotencyKey
     ) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "user-not-found", "problem.user-not-found"));
@@ -1360,8 +1408,13 @@ public class AnnouncementService {
         announcement.setTripGroupId(tripGroupId);
         announcement.setTripLegIndex(tripGroupId != null ? tripLegIndex : null);
         announcement.setSeriesId(seriesId);
+        announcement.setIdempotencyKey(idempotencyKey);
 
-        AnnouncementEntity saved = announcementRepository.save(announcement);
+        // Avec une clé, l'insertion part tout de suite : une requête concurrente de même clé bute sur
+        // l'index unique ici, avant la grille, l'audit et les événements, et non au commit.
+        AnnouncementEntity saved = idempotencyKey == null
+                ? announcementRepository.save(announcement)
+                : announcementRepository.saveAndFlush(announcement);
 
         if (pricingMode == PricingMode.MIXED) {
             priceGridService.snapshotToAnnouncement(user.getId(), saved.getId(), saved.getCurrency());

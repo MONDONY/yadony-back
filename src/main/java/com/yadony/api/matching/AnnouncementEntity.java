@@ -72,6 +72,14 @@ public class AnnouncementEntity extends BaseEntity {
     @Column(name = "series_id")
     private UUID seriesId;
 
+    /**
+     * En-tête {@code Idempotency-Key} de la création (V400), unique par voyageur parmi les trajets non
+     * supprimés ; première étape seulement pour un voyage à étapes. Jamais rendue dans une réponse ni
+     * journalisée. {@code null} : créé sans clé (ancienne app) ou par une autre route.
+     */
+    @Column(name = "idempotency_key", length = 64, updatable = false)
+    private String idempotencyKey;
+
     @Column(name = "departure_city", nullable = false, length = 100)
     private String departureCity;
 
@@ -479,6 +487,8 @@ public class AnnouncementEntity extends BaseEntity {
 
     public UUID getSeriesId() { return seriesId; }
     public void setSeriesId(UUID seriesId) { this.seriesId = seriesId; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public UUID getTripGroupId() { return tripGroupId; }
     public void setTripGroupId(UUID tripGroupId) { this.tripGroupId = tripGroupId; }
 

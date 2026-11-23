@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -69,6 +70,39 @@ public class TripGroupService {
      */
     @Transactional
     public TripResponse createTrip(String firebaseUid, TripRequest request) {
+        return createTrip(firebaseUid, request, null);
+    }
+
+    /**
+     * Comme {@link #createTrip(String, TripRequest)}, la clé {@code Idempotency-Key} portée par la première
+     * étape seulement. Le rejeu (même clé déjà vue) est traité AVANT, par {@link TripCreationIdempotency}.
+     */
+    @Transactional
+    public TripResponse createIdempotentTrip(String firebaseUid, TripRequest request, String idempotencyKey) {
+        return createTrip(firebaseUid, request, idempotencyKey);
+    }
+
+    /**
+     * Voyage déjà créé par ce voyageur sous cette clé : ses étapes non supprimées, dans l'ordre du voyage,
+     * relues comme à la création. Lecture seule, sans contrôle ni effet de bord. 409 si la clé a servi à
+     * un trajet direct ({@code POST /announcements}).
+     */
+    @Transactional(readOnly = true)
+    public Optional<TripResponse> findIdempotentTrip(String firebaseUid, String idempotencyKey) {
+        return userRepository.findByFirebaseUid(firebaseUid)
+                .flatMap(user -> announcementRepository.findByTravelerIdAndIdempotencyKey(user.getId(), idempotencyKey))
+                .map(first -> {
+                    if (first.getTripGroupId() == null) {
+                        throw TripCreationIdempotency.keyReused();
+                    }
+                    List<UUID> legIds = announcementRepository
+                            .findByTripGroupIdOrderByTripLegIndexAsc(first.getTripGroupId())
+                            .stream().map(AnnouncementEntity::getId).toList();
+                    return new TripResponse(first.getTripGroupId(), announcementService.toResponses(legIds));
+                });
+    }
+
+    private TripResponse createTrip(String firebaseUid, TripRequest request, String idempotencyKey) {
         List<AnnouncementRequest> legs = request.legs();
         TripLegRules.validate(legs);
         assertMonthlyLimitForAllLegs(firebaseUid, legs);
@@ -80,7 +114,10 @@ public class TripGroupService {
             int legIndex = i + 1;
             AnnouncementResponse created;
             try {
-                created = announcementService.createTripLeg(firebaseUid, legs.get(i), tripGroupId, legIndex);
+                created = idempotencyKey == null
+                        ? announcementService.createTripLeg(firebaseUid, legs.get(i), tripGroupId, legIndex)
+                        : announcementService.createTripLeg(firebaseUid, legs.get(i), tripGroupId, legIndex,
+                                legIndex == 1 ? idempotencyKey : null);
             } catch (YadonyBusinessException e) {
                 throw TripLegRules.withLegIndex(e, legIndex);
             }

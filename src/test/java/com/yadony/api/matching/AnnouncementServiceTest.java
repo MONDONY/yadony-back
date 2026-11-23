@@ -4172,6 +4172,129 @@ class AnnouncementServiceTest {
         }
     }
 
+    // ─── Clé Idempotency-Key (création de trajet idempotente) ─────────────────
+
+    @Nested
+    @DisplayName("Idempotency-Key : clé gardée à la création, trajet relu au rejeu")
+    class IdempotencyKeyTests {
+
+        private static final String KEY = "6c1f0a52-1d7e-4b8e-a2f4-0b9c3e5d7f21";
+
+        private void stubCreation(UserEntity traveler) {
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            lenient().when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            lenient().when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+        }
+
+        @Test
+        @DisplayName("avec clé : la clé est gardée sur le trajet, insertion immédiate (saveAndFlush), audit et événements une fois")
+        void createIdempotent_keepsTheKey_andFlushesBeforeAuditAndEvents() {
+            stubCreation(buildTraveler());
+            when(announcementRepository.saveAndFlush(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+
+            AnnouncementResponse result = announcementService.createIdempotentAnnouncement(FIREBASE_UID, buildRequest(), KEY);
+
+            assertThat(result.id()).isEqualTo(ANNOUNCEMENT_ID);
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            InOrder order = inOrder(announcementRepository, auditService, eventPublisher);
+            order.verify(announcementRepository).saveAndFlush(saved.capture());
+            order.verify(auditService).log(eq("USER"), any(), eq("ANNOUNCEMENT_CREATED"), any(), any());
+            order.verify(eventPublisher).publishEvent(any(com.yadony.api.matching.events.AnnouncementCreatedEvent.class));
+            verify(announcementRepository, never()).save(any());
+            assertThat(saved.getValue().getIdempotencyKey()).isEqualTo(KEY);
+            assertThat(saved.getValue().getTripGroupId()).isNull();
+        }
+
+        @Test
+        @DisplayName("sans clé : aucune clé sur le trajet, enregistrement historique (save, pas de flush)")
+        void createWithoutKey_isUnchanged() {
+            stubCreation(buildTraveler());
+            when(announcementRepository.save(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+
+            announcementService.createAnnouncement(FIREBASE_UID, buildRequest());
+
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).save(saved.capture());
+            verify(announcementRepository, never()).saveAndFlush(any());
+            assertThat(saved.getValue().getIdempotencyKey()).isNull();
+        }
+
+        @Test
+        @DisplayName("étape d'un voyage avec clé : la clé est portée par l'étape avec son voyage et son rang")
+        void tripLegWithKey_carriesTheKey() {
+            stubCreation(buildTraveler());
+            when(announcementRepository.saveAndFlush(any())).thenAnswer(inv -> {
+                AnnouncementEntity a = inv.getArgument(0);
+                setId(a, ANNOUNCEMENT_ID);
+                return a;
+            });
+            UUID group = UUID.randomUUID();
+
+            announcementService.createTripLeg(FIREBASE_UID, buildRequest(), group, 1, KEY);
+
+            ArgumentCaptor<AnnouncementEntity> saved = ArgumentCaptor.forClass(AnnouncementEntity.class);
+            verify(announcementRepository).saveAndFlush(saved.capture());
+            assertThat(saved.getValue().getIdempotencyKey()).isEqualTo(KEY);
+            assertThat(saved.getValue().getTripGroupId()).isEqualTo(group);
+            assertThat(saved.getValue().getTripLegIndex()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("rejeu : trajet direct relu sous la clé du voyageur, sans écriture, audit ni événement")
+        void findIdempotent_rereadsWithoutSideEffects() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity existing = buildAnnouncement(traveler);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByTravelerIdAndIdempotencyKey(USER_ID, KEY)).thenReturn(Optional.of(existing));
+            when(bidRepository.countVisibleByAnnouncementId(any())).thenReturn(0L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(any(), any())).thenReturn(0L);
+
+            Optional<AnnouncementResponse> replay = announcementService.findIdempotentAnnouncement(FIREBASE_UID, KEY);
+
+            assertThat(replay).get().extracting(AnnouncementResponse::id).isEqualTo(ANNOUNCEMENT_ID);
+            verify(announcementRepository, never()).save(any());
+            verify(announcementRepository, never()).saveAndFlush(any());
+            verifyNoInteractions(auditService, eventPublisher);
+        }
+
+        @Test
+        @DisplayName("rejeu : clé inconnue ou voyageur inconnu → rien")
+        void findIdempotent_unknownKeyOrUser_isEmpty() {
+            UserEntity traveler = buildTraveler();
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByTravelerIdAndIdempotencyKey(USER_ID, KEY)).thenReturn(Optional.empty());
+            when(userRepository.findByFirebaseUid("uid-unknown")).thenReturn(Optional.empty());
+
+            assertThat(announcementService.findIdempotentAnnouncement(FIREBASE_UID, KEY)).isEmpty();
+            assertThat(announcementService.findIdempotentAnnouncement("uid-unknown", KEY)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("rejeu sur POST /announcements d'une clé de voyage à étapes → 409 idempotency-key-reused")
+        void findIdempotent_keyOfAMultiLegTrip_conflict() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity leg = buildAnnouncement(traveler);
+            leg.setTripGroupId(UUID.randomUUID());
+            leg.setTripLegIndex(1);
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(announcementRepository.findByTravelerIdAndIdempotencyKey(USER_ID, KEY)).thenReturn(Optional.of(leg));
+
+            assertThatThrownBy(() -> announcementService.findIdempotentAnnouncement(FIREBASE_UID, KEY))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("idempotency-key-reused");
+                    });
+        }
+    }
+
     // ─── HandoverDeadline validation ───────────────────────────────────────────
 
     @Nested
