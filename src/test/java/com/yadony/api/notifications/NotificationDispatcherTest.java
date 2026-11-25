@@ -243,7 +243,7 @@ class NotificationDispatcherTest {
                 any(), eq(true));
         verify(fcmService).sendToUser(
                 eq(senderId), eq("Plus que 2 h pour déposer"),
-                contains("Le voyageur attend"), dataCaptor.capture());
+                contains("Ayez le QR du colis prêt"), dataCaptor.capture());
         assertThat(dataCaptor.getValue())
                 .containsEntry("type", "HANDOVER_REMINDER_H2")
                 .containsEntry("bidId", bidId.toString());

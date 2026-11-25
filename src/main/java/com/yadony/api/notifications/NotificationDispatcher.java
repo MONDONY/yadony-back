@@ -764,7 +764,7 @@ public class NotificationDispatcher {
             Map<String, String> data = Map.of("type", "TRIP_ARRIVED",
                     "announcementId", event.getAnnouncementId().toString(),
                     "bidId", target.bidId().toString());
-            var text = NotificationTexts.tripArrived(messagesFor(target.senderId()));
+            var text = NotificationTexts.tripArrived(messagesFor(target.senderId()), null, false);
             notifyUser(target.senderId(), text.title(), text.body(), data);
         }
     }
