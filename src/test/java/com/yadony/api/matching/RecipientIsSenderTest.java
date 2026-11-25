@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import org.junit.jupiter.api.Test;
 
@@ -7,6 +8,9 @@ import java.lang.reflect.Field;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class RecipientIsSenderTest {
 
@@ -104,5 +108,39 @@ class RecipientIsSenderTest {
     void nullBidOrSender_false() {
         assertThat(RecipientIsSender.of(null, sender())).isFalse();
         assertThat(RecipientIsSender.of(bid(null, null, null), null)).isFalse();
+    }
+
+    @Test
+    void resolve_sansServiceFirebase_compareLIdentifiantSeulement() {
+        UserEntity s = sender();
+        assertThat(RecipientIsSender.resolve(bid(s.getId(), null, null), s, null)).isTrue();
+        assertThat(RecipientIsSender.resolve(bid(null, SENDER_PHONE, null), s, null)).isFalse();
+    }
+
+    @Test
+    void resolve_firebaseEnEchec_contactVide_falseSansException() {
+        UserEntity s = sender();
+        s.setFirebaseUid("uid-1");
+        FirebaseContactService firebase = mock(FirebaseContactService.class);
+        when(firebase.getContact("uid-1")).thenReturn(FirebaseContactService.Contact.EMPTY);
+        assertThat(RecipientIsSender.resolve(bid(null, SENDER_PHONE, null), s, firebase)).isFalse();
+    }
+
+    @Test
+    void resolve_numeroDestinataireNul_neLeveJamaisEtNeLitPasFirebase() {
+        UserEntity s = sender();
+        FirebaseContactService firebase = mock(FirebaseContactService.class);
+        assertThat(RecipientIsSender.resolve(bid(null, null, "Moi"), s, firebase)).isFalse();
+        assertThat(RecipientIsSender.resolve(bid(null, "  ", "Moi"), s, firebase)).isFalse();
+        verifyNoInteractions(firebase);
+    }
+
+    @Test
+    void resolve_numeroConnu_memeNumero_true() {
+        UserEntity s = sender();
+        s.setFirebaseUid("uid-2");
+        FirebaseContactService firebase = mock(FirebaseContactService.class);
+        when(firebase.getContact("uid-2")).thenReturn(new FirebaseContactService.Contact(SENDER_PHONE, null, null));
+        assertThat(RecipientIsSender.resolve(bid(null, "0612345678", null), s, firebase)).isTrue();
     }
 }

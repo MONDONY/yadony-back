@@ -86,6 +86,8 @@ class V401VideoModalParcelStepsMigrationTest {
                 INSERT INTO video_modal_campaigns (id, name, youtube_url, youtube_video_id, title_fr, triggers, frequency, frequency_days)
                 VALUES (?, 'Jours', 'https://youtu.be/dQw4w9WgXcQ', 'dQw4w9WgXcQ', 'Titre', '["APP_OPEN"]', 'EVERY_N_DAYS', 3)
                 """, UUID.randomUUID());
+        assertThat(jdbc.queryForList("SELECT DISTINCT frequency FROM video_modal_campaigns", String.class))
+                .contains("ONCE", "UP_TO_N", "EVERY_OPEN", "EVERY_TIME", "EVERY_N_DAYS");
     }
 
     @Test
