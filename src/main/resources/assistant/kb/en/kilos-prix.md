@@ -9,7 +9,7 @@ routes:
 For capacity, choose a 23 or 32 kg suitcase, a custom number of kilos or unlimited capacity sold by the kilo. By road, there is no suitcase: "Free kilos" or "Custom", up to several tons (999 kg at most by air).
 For a boat trip, when it is offered, capacity is given as a volume (m³) with a price per m³, or in kilos with a price per kilo, never both; "Free kilos" does not exist for a trip priced per m³.
 "Max parcel size" (S, M, L, XL, indicative) and "Max weight per parcel" are optional: a bigger or heavier request is refused.
-The price per kilo is prefilled with the most common price on your route: adjust it with − and +. Prices per item (phone, laptop…) are optional: "Add my prices", below the price per kilo, prefills them, from 5 to 500 € per item, for all your trips.
+The price per kilo is prefilled with the most common price on your route: adjust it with − and +. Prices per item are optional: "Add my prices", below the price per kilo, prefills them (5 to 500 €) for all your trips; added after posting, they apply to the next ones.
 Cash and card are ticked by default under "You accept"; at least one payment method is needed to publish.
 Yadony adds its service fee to the price you enter: you receive exactly your amount, and the screen shows what you get and what the sender pays, service fee included.
 Turn on "I accept price proposals" so senders can negotiate.
