@@ -24,6 +24,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -88,16 +90,17 @@ public class ReceptionNotificationListener {
     public void onParcelDeparted(ParcelDepartedEvent event) {
         notifyConfirmedRecipient(event.bidId(), ReceptionNotifications.DEPARTED,
                 m -> NotificationTexts.recipientParcelDeparted(m));
-        // Le code vient d'être créé au scan de départ : « Code de retrait prêt », sans le code.
-        notifyCodeReady(event.bidId());
     }
 
     /**
      * Le lien du colis passe CONFIRMED : si le colis est déjà remis (HANDED_OVER, IN_TRANSIT, ARRIVED) et
-     * qu'un code existe, le destinataire en est prévenu. Avant la remise, le scan de départ s'en charge.
+     * qu'un code existe, le destinataire en est prévenu. Avant la remise, c'est le push DEPARTED du scan
+     * de départ qui annonce le code. {@code fallbackExecution} : le rattachement d'un destinataire de
+     * confiance ({@code ReceptionLinker#saveConfirmed}) publie hors de toute transaction.
      */
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void onRecipientLinkConfirmed(RecipientLinkConfirmedEvent event) {
         if (event.bidId() == null) {
             return;
@@ -119,18 +122,24 @@ public class ReceptionNotificationListener {
         if (bidId == null) {
             return;
         }
+        String[] claimed = {null};
         try {
             linkRepository.findByBidId(bidId)
                     .filter(l -> l.getStatus() == ReceptionLinkStatus.CONFIRMED)
                     .filter(l -> codeReadySent.asMap().putIfAbsent(bidId + ":" + l.getRecipientUserId(), true) == null)
                     .ifPresent(link -> {
                         UUID recipientId = link.getRecipientUserId();
+                        claimed[0] = bidId + ":" + recipientId;
                         NotificationText t = NotificationTexts.recipientCodeReady(
                                 notificationDispatcher.messagesFor(recipientId));
                         notificationDispatcher.notifyUser(recipientId, t.title(), t.body(),
                                 Map.of("type", ReceptionNotifications.CODE_READY, "bidId", bidId.toString()));
                     });
         } catch (Exception e) {
+            // Envoi raté : la clé est rendue pour qu'un nouvel essai reste possible.
+            if (claimed[0] != null) {
+                codeReadySent.invalidate(claimed[0]);
+            }
             log.warn("Code prêt du colis {} non annoncé au destinataire : {}", bidId, e.toString());
         }
     }

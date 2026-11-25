@@ -87,22 +87,39 @@ class ReceptionNotificationListenerTest {
     }
 
     @Test
-    void codeReadyPushedOnHandoverForConfirmedLink() {
+    void noCodeReadyAtHandover_departedKeepsTypeAndPayloadWithRewrittenText() {
         when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
 
         listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
 
-        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Code de retrait prêt"),
-                eq("Gardez-le : le voyageur vous le demandera à l'arrivée."), eq(codeReadyData()));
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Votre colis est en route"),
+                eq("Votre code de retrait est prêt : gardez-le pour l'arrivée."),
+                eq(Map.of("type", "RECIPIENT_PARCEL_DEPARTED", "bidId", bidId.toString())));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), eq(codeReadyData()));
+    }
+
+    @Test
+    void codeReadyKeyIsReleasedWhenSendFails_soARetryGoesThrough() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "123456")));
+        org.mockito.Mockito.doThrow(new IllegalStateException("fcm down")).doNothing()
+                .when(notificationDispatcher).notifyUser(any(), anyString(), anyString(), eq(codeReadyData()));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher, org.mockito.Mockito.times(2))
+                .notifyUser(eq(recipientId), anyString(), anyString(), eq(codeReadyData()));
     }
 
     @Test
     void notPushedWithoutConfirmedLink() {
         when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
-        listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "123456")));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
         when(linkRepository.findByBidId(bidId)).thenReturn(Optional.empty());
-        listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
-        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), eq(codeReadyData()));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
     }
 
     @ParameterizedTest
@@ -169,7 +186,7 @@ class ReceptionNotificationListenerTest {
         when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
         when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "123456")));
 
-        listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
         listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
 
         verify(notificationDispatcher, org.mockito.Mockito.times(1))
@@ -264,7 +281,7 @@ class ReceptionNotificationListenerTest {
         listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
 
         verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Votre colis est en route"),
-                eq("Votre code de retrait est disponible dans l'app."),
+                eq("Votre code de retrait est prêt : gardez-le pour l'arrivée."),
                 eq(Map.of("type", "RECIPIENT_PARCEL_DEPARTED", "bidId", bidId.toString())));
     }
 

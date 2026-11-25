@@ -880,6 +880,17 @@ class NotificationTextsTest {
     }
 
     @Test
+    void recipientParcelDeparted_bodyRewritten_frAndEn_underCaps() {
+        assertThat(NotificationTexts.recipientParcelDeparted(TestMessages.fr())).isEqualTo(
+                new NotificationText("Votre colis est en route",
+                        "Votre code de retrait est prêt : gardez-le pour l'arrivée."));
+        NotificationText en = NotificationTexts.recipientParcelDeparted(TestMessages.en());
+        assertThat(en.body()).isEqualTo("Your pickup code is ready: keep it for arrival.");
+        assertThat(en.title().length()).isLessThanOrEqualTo(28);
+        assertThat(en.body().length()).isLessThanOrEqualTo(72);
+    }
+
+    @Test
     void recipientCodeReady() {
         assertThat(NotificationTexts.recipientCodeReady(TestMessages.fr())).isEqualTo(
                 new NotificationText("Code de retrait prêt",
