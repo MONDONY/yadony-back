@@ -12,4 +12,3 @@ Once the parcel is handed to the traveler, the pickup code is added to the messa
 If the pickup code is blocked or expired, the tile offers the tracking link, not the code. Regenerate the code from the ticket's stub.
 You can edit the message before sending it. "Share tracking", in the share icon of the header and in the "Options" menu, sends the same link.
 If the recipient declined the parcel, the tile is gone: the "Recipient to replace" card appears in "To do".
-The pickup code only exists after the departure scan: you then receive the "Send the pickup code" notification and the message goes out with the code. If the recipient has the app, they also see their code in their reception screen; without the app, they receive nothing from Yadony, only your message. If you collect the parcel yourself, you have nothing to send: keep your code.
