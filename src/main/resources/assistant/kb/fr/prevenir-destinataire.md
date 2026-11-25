@@ -12,3 +12,4 @@ Une fois le colis confié au voyageur, le code de retrait s'ajoute au message, e
 Si le code de retrait est bloqué ou expiré, la tuile propose le lien de suivi, pas le code. Régénérez le code depuis le talon du billet.
 Vous pouvez modifier le message avant de l'envoyer. « Partager le suivi », dans l'icône de partage de l'en-tête et le menu « Options », envoie le même lien.
 Si le destinataire a refusé le colis, la tuile n'est plus là : la carte « Destinataire à remplacer » apparaît dans « À traiter ».
+Le code de retrait n'existe qu'après le scan de départ : vous recevez alors la notification « Envoyez le code de retrait » et le message part avec le code. Si le destinataire a l'app, il voit aussi son code dans son écran de réception ; sans l'app, il ne reçoit rien de Yadony, seulement votre message. Si vous retirez vous-même le colis, vous n'avez rien à envoyer : gardez votre code.
