@@ -1,5 +1,6 @@
 package com.yadony.api.matching;
 
+import com.yadony.api.auth.FirebaseContactService;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.matching.reception.ReceptionPhones;
 
@@ -36,6 +37,29 @@ public final class RecipientIsSender {
             return bid.getRecipientUserId().equals(sender.getId());
         }
         return samePhone(bid.getRecipientPhone(), senderPhone);
+    }
+
+    /**
+     * Décision complète côté expéditeur, partagée par la réponse API et les push : l'identifiant d'abord ; le
+     * numéro de l'expéditeur (Firebase, cache Caffeine) n'est lu que s'il sert, soit colis sans compte désigné et
+     * avec un numéro de destinataire. {@code firebaseContact} null (câblage optionnel) : identifiant seul.
+     */
+    public static boolean resolve(BidEntity bid, UserEntity sender, FirebaseContactService firebaseContact) {
+        if (bid == null || sender == null) {
+            return false;
+        }
+        boolean needsPhone = bid.getRecipientUserId() == null
+                && bid.getRecipientPhone() != null && !bid.getRecipientPhone().isBlank();
+        if (!needsPhone || firebaseContact == null) {
+            return of(bid, sender);
+        }
+        FirebaseContactService.Contact contact = firebaseContact.getContact(sender.getFirebaseUid());
+        if (contact == null) {
+            return of(bid, sender);
+        }
+        String phone = contact.phoneNumber() != null && !contact.phoneNumber().isBlank()
+                ? contact.phoneNumber() : contact.declaredPhone();
+        return of(bid, sender, phone);
     }
 
     /**

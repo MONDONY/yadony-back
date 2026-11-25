@@ -335,6 +335,14 @@ public class AnnouncementService {
     /** Retards annoncés du trajet (V382) ; aucun tant que Spring ne l'a pas injecté. */
     private TripDelayRepository tripDelayRepository;
 
+    /** Numéro de l'expéditeur pour le push d'arrivée ; absent, seul l'identifiant compte. */
+    private com.yadony.api.auth.FirebaseContactService firebaseContact;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFirebaseContact(com.yadony.api.auth.FirebaseContactService firebaseContact) {
+        this.firebaseContact = firebaseContact;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setTripDelayRepository(TripDelayRepository tripDelayRepository) {
         this.tripDelayRepository = tripDelayRepository;
@@ -2437,8 +2445,15 @@ public class AnnouncementService {
                 Map.of("bidCount", enRoute.size(),
                         "notYetDepartedCount", activeBids.size() - enRoute.size()));
 
+        // Nom du destinataire et drapeau « c'est l'expéditeur » portés par l'événement : le push d'arrivée
+        // choisit son texte sans que notifications/ relise les colis.
+        Map<UUID, UserEntity> sendersById = new HashMap<>();
+        for (UserEntity u : userRepository.findAllById(enRoute.stream().map(BidEntity::getSenderId).distinct().toList())) {
+            sendersById.put(u.getId(), u);
+        }
         List<TripArrivedEvent.BidTarget> targets = enRoute.stream()
-                .map(b -> new TripArrivedEvent.BidTarget(b.getId(), b.getSenderId()))
+                .map(b -> new TripArrivedEvent.BidTarget(b.getId(), b.getSenderId(), b.getRecipientName(),
+                        RecipientIsSender.resolve(b, sendersById.get(b.getSenderId()), firebaseContact)))
                 .toList();
         eventPublisher.publishEvent(new TripArrivedEvent(saved.getId(), targets));
 

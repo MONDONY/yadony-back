@@ -1063,6 +1063,32 @@ class NotificationDispatcherTest {
         assertThat(data2.getValue()).containsEntry("bidId", bid2.toString());
     }
 
+    /** Un colis avec nom, un sans nom, un « vous » : chaque expéditeur reçoit SON texte. */
+    @Test
+    void onTripArrived_bodyDependsOnRecipientNameOrSelf() {
+        UUID s1 = UUID.randomUUID();
+        UUID s2 = UUID.randomUUID();
+        UUID s3 = UUID.randomUUID();
+        UUID b1 = UUID.randomUUID();
+        UUID b2 = UUID.randomUUID();
+        UUID b3 = UUID.randomUUID();
+        TripArrivedEvent event = new TripArrivedEvent(annId, List.of(
+                new TripArrivedEvent.BidTarget(b1, s1, "Awa Diallo", false),
+                new TripArrivedEvent.BidTarget(b2, s2, null, false),
+                new TripArrivedEvent.BidTarget(b3, s3, "Moi", true)));
+        when(fcmService.sendToUser(any(), any(), any(), any())).thenReturn(true);
+
+        dispatcher.onTripArrived(event);
+
+        var d1 = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(s1), any(), eq("Awa Diallo peut retirer le colis. Rappelez-lui son code."), d1.capture());
+        assertThat(d1.getValue()).containsEntry("type", "TRIP_ARRIVED").containsEntry("bidId", b1.toString());
+        verify(fcmService).sendToUser(eq(s2), any(), eq("Votre destinataire peut retirer le colis. Rappelez-lui son code."), any());
+        var d3 = ArgumentCaptor.forClass(Map.class);
+        verify(fcmService).sendToUser(eq(s3), any(), eq("Retirez votre colis. Ayez votre code prêt."), d3.capture());
+        assertThat(d3.getValue()).containsEntry("bidId", b3.toString());
+    }
+
     /** Suivi de la relecture B1 : chaque expéditeur reçoit sa propre langue, pas celle de l'autre. */
     @Test
     void onTripArrived_eachSenderGetsOwnLanguage() {

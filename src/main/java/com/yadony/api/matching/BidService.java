@@ -2013,18 +2013,7 @@ public class BidService {
         if (sender == null || !callerIsSender) {
             return false;
         }
-        boolean needsPhone = bid.getRecipientUserId() == null
-                && bid.getRecipientPhone() != null && !bid.getRecipientPhone().isBlank();
-        if (!needsPhone) {
-            return RecipientIsSender.of(bid, sender);
-        }
-        FirebaseContactService.Contact contact = firebaseContact.getContact(sender.getFirebaseUid());
-        if (contact == null) {
-            return RecipientIsSender.of(bid, sender);
-        }
-        String phone = contact.phoneNumber() != null && !contact.phoneNumber().isBlank()
-                ? contact.phoneNumber() : contact.declaredPhone();
-        return RecipientIsSender.of(bid, sender, phone);
+        return RecipientIsSender.resolve(bid, sender, firebaseContact);
     }
 
     /**
