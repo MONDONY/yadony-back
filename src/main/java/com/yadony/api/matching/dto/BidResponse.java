@@ -204,5 +204,8 @@ public record BidResponse(
          * absent, PENDING ou DECLINED) ; null une fois le lien CONFIRMED, pour un colis par numéro, un compte
          * supprimé, et toujours null pour le voyageur. Toujours sérialisé (null explicite), champ ajouté. */
         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
-        String recipientUsername
+        String recipientUsername,
+        /** L'expéditeur est son propre destinataire : compte désigné = expéditeur, ou même numéro. Le nom seul ne
+         * compte jamais. Toujours sérialisé, champ ajouté : absent chez un ancien back, l'app le lit {@code false}. */
+        boolean recipientIsSender
 ) {}

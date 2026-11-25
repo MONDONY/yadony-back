@@ -1997,8 +1997,34 @@ public class BidService {
                 bid.getVolumeM3(),
                 depositedAt(bid, prefetch),
                 callerIsSender && bid.getRecipientUserId() != null,
-                designatedUsername(bid, recipientLink, callerIsSender)
+                designatedUsername(bid, recipientLink, callerIsSender),
+                recipientIsSender(bid, sender, callerIsSender, prefetch)
         );
+    }
+
+    /**
+     * L'expéditeur est son propre destinataire (voir {@link RecipientIsSender}). Le numéro de l'expéditeur vient de
+     * Firebase (cache Caffeine) et n'est lu que s'il sert : colis sans compte désigné et avec un numéro de
+     * destinataire. Dans une liste, seule la vue expéditeur le lit (un seul expéditeur donc un seul appel mis en
+     * cache) ; les autres listes s'en tiennent à l'identifiant, pour ne pas ouvrir un appel Firebase par colis.
+     */
+    private boolean recipientIsSender(BidEntity bid, UserEntity sender, boolean callerIsSender,
+                                      BidResponsePrefetch prefetch) {
+        if (sender == null) {
+            return false;
+        }
+        boolean needsPhone = bid.getRecipientUserId() == null
+                && bid.getRecipientPhone() != null && !bid.getRecipientPhone().isBlank();
+        if (!needsPhone || (prefetch != null && !callerIsSender)) {
+            return RecipientIsSender.of(bid, sender);
+        }
+        FirebaseContactService.Contact contact = firebaseContact.getContact(sender.getFirebaseUid());
+        if (contact == null) {
+            return RecipientIsSender.of(bid, sender);
+        }
+        String phone = contact.phoneNumber() != null && !contact.phoneNumber().isBlank()
+                ? contact.phoneNumber() : contact.declaredPhone();
+        return RecipientIsSender.of(bid, sender, phone);
     }
 
     /**

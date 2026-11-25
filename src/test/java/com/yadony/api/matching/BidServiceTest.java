@@ -4346,6 +4346,34 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("recipientIsSender : compte désigné = expéditeur, ou même numéro, jamais le nom seul")
+        void recipientIsSender_byIdOrPhone_neverByNameOnly() {
+            BidEntity self = buildBid();
+            self.setRecipientUserId(SENDER_ID);
+            assertThat(bidService.toResponse(self, buildSender(), SENDER_ID).recipientIsSender()).isTrue();
+
+            BidEntity samePhone = buildBid();
+            samePhone.setRecipientPhone("06 12 34 56 78");
+            assertThat(bidService.toResponse(samePhone, buildSender(), SENDER_ID).recipientIsSender()).isTrue();
+
+            BidEntity nameOnly = buildBid();
+            nameOnly.setRecipientName(buildSender().getFirstName());
+            nameOnly.setRecipientPhone("+33 7 99 99 99 99");
+            assertThat(bidService.toResponse(nameOnly, buildSender(), SENDER_ID).recipientIsSender()).isFalse();
+        }
+
+        @Test
+        @DisplayName("recipientIsSender est sérialisé en JSON, même à false")
+        void recipientIsSender_serializedInJson() throws Exception {
+            BidEntity bid = buildBid();
+            bid.setRecipientUserId(SENDER_ID);
+            BidResponse resp = bidService.toResponse(bid, buildSender(), SENDER_ID);
+            String json = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules()
+                    .writeValueAsString(resp);
+            assertThat(json).contains("\"recipientIsSender\":true");
+        }
+
+        @Test
         @DisplayName("désigné par identifiant, vue expéditeur, lien absent : drapeau et identifiant actuel")
         void designatedByUsername_senderView_noLink_exposesUsername() {
             UserEntity account = designatedAccount("awa.diallo");
