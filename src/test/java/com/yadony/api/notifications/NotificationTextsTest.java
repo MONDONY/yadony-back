@@ -113,6 +113,15 @@ class NotificationTextsTest {
         map.put("tripRescheduleKept sans prénom", NotificationTexts.tripRescheduleKept(m, null));
         map.put("tripRescheduleWithdrawn", NotificationTexts.tripRescheduleWithdrawn(m));
         map.put("travelerNoShow", NotificationTexts.travelerNoShow(m));
+        String nom20 = NotificationTexts.shortRecipientName("Kouassi-Konan Ahouansou Junior");
+        map.put("tripArrived", NotificationTexts.tripArrived(m, nom20, false));
+        map.put("tripArrived sans nom", NotificationTexts.tripArrived(m, null, false));
+        map.put("tripArrived soi-même", NotificationTexts.tripArrived(m, nom20, true));
+        map.put("tripArrivalPrompt", NotificationTexts.tripArrivalPrompt(m));
+        map.put("confirmationCodeReady", NotificationTexts.confirmationCodeReady(m, nom20, false));
+        map.put("confirmationCodeReady sans nom", NotificationTexts.confirmationCodeReady(m, null, false));
+        map.put("confirmationCodeReady soi-même", NotificationTexts.confirmationCodeReady(m, nom20, true));
+        map.put("recipientCodeReady", NotificationTexts.recipientCodeReady(m));
         map.put("tripInProgress", NotificationTexts.tripInProgress(m));
         map.put("tripDeparturePrompt", NotificationTexts.tripDeparturePrompt(m));
         map.put("handoverReminder", NotificationTexts.handoverReminder(m,
@@ -376,7 +385,8 @@ class NotificationTextsTest {
     @ParameterizedTest
     @MethodSource("deuxLangues")
     void textsRespectCaps(Messages m) {
-        for (NotificationText t : List.of(NotificationTexts.tripDeparturePrompt(m))) {
+        for (NotificationText t : List.of(NotificationTexts.tripDeparturePrompt(m),
+                NotificationTexts.tripArrivalPrompt(m))) {
             assertThat(t.title()).isNotBlank().hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
             assertThat(t.body()).isNotBlank().hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX);
             assertThat(t.title() + t.body()).doesNotContain("—").doesNotContain("→");
@@ -725,10 +735,7 @@ class NotificationTextsTest {
         // kycVerificationReminder : textes produit plus longs que les caps push, testés à part (douze clés).
         // referralWelcome : texte produit (code + remise) plus long que le cap du corps, testé à part.
         Set<String> helpers = Set.of("corridor", "corridorFromLabel", "kg", "eur", "amount", "mobileMoneyAmount",
-                "kycVerificationReminder", "referralWelcome",
-                // Textes d'étape qui disent quoi faire : plus longs que le cap du corps (l'app coupe
-                // par des points de suspension), testés à part ; leur titre reste dans TITLE_MAX.
-                "tripArrived", "tripArrivalPrompt", "confirmationCodeReady", "recipientCodeReady");
+                "kycVerificationReminder", "referralWelcome");
         List<String> declared = new ArrayList<>();
         for (Method m : NotificationTexts.class.getDeclaredMethods()) {
             if (Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers())
@@ -828,14 +835,14 @@ class NotificationTextsTest {
     @Test
     void confirmationCodeReady_withName() {
         assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), "Mamadou", false)).isEqualTo(
-                new NotificationText("Colis remis : envoyez le code",
-                        "Donnez le code de retrait à Mamadou. Sans lui, le voyageur ne remettra pas le colis."));
+                new NotificationText("Envoyez le code de retrait",
+                        "Donnez le code à Mamadou. Sans lui, rien n'est remis."));
     }
 
     @Test
     void confirmationCodeReady_withoutName() {
-        var attendu = new NotificationText("Colis remis : envoyez le code",
-                "Donnez le code de retrait à votre destinataire. Sans lui, le voyageur ne remettra pas le colis.");
+        var attendu = new NotificationText("Envoyez le code de retrait",
+                "Donnez le code à votre destinataire. Sans lui, rien n'est remis.");
         assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), null, false)).isEqualTo(attendu);
         assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), "  ", false)).isEqualTo(attendu);
     }
@@ -843,8 +850,8 @@ class NotificationTextsTest {
     @Test
     void confirmationCodeReady_self() {
         assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), "Mamadou", true)).isEqualTo(
-                new NotificationText("Colis remis : gardez votre code",
-                        "C'est vous qui retirez le colis. Le voyageur vous demandera ce code."));
+                new NotificationText("Colis remis, gardez le code",
+                        "C'est vous qui retirez. Le voyageur vous demandera ce code."));
     }
 
     @Test
@@ -852,30 +859,30 @@ class NotificationTextsTest {
         var fr = TestMessages.fr();
         assertThat(NotificationTexts.tripArrived(fr, "Mamadou", false)).isEqualTo(
                 new NotificationText("Votre voyageur est arrivé",
-                        "Mamadou peut retirer le colis. Rappelez-lui son code de retrait."));
+                        "Mamadou peut retirer le colis. Rappelez-lui son code."));
         assertThat(NotificationTexts.tripArrived(fr, null, false).body())
-                .isEqualTo("Votre destinataire peut retirer le colis. Rappelez-lui son code de retrait.");
+                .isEqualTo("Votre destinataire peut retirer le colis. Rappelez-lui son code.");
         assertThat(NotificationTexts.tripArrived(fr, "Mamadou", true).body())
-                .isEqualTo("Vous pouvez retirer votre colis. Ayez votre code prêt.");
+                .isEqualTo("Retirez votre colis. Ayez votre code prêt.");
     }
 
     @Test
     void handoverReminder_body() {
         assertThat(NotificationTexts.handoverReminder(TestMessages.fr(), "Gare du Nord")).isEqualTo(
-                new NotificationText("Plus que 2 h pour déposer", "Dernier créneau : Gare du Nord. Ayez le QR du colis prêt."));
+                new NotificationText("Plus que 2 h pour déposer", "Dernier créneau : Gare du Nord. Ayez le QR prêt."));
     }
 
     @Test
     void tripArrivalPrompt_body() {
         assertThat(NotificationTexts.tripArrivalPrompt(TestMessages.fr())).isEqualTo(
                 new NotificationText("Vous êtes arrivé ?",
-                        "Prévenez vos expéditeurs. Ne remettez aucun colis sans le code à 6 chiffres du destinataire."));
+                        "Prévenez vos expéditeurs. Pas de remise sans le code à 6 chiffres."));
     }
 
     @Test
     void recipientCodeReady() {
         assertThat(NotificationTexts.recipientCodeReady(TestMessages.fr())).isEqualTo(
-                new NotificationText("Votre code de retrait est prêt",
+                new NotificationText("Code de retrait prêt",
                         "Gardez-le : le voyageur vous le demandera à l'arrivée."));
     }
 
@@ -915,6 +922,8 @@ class NotificationTextsTest {
                 NotificationTexts.tripArrivalPrompt(m),
                 NotificationTexts.recipientCodeReady(m))) {
             assertThat(six.matcher(t.body()).find()).as(t.body()).isFalse();
+            assertThat(t.title()).hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(t.body()).hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX);
             assertThat(t.title() + t.body()).doesNotContain("\u2014").doesNotContain("{0}");
         }
     }
