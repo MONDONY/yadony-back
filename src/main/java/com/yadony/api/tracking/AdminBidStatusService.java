@@ -86,7 +86,14 @@ public class AdminBidStatusService {
                 .orElseThrow(() -> new YadonyBusinessException(HttpStatus.NOT_FOUND, "announcement-not-found",
                         "Not Found", "Trajet introuvable"));
 
-        bid.setStatus(target);
+        // Littéraux, jamais un statut variable : AcceptanceFreezesPayoutTriggerTest interdit
+        // qu'un setStatus(variable) puisse masquer un passage à ACCEPTED.
+        switch (request.status()) {
+            case HANDED_OVER -> bid.setStatus(BidStatus.HANDED_OVER);
+            case IN_TRANSIT -> bid.setStatus(BidStatus.IN_TRANSIT);
+            case ARRIVED -> bid.setStatus(BidStatus.ARRIVED);
+            case COMPLETED -> bid.setStatus(BidStatus.COMPLETED);
+        }
         if (target == BidStatus.COMPLETED) {
             bid.setConfirmationCode(null);
             bid.setConfirmationCodeExpiry(null);
