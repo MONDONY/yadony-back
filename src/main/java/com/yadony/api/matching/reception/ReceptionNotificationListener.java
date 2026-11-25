@@ -68,9 +68,11 @@ public class ReceptionNotificationListener {
     private final NotificationDispatcher notificationDispatcher;
 
     /**
-     * « Code prêt » déjà envoyé, par colis et destinataire : le scan de départ et la confirmation du
-     * lien peuvent tous deux conclure à l'envoi (course entre les deux), un seul push part. Mémoire
-     * du processus, bornée : un redémarrage dans la journée peut au pire redoubler un push.
+     * « Code prêt » déjà envoyé, par colis et destinataire. Il ne part qu'à la confirmation du lien, une fois
+     * le colis remis ; le scan de départ envoie RECIPIENT_PARCEL_DEPARTED. Course résiduelle rare : un
+     * destinataire qui confirme quelques secondes après le scan peut recevoir DEPARTED puis CODE_READY à
+     * quelques secondes d'écart (deux types différents, que ce cache ne dédoublonne pas), accepté. Mémoire du
+     * processus, bornée : un redémarrage dans la journée peut au pire redoubler un push.
      */
     private final Cache<String, Boolean> codeReadySent = Caffeine.newBuilder()
             .maximumSize(10_000).expireAfterWrite(Duration.ofHours(24)).build();
@@ -100,7 +102,7 @@ public class ReceptionNotificationListener {
      */
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onRecipientLinkConfirmed(RecipientLinkConfirmedEvent event) {
         if (event.bidId() == null) {
             return;

@@ -6,8 +6,8 @@ routes:
   - path: /envois
     label: Mes colis
 ---
-Le code de retrait est un code secret à 6 chiffres, créé quand le voyageur scanne le colis au départ, pas à l'acceptation. L'expéditeur est prévenu et le donne au destinataire (« Prévenir », message WhatsApp). Un destinataire avec l'app le voit dedans ; sans l'app, il ne reçoit rien de Yadony.
-À l'arrivée, le voyageur ne remet rien sans le code : l'app ne permet pas de confirmer la livraison sans lui.
-Bloqué ou expiré : l'expéditeur en génère un nouveau (« Régénérer le code » ; le voyageur peut en demander un), 5 fois au plus.
-Expéditeur et destinataire sont la même personne : vous retirez vous-même le colis, gardez votre code.
+Le code de retrait est un code secret à 6 chiffres, créé au scan de départ du voyageur, pas à l'acceptation. L'expéditeur le donne au destinataire (« Prévenir ») ; sans l'app, le destinataire ne reçoit rien de Yadony.
+Le voyageur ne remet rien sans le code.
+Bloqué ou expiré : l'expéditeur le régénère (le voyageur peut en demander un), 5 fois par 24 h.
+Expéditeur et destinataire sont la même personne : gardez votre code.
 Ce n'est pas le numéro de suivi DON-….
