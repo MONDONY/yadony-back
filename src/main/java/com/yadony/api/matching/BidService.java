@@ -2003,19 +2003,19 @@ public class BidService {
     }
 
     /**
-     * L'expéditeur est son propre destinataire (voir {@link RecipientIsSender}). Le numéro de l'expéditeur vient de
-     * Firebase (cache Caffeine) et n'est lu que s'il sert : colis sans compte désigné et avec un numéro de
-     * destinataire. Dans une liste, seule la vue expéditeur le lit (un seul expéditeur donc un seul appel mis en
-     * cache) ; les autres listes s'en tiennent à l'identifiant, pour ne pas ouvrir un appel Firebase par colis.
+     * L'expéditeur est son propre destinataire (voir {@link RecipientIsSender}). Servi à l'expéditeur seul : le
+     * voyageur ne reçoit jamais le drapeau (toujours false), sinon il apprendrait l'égalité de deux numéros que les
+     * règles de visibilité lui masquent. Le numéro de l'expéditeur vient de Firebase (cache Caffeine) et n'est lu
+     * que s'il sert : colis sans compte désigné et avec un numéro de destinataire.
      */
     private boolean recipientIsSender(BidEntity bid, UserEntity sender, boolean callerIsSender,
                                       BidResponsePrefetch prefetch) {
-        if (sender == null) {
+        if (sender == null || !callerIsSender) {
             return false;
         }
         boolean needsPhone = bid.getRecipientUserId() == null
                 && bid.getRecipientPhone() != null && !bid.getRecipientPhone().isBlank();
-        if (!needsPhone || (prefetch != null && !callerIsSender)) {
+        if (!needsPhone) {
             return RecipientIsSender.of(bid, sender);
         }
         FirebaseContactService.Contact contact = firebaseContact.getContact(sender.getFirebaseUid());

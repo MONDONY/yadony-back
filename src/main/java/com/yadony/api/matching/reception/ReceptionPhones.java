@@ -29,7 +29,7 @@ public final class ReceptionPhones {
     }
 
     /** Chiffres seuls, « 00 » initial retiré : clé de comparaison du rattrapage. */
-    public static String digitsKey(String raw) {
+    static String digitsKey(String raw) {
         if (raw == null) {
             return "";
         }

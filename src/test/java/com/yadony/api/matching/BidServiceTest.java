@@ -4363,6 +4363,32 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("recipientIsSender : jamais servi au voyageur, aucune lecture Firebase")
+        void recipientIsSender_travelerView_alwaysFalse_noFirebase() {
+            BidEntity samePhone = buildBid();
+            samePhone.setRecipientPhone("+33612345678");
+            BidEntity selfId = buildBid();
+            selfId.setRecipientUserId(SENDER_ID);
+            org.mockito.Mockito.clearInvocations(firebaseContact);
+
+            assertThat(bidService.toResponse(samePhone, buildSender(), TRAVELER_ID).recipientIsSender()).isFalse();
+            assertThat(bidService.toResponse(selfId, buildSender(), TRAVELER_ID).recipientIsSender()).isFalse();
+            assertThat(bidService.toResponse(samePhone, buildSender(), TRAVELER_ID,
+                    bidService.prefetchFor(java.util.List.of(samePhone))).recipientIsSender()).isFalse();
+            org.mockito.Mockito.verify(firebaseContact, org.mockito.Mockito.never()).getContact(SENDER_UID);
+        }
+
+        @Test
+        @DisplayName("recipientIsSender : numéro déclaré de l'expéditeur, à défaut du numéro SMS")
+        void recipientIsSender_declaredPhoneFallback() {
+            lenient().when(firebaseContact.getContact(SENDER_UID)).thenReturn(
+                    new com.yadony.api.auth.FirebaseContactService.Contact(null, null, "+221771234567"));
+            BidEntity bid = buildBid();
+            bid.setRecipientPhone("+221 77 123 45 67");
+            assertThat(bidService.toResponse(bid, buildSender(), SENDER_ID).recipientIsSender()).isTrue();
+        }
+
+        @Test
         @DisplayName("recipientIsSender est sérialisé en JSON, même à false")
         void recipientIsSender_serializedInJson() throws Exception {
             BidEntity bid = buildBid();
