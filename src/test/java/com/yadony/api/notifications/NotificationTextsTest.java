@@ -113,7 +113,7 @@ class NotificationTextsTest {
         map.put("tripRescheduleKept sans prénom", NotificationTexts.tripRescheduleKept(m, null));
         map.put("tripRescheduleWithdrawn", NotificationTexts.tripRescheduleWithdrawn(m));
         map.put("travelerNoShow", NotificationTexts.travelerNoShow(m));
-        String nom20 = NotificationTexts.shortRecipientName("Kouassi-Konan Ahouansou Junior");
+        String nom20 = "A".repeat(20);
         map.put("tripArrived", NotificationTexts.tripArrived(m, nom20, false));
         map.put("tripArrived sans nom", NotificationTexts.tripArrived(m, null, false));
         map.put("tripArrived soi-même", NotificationTexts.tripArrived(m, nom20, true));
@@ -949,6 +949,31 @@ class NotificationTextsTest {
                 "notification.recipient-code-ready.title", "notification.recipient-code-ready.body")) {
             assertThat(fr.getProperty(k)).as("fr " + k).isNotBlank();
             assertThat(en.getProperty(k)).as("en " + k).isNotBlank();
+        }
+    }
+
+    // Pire cas exact : nom de 20 caractères pile, lieu de 33 caractères et plus, FR et EN.
+    @ParameterizedTest
+    @MethodSource("deuxLangues")
+    void etapes_pireCasNom20Lieu33_tiennentDansLesPlafonds(Messages m) {
+        String nom = NotificationTexts.shortRecipientName("A".repeat(20));
+        assertThat(nom).hasSize(20);
+        String lieu = "Aéroport Roissy Charles-de-Gaulle, terminal 2E, porte 12";
+        List<NotificationText> textes = List.of(
+                NotificationTexts.confirmationCodeReady(m, nom, false),
+                NotificationTexts.confirmationCodeReady(m, null, false),
+                NotificationTexts.confirmationCodeReady(m, nom, true),
+                NotificationTexts.tripArrived(m, nom, false),
+                NotificationTexts.tripArrived(m, null, false),
+                NotificationTexts.tripArrived(m, nom, true),
+                NotificationTexts.tripArrivalPrompt(m),
+                NotificationTexts.recipientCodeReady(m),
+                NotificationTexts.handoverReminder(m, lieu),
+                NotificationTexts.handoverReminder(m, "B".repeat(33)),
+                NotificationTexts.handoverReminder(m, " "));
+        for (NotificationText t : textes) {
+            assertThat(t.title()).as(t.title()).hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(t.body()).as(t.body()).hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX);
         }
     }
 }
