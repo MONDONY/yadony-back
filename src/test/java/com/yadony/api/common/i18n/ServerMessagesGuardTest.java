@@ -143,7 +143,6 @@ class ServerMessagesGuardTest {
             "payments/cash/WalletCommissionCollector.java",
             "payments/currency/ExchangeRateLookup.java",
             "payments/currency/ExchangeRateUpdateService.java",
-            "payments/currency/GridItemPriceBounds.java",
             "payments/currency/PricePerKgBounds.java",
             "payments/overview/MoneyOverviewService.java",
             "payments/pawapay/PawapayErrors.java",
