@@ -202,11 +202,18 @@ class VideoModalInfoAdminServiceTest {
     }
 
     @Test
-    @DisplayName("tous les écrans de la liste fermée sont acceptés")
+    @DisplayName("tous les écrans de la liste fermée sont acceptés (ceux du colis avec une étape du colis)")
     void tousLesEcrans() {
         savesItself();
         for (InfoScreen s : InfoScreen.values()) {
-            var r = service.create(info("T", screen(s.name()), "Ouvrir", null, null), adminId);
+            VideoModalRequest request = info("T", screen(s.name()), "Ouvrir", null, null);
+            if (s.isParcelScreen()) {
+                // Un bouton lié au colis exige un déclencheur d'étape (VideoModalParcelStepsTest).
+                request = new VideoModalRequest("Info", VideoModalType.INFO, null, null, "Titre", null, null, null,
+                        "Ouvrir", null, null, null, "T", null, null, screen(s.name()), null, null,
+                        List.of(VideoModalTrigger.PARCEL_ARRIVED), null, null, null, null, null, null, null, null, null);
+            }
+            var r = service.create(request, adminId);
             assertThat(r.primaryAction().screen()).isEqualTo(s);
         }
     }

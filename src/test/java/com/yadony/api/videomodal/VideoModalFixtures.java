@@ -55,6 +55,25 @@ final class VideoModalFixtures {
         return c;
     }
 
+    /**
+     * Campagne INFO d'étape du colis : déclencheurs d'étape, une fois par colis, rôles expéditeur et
+     * destinataire, bouton principal « QR du colis » et bouton secondaire « suivi ».
+     */
+    static VideoModalCampaignEntity parcelCampaign(VideoModalTrigger... steps) {
+        VideoModalCampaignEntity c = infoCampaign(1, VideoModalAudience.EVERYONE);
+        c.setName("Étape colis");
+        c.setTitleFr("Colis arrivé à {ville_arrivee}");
+        c.setTitleEn("Parcel arrived in {ville_arrivee}");
+        c.setBodyFr("{voyageur} a déposé le colis de {expéditeur} pour {destinataire}.");
+        c.setBodyEn("{voyageur} dropped off {expéditeur}'s parcel for {destinataire}.");
+        c.setTriggers(List.of(steps));
+        c.setFrequency(VideoModalFrequency.ONCE_PER_PARCEL);
+        c.setParcelRoles(java.util.Set.of(VideoModalParcelRole.RECIPIENT, VideoModalParcelRole.SENDER));
+        c.setPrimaryAction(new VideoModalAction(VideoModalActionKind.SCREEN, InfoScreen.PARCEL_QR, null));
+        c.setSecondaryAction(new VideoModalAction(VideoModalActionKind.SCREEN, InfoScreen.PARCEL_TRACKING, null));
+        return c;
+    }
+
     static VideoModalResponseEntity response(VideoModalCampaignEntity c, int version, int displays, VideoModalEvent status) {
         VideoModalResponseEntity r = new VideoModalResponseEntity(c.getId(), UUID.randomUUID(), version);
         for (int i = 0; i < displays; i++) r.apply(VideoModalEvent.SHOWN, NOW);

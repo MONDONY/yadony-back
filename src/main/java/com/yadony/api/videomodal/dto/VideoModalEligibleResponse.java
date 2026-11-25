@@ -8,6 +8,7 @@ import com.yadony.api.videomodal.VideoModalImageFit;
 import com.yadony.api.videomodal.VideoModalImageMode;
 import com.yadony.api.videomodal.VideoModalLayout;
 import com.yadony.api.videomodal.VideoModalCorridor;
+import com.yadony.api.videomodal.VideoModalParcelRole;
 import com.yadony.api.videomodal.VideoModalTrigger;
 import com.yadony.api.videomodal.VideoModalTriggerOptions;
 import com.yadony.api.videomodal.VideoModalType;
@@ -32,6 +33,10 @@ import java.util.UUID;
  *
  * <p>Moments d'action : {@code triggerOptions} (seuils) et {@code corridors} (vide = tous). Sans
  * {@code caps=moments}, {@code triggers} ne contient plus les nouveaux moments.
+ *
+ * <p>Étapes du colis : {@code parcelRoles} (jamais nul, vide = tous les rôles). Le back ne connaît pas le
+ * colis : l'app compare ce rôle à celui de la personne sur le colis ouvert, remplit les variables des textes
+ * et dédoublonne {@code ONCE_PER_PARCEL} par colis.
  */
 public record VideoModalEligibleResponse(
         UUID id,
@@ -65,7 +70,27 @@ public record VideoModalEligibleResponse(
         boolean allowDontShowAgain,
         Instant lastShownAt,
         VideoModalTriggerOptions triggerOptions,
-        List<VideoModalCorridor> corridors) {
+        List<VideoModalCorridor> corridors,
+        List<VideoModalParcelRole> parcelRoles) {
+
+    /** Sans rôles sur le colis : la campagne vaut pour tous les rôles ({@code parcelRoles} vide). */
+    public VideoModalEligibleResponse(UUID id, VideoModalType type, int version, List<VideoModalTrigger> triggers,
+                                      String title, String subtitle, String youtubeVideoId, Integer durationSeconds,
+                                      List<Highlight> highlights, String primaryLabel, String secondaryLabel,
+                                      String body, VideoModalIcon icon, VideoModalAction primaryAction,
+                                      VideoModalAction secondaryAction, int maxDisplays, int displays,
+                                      VideoModalAudience audience, VideoModalLayout layout, Integer sizePercent,
+                                      VideoModalImageMode imageMode, VideoModalImageFit imageFit, String imageUrl,
+                                      String imageAlt, int priority, VideoModalFrequency frequency,
+                                      Integer frequencyDays, boolean stopAfterAnswer, boolean allowDontShowAgain,
+                                      Instant lastShownAt, VideoModalTriggerOptions triggerOptions,
+                                      List<VideoModalCorridor> corridors) {
+        this(id, type, version, triggers, title, subtitle, youtubeVideoId, durationSeconds, highlights,
+                primaryLabel, secondaryLabel, body, icon, primaryAction, secondaryAction, maxDisplays, displays,
+                audience, layout, sizePercent, imageMode, imageFit, imageUrl, imageAlt, priority, frequency,
+                frequencyDays, stopAfterAnswer, allowDontShowAgain, lastShownAt, triggerOptions, corridors,
+                List.of());
+    }
 
     /** Sans moments d'action : seuils par défaut, aucun corridor. */
     public VideoModalEligibleResponse(UUID id, VideoModalType type, int version, List<VideoModalTrigger> triggers,
@@ -109,7 +134,7 @@ public record VideoModalEligibleResponse(
                 durationSeconds, highlights, primaryLabel, secondaryLabel, body, icon, primaryAction,
                 secondaryAction, maxDisplays, displays, audience, layout, sizePercent, imageMode, imageFit,
                 imageUrl, imageAlt, priority, frequency, frequencyDays, stopAfterAnswer, allowDontShowAgain,
-                lastShownAt, triggerOptions, corridors);
+                lastShownAt, triggerOptions, corridors, parcelRoles);
     }
 
     /**
@@ -123,7 +148,16 @@ public record VideoModalEligibleResponse(
                 durationSeconds, highlights, primaryLabel, secondaryLabel, body, icon, primaryAction,
                 secondaryAction, maxDisplays, displays, audience, layout, sizePercent, imageMode, imageFit,
                 imageUrl, imageAlt, priority, frequency, frequencyDays, stopAfterAnswer, allowDontShowAgain,
-                lastShownAt, triggerOptions, corridors);
+                lastShownAt, triggerOptions, corridors, parcelRoles);
+    }
+
+    /** Même entrée avec les rôles visés sur le colis (vide = tous), que l'app compare au rôle de la personne. */
+    public VideoModalEligibleResponse withParcelRoles(List<VideoModalParcelRole> parcelRoles) {
+        return new VideoModalEligibleResponse(id, type, version, triggers, title, subtitle, youtubeVideoId,
+                durationSeconds, highlights, primaryLabel, secondaryLabel, body, icon, primaryAction,
+                secondaryAction, maxDisplays, displays, audience, layout, sizePercent, imageMode, imageFit,
+                imageUrl, imageAlt, priority, frequency, frequencyDays, stopAfterAnswer, allowDontShowAgain,
+                lastShownAt, triggerOptions, corridors, parcelRoles == null ? List.of() : List.copyOf(parcelRoles));
     }
 
     public record Highlight(VideoModalIcon icon, String text) {

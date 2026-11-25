@@ -7,7 +7,9 @@ import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /** Listes d'une campagne stockées en JSON dans une colonne TEXT. */
 final class VideoModalJsonConverters {
@@ -77,6 +79,37 @@ final class VideoModalJsonConverters {
     static class Corridors extends JsonList<VideoModalCorridor> {
         Corridors() {
             super(new TypeReference<>() { });
+        }
+    }
+
+    /**
+     * Rôles visés sur le colis (V401). Ensemble vide = tous les rôles, écrit NULL : la colonne reste nulle
+     * comme pour les campagnes d'avant la migration. JSON en ordre fixe (SENDER, TRAVELER, RECIPIENT).
+     */
+    @Converter
+    static class ParcelRoles implements AttributeConverter<Set<VideoModalParcelRole>, String> {
+
+        private static final TypeReference<List<VideoModalParcelRole>> TYPE = new TypeReference<>() { };
+
+        @Override
+        public String convertToDatabaseColumn(Set<VideoModalParcelRole> value) {
+            if (value == null || value.isEmpty()) return null;
+            try {
+                return MAPPER.writeValueAsString(EnumSet.copyOf(value));
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Rôles non sérialisables", e);
+            }
+        }
+
+        @Override
+        public Set<VideoModalParcelRole> convertToEntityAttribute(String json) {
+            if (json == null || json.isBlank()) return EnumSet.noneOf(VideoModalParcelRole.class);
+            try {
+                List<VideoModalParcelRole> roles = MAPPER.readValue(json, TYPE);
+                return roles.isEmpty() ? EnumSet.noneOf(VideoModalParcelRole.class) : EnumSet.copyOf(roles);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Colonne JSON illisible", e);
+            }
         }
     }
 

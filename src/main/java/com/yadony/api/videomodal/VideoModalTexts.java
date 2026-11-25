@@ -22,7 +22,10 @@ final class VideoModalTexts {
         return toEligible(c, english, displays, lastShownAt, imageUrls, c.effectiveTriggers());
     }
 
-    /** {@code triggers} : déclencheurs réellement servis (moments d'action retirés pour une app sans {@code caps=moments}). */
+    /**
+     * {@code triggers} : déclencheurs réellement servis (moments d'action retirés pour une app sans
+     * {@code caps=moments}). Les variables des textes ({destinataire}…) partent telles quelles : l'app les remplit.
+     */
     static VideoModalEligibleResponse toEligible(VideoModalCampaignEntity c, boolean english, int displays,
                                                  Instant lastShownAt, VideoModalImageUrls imageUrls,
                                                  List<VideoModalTrigger> triggers) {
@@ -31,7 +34,8 @@ final class VideoModalTexts {
                 : toEligibleVideo(c, english, displays);
         return base.withTargeting(c.getPriority(), c.getFrequency(), c.getFrequencyDays(),
                         c.isStopAfterAnswer(), c.isAllowDontShowAgain(), lastShownAt)
-                .withMoments(triggers, c.getTriggerOptions(), List.copyOf(c.getCorridors()));
+                .withMoments(triggers, c.getTriggerOptions(), List.copyOf(c.getCorridors()))
+                .withParcelRoles(List.copyOf(c.getParcelRoles()));
     }
 
     private static VideoModalEligibleResponse toEligibleVideo(VideoModalCampaignEntity c, boolean english, int displays) {

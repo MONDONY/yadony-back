@@ -11,4 +11,12 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  */
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record VideoModalAction(VideoModalActionKind kind, InfoScreen screen, String url) {
+
+    /**
+     * Vrai pour un bouton qui ouvre un écran du colis ({@code PARCEL_*}). Nom sans préfixe « is »/« get » :
+     * Jackson ne doit pas en faire une propriété du JSON stocké et servi.
+     */
+    public boolean opensParcelScreen() {
+        return kind == VideoModalActionKind.SCREEN && screen != null && screen.isParcelScreen();
+    }
 }

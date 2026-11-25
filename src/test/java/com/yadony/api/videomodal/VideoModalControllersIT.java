@@ -286,6 +286,108 @@ class VideoModalControllersIT {
         verify(auditService).log(eq("VIDEO_MODAL"), eq(uuid), eq("VIDEO_MODAL_DELETED"), eq(ADMIN_ID), any());
     }
 
+    /** Modal d'étape du colis (§6.7) : déclencheurs PARCEL_*, rôles, une fois par colis, boutons du colis, variables. */
+    private static final String PARCEL_BODY = """
+            {"name":"Colis arrivé","type":"INFO","titleFr":"Colis arrivé à {ville_arrivee}",
+             "titleEn":"Parcel arrived in {ville_arrivee}",
+             "bodyFr":"{voyageur} a le colis de {expéditeur} pour {destinataire}.",
+             "bodyEn":"{voyageur} has {expéditeur}'s parcel for {destinataire}.",
+             "primaryLabelFr":"Envoyer le code","primaryLabelEn":"Send the code",
+             "secondaryLabelFr":"Voir le suivi","secondaryLabelEn":"See tracking",
+             "primaryAction":{"kind":"SCREEN","screen":"PARCEL_SEND_CODE"},
+             "secondaryAction":{"kind":"SCREEN","screen":"PARCEL_TRACKING"},
+             "triggers":["PARCEL_ARRIVED","PARCEL_DELIVERED"],"frequency":"ONCE_PER_PARCEL",
+             "parcelRoles":["RECIPIENT","SENDER","SENDER"]}
+            """;
+
+    @Test
+    @DisplayName("modal d'étape : aller-retour admin (création, lecture, modification) puis servi à l'app ; 422 ProblemDetail")
+    void roundTripThroughAdminEndpoint() throws Exception {
+        String json = mockMvc.perform(post("/admin/video-modals").with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content(PARCEL_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.parcelRoles.length()").value(2))
+                .andExpect(jsonPath("$.parcelRoles[0]").value("SENDER"))
+                .andExpect(jsonPath("$.parcelRoles[1]").value("RECIPIENT"))
+                .andExpect(jsonPath("$.frequency").value("ONCE_PER_PARCEL"))
+                .andExpect(jsonPath("$.triggers[0]").value("PARCEL_ARRIVED"))
+                .andExpect(jsonPath("$.triggers[1]").value("PARCEL_DELIVERED"))
+                .andExpect(jsonPath("$.primaryAction.screen").value("PARCEL_SEND_CODE"))
+                .andExpect(jsonPath("$.secondaryAction.screen").value("PARCEL_TRACKING"))
+                .andExpect(jsonPath("$.titleFr").value("Colis arrivé à {ville_arrivee}"))
+                .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(json).get("id").asText();
+
+        mockMvc.perform(get("/admin/video-modals/{id}", id).with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parcelRoles[0]").value("SENDER"))
+                .andExpect(jsonPath("$.parcelRoles[1]").value("RECIPIENT"))
+                .andExpect(jsonPath("$.frequency").value("ONCE_PER_PARCEL"))
+                .andExpect(jsonPath("$.bodyFr").value("{voyageur} a le colis de {expéditeur} pour {destinataire}."));
+
+        // Modification : un seul rôle, les autres réglages relus tels quels.
+        mockMvc.perform(put("/admin/video-modals/{id}", id).with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PARCEL_BODY.replace("[\"RECIPIENT\",\"SENDER\",\"SENDER\"]", "[\"TRAVELER\"]")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parcelRoles.length()").value(1))
+                .andExpect(jsonPath("$.parcelRoles[0]").value("TRAVELER"));
+        mockMvc.perform(patch("/admin/video-modals/{id}/active", id).with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":true}"))
+                .andExpect(status().isOk());
+
+        // App qui annonce toutes les capacités : la campagne arrive avec ses rôles, textes non remplis.
+        mockMvc.perform(get("/video-modals/eligible").param("lang", "en")
+                        .param("caps", "layout,targeting,moments,everytime,parcel"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(id))
+                .andExpect(jsonPath("$[0].parcelRoles[0]").value("TRAVELER"))
+                .andExpect(jsonPath("$[0].frequency").value("ONCE_PER_PARCEL"))
+                .andExpect(jsonPath("$[0].triggers[0]").value("PARCEL_ARRIVED"))
+                .andExpect(jsonPath("$[0].primaryAction.screen").value("PARCEL_SEND_CODE"))
+                .andExpect(jsonPath("$[0].title").value("Parcel arrived in {ville_arrivee}"));
+
+        // Une campagne ordinaire garde parcelRoles = [] (jamais nul) côté admin et app.
+        String plain = createActiveCampaign();
+        mockMvc.perform(get("/admin/video-modals/{id}", plain).with(authentication(adminAuth())))
+                .andExpect(jsonPath("$.parcelRoles.length()").value(0));
+        JsonNode served = objectMapper.readTree(mockMvc.perform(get("/video-modals/eligible")
+                        .param("caps", "layout,targeting,moments,everytime,parcel"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        JsonNode plainServed = null;
+        for (JsonNode n : served) if (plain.equals(n.get("id").asText())) plainServed = n;
+        assertThat(plainServed).isNotNull();
+        assertThat(plainServed.get("parcelRoles").isArray()).isTrue();
+        assertThat(plainServed.get("parcelRoles")).isEmpty();
+
+        // Chaque règle des modals d'étape : 422 ProblemDetail avec son code, rien d'enregistré.
+        long before = campaignRepository.count();
+        java.util.Map<String, String> invalid = java.util.Map.of(
+                "video-modal-unknown-variable",
+                PARCEL_BODY.replace("pour {destinataire}.\",", "pour {destinataire}, code {code}.\","),
+                "video-modal-parcel-roles-need-parcel-trigger",
+                PARCEL_BODY.replace("[\"PARCEL_ARRIVED\",\"PARCEL_DELIVERED\"],\"frequency\":\"ONCE_PER_PARCEL\"",
+                        "[\"APP_OPEN\"],\"frequency\":\"UP_TO_N\"")
+                        .replace("\"screen\":\"PARCEL_SEND_CODE\"", "\"screen\":\"HELP\"")
+                        .replace("\"screen\":\"PARCEL_TRACKING\"", "\"screen\":\"TRACKING\""),
+                "video-modal-once-per-parcel-parcel-triggers-only",
+                PARCEL_BODY.replace("[\"PARCEL_ARRIVED\",\"PARCEL_DELIVERED\"]", "[\"PARCEL_ARRIVED\",\"APP_OPEN\"]"),
+                "video-modal-parcel-action-needs-parcel-trigger",
+                PARCEL_BODY.replace("[\"PARCEL_ARRIVED\",\"PARCEL_DELIVERED\"],\"frequency\":\"ONCE_PER_PARCEL\"",
+                        "[\"APP_OPEN\"],\"frequency\":\"UP_TO_N\"").replace("\"parcelRoles\":[\"RECIPIENT\",\"SENDER\",\"SENDER\"]",
+                        "\"parcelRoles\":[]"),
+                "video-modal-invalid-parcel-role",
+                PARCEL_BODY.replace("[\"RECIPIENT\",\"SENDER\",\"SENDER\"]", "[\"PILOTE\"]"));
+        for (var entry : invalid.entrySet()) {
+            mockMvc.perform(post("/admin/video-modals").with(authentication(adminAuth()))
+                            .contentType(MediaType.APPLICATION_JSON).content(entry.getValue()))
+                    .andExpect(status().isUnprocessableEntity())
+                    .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                    .andExpect(jsonPath("$.code").value(entry.getKey()));
+        }
+        assertThat(campaignRepository.count()).isEqualTo(before);
+    }
+
     // ── App ────────────────────────────────────────────────────────────────
 
     @Test
