@@ -365,6 +365,35 @@ class ReceptionServiceTest {
     }
 
     @Test
+    void confirm_pending_publishesLinkConfirmedEvent() {
+        BidEntity b = bid(BidStatus.HANDED_OVER, NOW_LDT);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.PENDING)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        java.util.List<Object> published = new java.util.ArrayList<>();
+        service.setEventPublisher(published::add);
+
+        service.confirm(b.getId(), "uid-me");
+
+        assertThat(published).containsExactly(
+                new com.yadony.api.matching.events.RecipientLinkConfirmedEvent(b.getId()));
+    }
+
+    @Test
+    void confirm_alreadyConfirmed_publishesNothing() {
+        BidEntity b = bid(BidStatus.HANDED_OVER, NOW_LDT);
+        when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))
+                .thenReturn(Optional.of(link(b, ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        java.util.List<Object> published = new java.util.ArrayList<>();
+        service.setEventPublisher(published::add);
+
+        service.confirm(b.getId(), "uid-me");
+
+        assertThat(published).isEmpty();
+    }
+
+    @Test
     void confirm_alreadyConfirmed_isIdempotent() {
         BidEntity b = bid(BidStatus.ACCEPTED, NOW_LDT);
         when(linkRepository.findByBidIdAndRecipientUserId(b.getId(), meId))

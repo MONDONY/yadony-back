@@ -9,6 +9,8 @@ public final class ReceptionNotifications {
     /** Destinataire de confiance (invitation acceptée) : colis rattaché d'emblée, simple annonce. */
     public static final String ANNOUNCED = "RECIPIENT_PARCEL_ANNOUNCED";
     public static final String DEPARTED = "RECIPIENT_PARCEL_DEPARTED";
+    /** Code de retrait prêt : au scan de départ, ou à la confirmation du lien si le colis est déjà remis. */
+    public static final String CODE_READY = "RECIPIENT_CODE_READY";
     public static final String ARRIVED = "RECIPIENT_PARCEL_ARRIVED";
     public static final String DELIVERED = "RECIPIENT_PARCEL_DELIVERED";
     public static final String CANCELLED = "RECIPIENT_PARCEL_CANCELLED";

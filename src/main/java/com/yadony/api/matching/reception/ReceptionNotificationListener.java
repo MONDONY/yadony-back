@@ -2,7 +2,12 @@ package com.yadony.api.matching.reception;
 
 import com.yadony.api.cancellation.events.CancellationConfirmedEvent;
 import com.yadony.api.cancellation.events.TripCancelledEvent;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.events.RecipientLinkConfirmedEvent;
 import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.RecipientReplacementRequestedEvent;
@@ -28,6 +33,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.time.Duration;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -50,15 +56,30 @@ public class ReceptionNotificationListener {
     private static final Set<ReceptionLinkStatus> ARRIVAL_AUDIENCE =
             EnumSet.of(ReceptionLinkStatus.PENDING, ReceptionLinkStatus.CONFIRMED);
 
+    /** Colis déjà remis au voyageur : un code existe, le destinataire confirmé peut être prévenu. */
+    private static final Set<BidStatus> CODE_READY_STATUSES =
+            EnumSet.of(BidStatus.HANDED_OVER, BidStatus.IN_TRANSIT, BidStatus.ARRIVED);
+
     private final BidRecipientLinkRepository linkRepository;
     private final AnnouncementRepository announcementRepository;
+    private final BidRepository bidRepository;
     private final NotificationDispatcher notificationDispatcher;
+
+    /**
+     * « Code prêt » déjà envoyé, par colis et destinataire : le scan de départ et la confirmation du
+     * lien peuvent tous deux conclure à l'envoi (course entre les deux), un seul push part. Mémoire
+     * du processus, bornée : un redémarrage dans la journée peut au pire redoubler un push.
+     */
+    private final Cache<String, Boolean> codeReadySent = Caffeine.newBuilder()
+            .maximumSize(10_000).expireAfterWrite(Duration.ofHours(24)).build();
 
     public ReceptionNotificationListener(BidRecipientLinkRepository linkRepository,
                                          AnnouncementRepository announcementRepository,
+                                         BidRepository bidRepository,
                                          NotificationDispatcher notificationDispatcher) {
         this.linkRepository = linkRepository;
         this.announcementRepository = announcementRepository;
+        this.bidRepository = bidRepository;
         this.notificationDispatcher = notificationDispatcher;
     }
 
@@ -67,6 +88,51 @@ public class ReceptionNotificationListener {
     public void onParcelDeparted(ParcelDepartedEvent event) {
         notifyConfirmedRecipient(event.bidId(), ReceptionNotifications.DEPARTED,
                 m -> NotificationTexts.recipientParcelDeparted(m));
+        // Le code vient d'être créé au scan de départ : « Code de retrait prêt », sans le code.
+        notifyCodeReady(event.bidId());
+    }
+
+    /**
+     * Le lien du colis passe CONFIRMED : si le colis est déjà remis (HANDED_OVER, IN_TRANSIT, ARRIVED) et
+     * qu'un code existe, le destinataire en est prévenu. Avant la remise, le scan de départ s'en charge.
+     */
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onRecipientLinkConfirmed(RecipientLinkConfirmedEvent event) {
+        if (event.bidId() == null) {
+            return;
+        }
+        try {
+            boolean handedOverWithCode = bidRepository.findById(event.bidId())
+                    .filter(b -> CODE_READY_STATUSES.contains(b.getStatus()) && b.getConfirmationCode() != null)
+                    .isPresent();
+            if (handedOverWithCode) {
+                notifyCodeReady(event.bidId());
+            }
+        } catch (Exception e) {
+            log.warn("Code prêt du colis {} non annoncé au destinataire : {}", event.bidId(), e.toString());
+        }
+    }
+
+    /** Une seule fois par colis et destinataire ; seul un lien CONFIRMED est prévenu. Jamais le code. */
+    private void notifyCodeReady(UUID bidId) {
+        if (bidId == null) {
+            return;
+        }
+        try {
+            linkRepository.findByBidId(bidId)
+                    .filter(l -> l.getStatus() == ReceptionLinkStatus.CONFIRMED)
+                    .filter(l -> codeReadySent.asMap().putIfAbsent(bidId + ":" + l.getRecipientUserId(), true) == null)
+                    .ifPresent(link -> {
+                        UUID recipientId = link.getRecipientUserId();
+                        NotificationText t = NotificationTexts.recipientCodeReady(
+                                notificationDispatcher.messagesFor(recipientId));
+                        notificationDispatcher.notifyUser(recipientId, t.title(), t.body(),
+                                Map.of("type", ReceptionNotifications.CODE_READY, "bidId", bidId.toString()));
+                    });
+        } catch (Exception e) {
+            log.warn("Code prêt du colis {} non annoncé au destinataire : {}", bidId, e.toString());
+        }
     }
 
     @Async
