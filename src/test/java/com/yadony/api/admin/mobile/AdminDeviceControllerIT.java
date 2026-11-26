@@ -124,5 +124,37 @@ class AdminDeviceControllerIT {
                 .andExpect(status().isNoContent());
         assertThat(repository.findActiveByAdminId(ADMIN_A)).isEmpty();
         assertThat(repository.findActiveByAdminId(ADMIN_B)).hasSize(1);
+        assertThat(repository.findAnyByFcmToken("tok-a")).isPresent()
+                .get().extracting(AdminDeviceEntity::getDeletedAt).isNotNull();
+    }
+
+    @Test
+    @DisplayName("unregister d'un jeton inconnu répond 204")
+    void unregister_unknownToken_returns204() throws Exception {
+        mockMvc.perform(delete("/admin/mobile/devices").param("fcmToken", "inconnu")
+                        .with(authentication(admin(ADMIN_A))))
+                .andExpect(status().isNoContent());
+    }
+
+    private void expect422(String body) throws Exception {
+        mockMvc.perform(post("/admin/mobile/devices").with(authentication(admin(ADMIN_A)))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnprocessableEntity());
+        assertThat(repository.findActive()).isEmpty();
+    }
+
+    @Test
+    void register_returns422_whenFcmTokenTooLong() throws Exception {
+        expect422(BODY.formatted("x".repeat(513)));
+    }
+
+    @Test
+    void register_returns422_whenDeviceNameTooLong() throws Exception {
+        expect422("{\"fcmToken\":\"t\",\"deviceName\":\"" + "n".repeat(256) + "\",\"platform\":\"ios\"}");
+    }
+
+    @Test
+    void register_returns422_whenPlatformUnknown() throws Exception {
+        expect422("{\"fcmToken\":\"t\",\"deviceName\":\"d\",\"platform\":\"symbian\"}");
     }
 }

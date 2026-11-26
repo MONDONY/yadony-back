@@ -3,6 +3,8 @@ package com.yadony.api.admin.mobile;
 import com.yadony.api.admin.account.AdminPrincipal;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -25,9 +27,9 @@ import java.util.UUID;
 public class AdminDeviceController {
 
     public record RegisterAdminDeviceRequest(
-            @NotBlank String fcmToken,
-            @NotBlank String deviceName,
-            @NotBlank String platform) {
+            @NotBlank @Size(max = 512) String fcmToken,
+            @NotBlank @Size(max = 255) String deviceName,
+            @NotBlank @Pattern(regexp = "ios|android|web") String platform) {
     }
 
     private final AdminDeviceRepository repository;
