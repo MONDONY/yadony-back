@@ -498,7 +498,7 @@ class AdminAlertControllerTest {
                 com.yadony.api.common.YadonyBusinessException.class, () -> controller().claim(id, adminAuth()));
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(ex.getErrorCode()).isEqualTo("ALERT_ALREADY_CLAIMED");
+        assertThat(ex.getErrorCode()).isEqualTo("alert-already-claimed");
         verify(alertRepo).claimIfFree(eq(id), eq(ADMIN_ID), any());
         verifyNoInteractions(auditService);
     }
@@ -573,7 +573,7 @@ class AdminAlertControllerTest {
                 () -> controller().releaseClaim(id, authOf(ADMIN_ID, "ALERT_RESOLVE")));
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
-        assertThat(ex.getErrorCode()).isEqualTo("ALERT_CLAIM_NOT_YOURS");
+        assertThat(ex.getErrorCode()).isEqualTo("alert-claim-not-yours");
         assertThat(entity.getClaimedBy()).isEqualTo(owner);
         verifyNoInteractions(auditService);
     }
@@ -587,6 +587,56 @@ class AdminAlertControllerTest {
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(alertRepo, never()).releaseIfClaimedBy(any(), any());
+        verifyNoInteractions(auditService);
+    }
+
+    // ── Nom de l'admin qui a pris l'alerte, lu par le front (F15) ─────────────
+
+    private AdminAlertEntity claimedBy(UUID adminId, String email) {
+        AdminAlertEntity entity = alert("X", false);
+        entity.setClaimedBy(adminId);
+        entity.setClaimedAt(java.time.OffsetDateTime.parse("2026-11-26T09:30:00Z"));
+        when(adminUserRepo.findById(adminId)).thenReturn(Optional.of(
+                new com.yadony.api.admin.account.AdminUserEntity("uid-claimer", email,
+                        com.yadony.api.admin.account.AdminRole.SUPPORT)));
+        return entity;
+    }
+
+    @Test
+    void get_claimedAlert_carriesClaimedByName() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = claimedBy(ADMIN_ID, "claimer@yadony.test");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        AdminAlertResponse body = controller().get(id).getBody();
+
+        assertThat(body.claimedByName()).isNotNull().isEqualTo("claimer@yadony.test");
+        assertThat(body.claimedAt()).isEqualTo(entity.getClaimedAt());
+    }
+
+    @Test
+    void list_claimedAlert_carriesClaimedByName() {
+        AdminAlertEntity entity = claimedBy(ADMIN_ID, "claimer@yadony.test");
+        when(alertRepo.findFiltered(isNull(), isNull(), eq(false), isNull(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(entity, alert("Y", false))));
+
+        Page<AdminAlertResponse> page = controller().list(null, null, false, null, 0, 20).getBody();
+
+        assertThat(page.getContent().get(0).claimedByName()).isNotNull().isEqualTo("claimer@yadony.test");
+        assertThat(page.getContent().get(1).claimedByName()).isNull();
+    }
+
+    @Test
+    void claim_missingAlert_returns404_withoutWriting() {
+        UUID id = UUID.randomUUID();
+        when(alertRepo.findById(id)).thenReturn(Optional.empty());
+
+        var ex = org.junit.jupiter.api.Assertions.assertThrows(
+                com.yadony.api.common.YadonyBusinessException.class, () -> controller().claim(id, adminAuth()));
+
+        assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(ex.getErrorCode()).isEqualTo("alert-not-found");
+        verify(alertRepo, never()).claimIfFree(any(), any(), any());
         verifyNoInteractions(auditService);
     }
 

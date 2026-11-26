@@ -263,7 +263,7 @@ public class AdminAlertController {
         if (adminId.equals(alert.getClaimedBy())) {
             return ResponseEntity.ok(toResponse(alert));
         }
-        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "ALERT_ALREADY_CLAIMED",
+        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "alert-already-claimed",
                 "problem.admin.alert-already-claimed");
     }
 
@@ -280,7 +280,7 @@ public class AdminAlertController {
         boolean canManage = authentication.getAuthorities().stream()
                 .anyMatch(a -> "ADMIN_MANAGE".equals(a.getAuthority()));
         if (!alert.getClaimedBy().equals(adminId) && !canManage) {
-            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "ALERT_CLAIM_NOT_YOURS",
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "alert-claim-not-yours",
                     "problem.admin.alert-claim-not-yours");
         }
         UUID previous = alert.getClaimedBy();
