@@ -84,6 +84,9 @@ yadony:
   # Pas de passage planifié pendant les tests : MoneyIntegrityMonitorIT appelle runAll() directement.
   money-integrity:
     enabled: false
+  # Aucun push admin ni Firebase pendant les tests : le répartiteur est testé directement.
+  admin-push:
+    enabled: false
   # Pas d'appel Stripe ni pawaPay réel pendant les tests.
   reconciliation:
     enabled: false
