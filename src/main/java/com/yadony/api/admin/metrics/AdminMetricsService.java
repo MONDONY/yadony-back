@@ -28,7 +28,7 @@ public class AdminMetricsService {
     private final EntityManager em;
     private final PaymentRepository paymentRepository;
     private final AdminQueueCounter queueCounter;
-    private final Clock clock;
+    private Clock clock;
 
     /** Periode de la vue d'ensemble mobile ({@code ?period=}). */
     public enum Period { TODAY, D7, D30 }
@@ -40,6 +40,11 @@ public class AdminMetricsService {
         this.em = em;
         this.paymentRepository = paymentRepository;
         this.queueCounter = queueCounter;
+        this.clock = clock;
+    }
+
+    /** Tests : horloge figée sur ce seul service, sans remplacer le {@code Clock} global du contexte. */
+    void setClock(Clock clock) {
         this.clock = clock;
     }
 
@@ -101,10 +106,16 @@ public class AdminMetricsService {
                 .getSingleResult()).longValue();
     }
 
+    /**
+     * Par {@code cancelled_at} (V316, posé par {@code BidEntity.setStatus} sur tout chemin vers
+     * CANCELLED), jamais par {@code updated_at} : un colis annulé il y a deux mois puis modifié
+     * aujourd'hui n'est pas une annulation du jour. Les annulations antérieures à V316 n'ont pas
+     * de date et ne comptent dans aucune période.
+     */
     private long countCancelledBids(LocalDateTime from, LocalDateTime to) {
         return em.createQuery(
                         "SELECT COUNT(b) FROM BidEntity b WHERE b.status = :status "
-                                + "AND b.updatedAt >= :from AND b.updatedAt <= :to", Long.class)
+                                + "AND b.cancelledAt >= :from AND b.cancelledAt <= :to", Long.class)
                 .setParameter("status", BidStatus.CANCELLED)
                 .setParameter("from", from).setParameter("to", to)
                 .getSingleResult();

@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,12 +47,10 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -70,16 +69,18 @@ class AdminMetricsControllerIT {
     /**
      * Horloge figée en 2030 : les fenêtres de période n'attrapent aucune donnée des autres tests,
      * et « aujourd'hui » ne dépend pas de l'heure du run (minuit Paris = 2030-01-14T23:00Z).
+     * Posée sur le seul service, puis rendue : jamais un {@code Clock} global {@code @Primary},
+     * qui remplacerait l'horloge des planificateurs du contexte Spring partagé.
      */
     static final Instant NOW = Instant.parse("2030-01-15T10:00:00Z");
 
-    @TestConfiguration
-    static class FixedClockConfig {
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(NOW, ZoneOffset.UTC);
-        }
+    @Autowired AdminMetricsService metricsService;
+    private Clock originalClock;
+
+    @BeforeEach
+    void fixClock() {
+        originalClock = (Clock) ReflectionTestUtils.getField(metricsService, "clock");
+        metricsService.setClock(Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Autowired MockMvc mockMvc;
@@ -97,6 +98,7 @@ class AdminMetricsControllerIT {
 
     @AfterEach
     void cleanSeeded() {
+        metricsService.setClock(originalClock);
         seededBids.forEach(id -> jdbc.update("DELETE FROM bids WHERE id = ?", id));
         seededAnnouncements.forEach(id -> jdbc.update("DELETE FROM announcements WHERE id = ?", id));
         seededUsers.forEach(id -> {
@@ -136,7 +138,8 @@ class AdminMetricsControllerIT {
         return id;
     }
 
-    private void cancelledBidOrOther(UUID announcementId, UUID senderId, BidStatus status, String updatedAt) {
+    /** Bid aux dates fixées ; {@code cancelledAt} null : jamais annulé (ou avant V316). */
+    private void bid(UUID announcementId, UUID senderId, BidStatus status, String cancelledAt, String updatedAt) {
         BidEntity bid = new BidEntity();
         bid.setAnnouncementId(announcementId);
         bid.setSenderId(senderId);
@@ -144,6 +147,9 @@ class AdminMetricsControllerIT {
         bid.setStatus(status);
         UUID id = bidRepository.save(bid).getId();
         seededBids.add(id);
+        if (cancelledAt != null) {
+            setDates("bids", id, "cancelled_at", cancelledAt);
+        }
         setDates("bids", id, "updated_at", updatedAt);
     }
 
@@ -175,7 +181,9 @@ class AdminMetricsControllerIT {
      *   <li>A cree 15/01 00:30Z (aujourd'hui) ; B cree 14/01 22:30Z (hier, Paris) ; C cree 12/01 ;
      *       D cree 15/01 08:00Z puis supprime 15/01 09:00Z ; E ancien, supprime 14/01 22:30Z ;
      *       F cree 16/01 (apres « maintenant », exclu partout).</li>
-     *   <li>Bids : 2 annules (15/01 07:00Z et 14/01 22:00Z), 1 en attente mis a jour aujourd'hui.</li>
+     *   <li>Bids : 2 annules (15/01 07:00Z et 14/01 22:00Z), 1 en attente mis a jour aujourd'hui,
+     *       1 annule le 01/11/2029 (hors de toute periode) mais modifie aujourd'hui : compte par
+     *       {@code cancelled_at}, jamais par {@code updated_at}.</li>
      * </ul>
      */
     private void seedPeriodData() {
@@ -186,9 +194,10 @@ class AdminMetricsControllerIT {
         user("2029-01-01T10:00:00", "2030-01-14T22:30:00");
         user("2030-01-16T10:00:00", null);
         UUID ann = announcement(a);
-        cancelledBidOrOther(ann, a, BidStatus.CANCELLED, "2030-01-15T07:00:00");
-        cancelledBidOrOther(ann, a, BidStatus.CANCELLED, "2030-01-14T22:00:00");
-        cancelledBidOrOther(ann, a, BidStatus.PENDING, "2030-01-15T07:30:00");
+        bid(ann, a, BidStatus.CANCELLED, "2030-01-15T07:00:00", "2030-01-15T07:00:00");
+        bid(ann, a, BidStatus.CANCELLED, "2030-01-14T22:00:00", "2030-01-14T22:00:00");
+        bid(ann, a, BidStatus.PENDING, null, "2030-01-15T07:30:00");
+        bid(ann, a, BidStatus.CANCELLED, "2029-11-01T10:00:00", "2030-01-15T08:00:00");
     }
 
     private static UsernamePasswordAuthenticationToken auth(String... permissions) {

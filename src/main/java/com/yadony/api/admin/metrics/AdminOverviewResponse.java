@@ -29,7 +29,8 @@ public record AdminOverviewResponse(
      * @param name TODAY, D7 ou D30
      * @param signups comptes crees dans la periode, y compris ceux supprimes depuis
      * @param deletedAccounts comptes dont {@code deleted_at} tombe dans la periode
-     * @param parcelsCancelled bids {@code CANCELLED} dont {@code updated_at} tombe dans la periode
+     * @param parcelsCancelled bids {@code CANCELLED} dont {@code cancelled_at} (date de l'annulation,
+     *                         V316) tombe dans la periode ; une modification ulterieure n'y change rien
      * @param kycInProgress instantane (non borne par la periode) : meme definition que
      *                      {@code users.kycPending} / {@code queues.pendingKyc}, kyc_status PENDING
      */
