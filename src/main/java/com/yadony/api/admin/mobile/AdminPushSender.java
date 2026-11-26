@@ -5,6 +5,7 @@ import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MessagingErrorCode;
 import com.google.firebase.messaging.Notification;
+import com.google.firebase.messaging.WebpushConfig;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -58,11 +59,22 @@ public class AdminPushSender {
         };
     }
 
-    /** Sans lien webpush : le service worker ouvre {@code data.route} au clic. */
+    /** Un push vieux de plus d'un jour n'a plus d'intérêt : le service push le jette au-delà. */
+    static final String TTL_SECONDS = "86400";
+
+    /**
+     * Sans lien webpush ({@code fcm_options.link}) : le service worker ouvre {@code data.route} au
+     * clic. Seuls les en-têtes Web Push sont posés : durée de vie (sinon un téléphone éteint
+     * recevrait le push des semaines plus tard) et urgence haute (livré même en économie d'énergie).
+     */
     static Message buildMessage(String fcmToken, String title, String body, Map<String, String> data) {
         Message.Builder builder = Message.builder()
                 .setToken(fcmToken)
-                .setNotification(Notification.builder().setTitle(title).setBody(body).build());
+                .setNotification(Notification.builder().setTitle(title).setBody(body).build())
+                .setWebpushConfig(WebpushConfig.builder()
+                        .putHeader("TTL", TTL_SECONDS)
+                        .putHeader("Urgency", "high")
+                        .build());
         if (data != null) {
             builder.putAllData(data);
         }

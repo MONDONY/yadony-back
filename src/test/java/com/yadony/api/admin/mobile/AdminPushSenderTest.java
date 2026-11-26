@@ -49,7 +49,22 @@ class AdminPushSenderTest {
         Object n = ReflectionTestUtils.getField(m, "notification");
         assertThat(ReflectionTestUtils.getField(n, "title")).isEqualTo("Titre");
         assertThat(ReflectionTestUtils.getField(n, "body")).isEqualTo("Corps");
-        assertThat(ReflectionTestUtils.getField(m, "webpushConfig")).isNull();
+        // Le service worker ouvre data.route : jamais de fcm_options.link, ni de contenu webpush.
+        Object webpush = ReflectionTestUtils.getField(m, "webpushConfig");
+        assertThat(webpush).isNotNull();
+        assertThat(ReflectionTestUtils.getField(webpush, "fcmOptions")).isNull();
+        assertThat(ReflectionTestUtils.getField(webpush, "notification")).isNull();
+        assertThat(ReflectionTestUtils.getField(webpush, "data")).isNull();
+    }
+
+    /** Sans TTL, un push resté en attente (téléphone éteint) arriverait des semaines après (F10). */
+    @Test
+    void buildMessage_webpushHeaders_ttlOneDay_urgencyHigh() {
+        Message m = AdminPushSender.buildMessage("tok", "Titre", "Corps", Map.of());
+        Object webpush = ReflectionTestUtils.getField(m, "webpushConfig");
+        assertThat(webpush).isNotNull();
+        assertThat(ReflectionTestUtils.getField(webpush, "headers"))
+                .isEqualTo(Map.of("TTL", "86400", "Urgency", "high"));
     }
 
     private static AdminPushSender.SendOutcome sendWith(Throwable failure) throws Exception {
