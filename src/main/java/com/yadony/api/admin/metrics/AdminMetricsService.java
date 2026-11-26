@@ -14,9 +14,12 @@ import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 
 @Service
 @Transactional(readOnly = true)
@@ -25,15 +28,27 @@ public class AdminMetricsService {
     private final EntityManager em;
     private final PaymentRepository paymentRepository;
     private final AdminQueueCounter queueCounter;
+    private final Clock clock;
+
+    /** Periode de la vue d'ensemble mobile ({@code ?period=}). */
+    public enum Period { TODAY, D7, D30 }
+
+    private static final ZoneId PARIS = ZoneId.of("Europe/Paris");
 
     public AdminMetricsService(EntityManager em, PaymentRepository paymentRepository,
-                               AdminQueueCounter queueCounter) {
+                               AdminQueueCounter queueCounter, Clock clock) {
         this.em = em;
         this.paymentRepository = paymentRepository;
         this.queueCounter = queueCounter;
+        this.clock = clock;
     }
 
+    /** Contrat historique, sans bloc {@code period}. */
     public AdminOverviewResponse buildOverview() {
+        return buildOverview(null);
+    }
+
+    public AdminOverviewResponse buildOverview(Period period) {
         List<AdminOverviewResponse.GmvByCurrency> gmvByCurrency = buildGmvByCurrency();
         return new AdminOverviewResponse(
                 buildUsers(),
@@ -41,8 +56,58 @@ public class AdminMetricsService {
                 buildBids(),
                 AdminOverviewResponse.euroOnly(gmvByCurrency),
                 gmvByCurrency,
-                buildQueues()
+                buildQueues(),
+                period == null ? null : buildPeriod(period)
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Periode
+    // -------------------------------------------------------------------------
+
+    private AdminOverviewResponse.PeriodStats buildPeriod(Period period) {
+        LocalDateTime now = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
+        LocalDateTime from = switch (period) {
+            // Minuit a Paris, converti en UTC (les colonnes sont en UTC).
+            case TODAY -> LocalDate.now(clock.withZone(PARIS)).atStartOfDay(PARIS)
+                    .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+            case D7 -> now.minusDays(7);
+            case D30 -> now.minusDays(30);
+        };
+        return new AdminOverviewResponse.PeriodStats(
+                period.name(),
+                countSignups(from, now),
+                countDeletedAccounts(from, now),
+                countCancelledBids(from, now),
+                // Meme definition que users.kycPending / queues.pendingKyc.
+                countUsers("kycStatus", KycStatus.PENDING));
+    }
+
+    /**
+     * Natif : le {@code @Where deleted_at IS NULL} de UserEntity masquerait les comptes supprimes.
+     * Les inscriptions comptent aussi les comptes supprimes depuis (created_at dans la periode).
+     */
+    private long countSignups(LocalDateTime from, LocalDateTime to) {
+        return ((Number) em.createNativeQuery(
+                        "SELECT COUNT(*) FROM users WHERE created_at >= :from AND created_at <= :to")
+                .setParameter("from", from).setParameter("to", to)
+                .getSingleResult()).longValue();
+    }
+
+    private long countDeletedAccounts(LocalDateTime from, LocalDateTime to) {
+        return ((Number) em.createNativeQuery(
+                        "SELECT COUNT(*) FROM users WHERE deleted_at >= :from AND deleted_at <= :to")
+                .setParameter("from", from).setParameter("to", to)
+                .getSingleResult()).longValue();
+    }
+
+    private long countCancelledBids(LocalDateTime from, LocalDateTime to) {
+        return em.createQuery(
+                        "SELECT COUNT(b) FROM BidEntity b WHERE b.status = :status "
+                                + "AND b.updatedAt >= :from AND b.updatedAt <= :to", Long.class)
+                .setParameter("status", BidStatus.CANCELLED)
+                .setParameter("from", from).setParameter("to", to)
+                .getSingleResult();
     }
 
     // -------------------------------------------------------------------------
