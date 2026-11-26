@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.yadony.api.admin.account.AdminPermission;
+import com.yadony.api.admin.account.AdminPermissions;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.admin.account.AdminStatus;
 import com.yadony.api.admin.account.AdminUserEntity;
@@ -139,7 +140,7 @@ class AdminPushDispatcherTest {
     }
 
     @Test
-    void dispatcher_sendsOnlyTypesTheAdminMayRead() {
+    void dispatcher_sendsGenericCopy_andRoute() {
         UUID id = UUID.randomUUID();
         admin(id, AdminStatus.ACTIVE);
         device(id, "tok1", T0);
@@ -155,10 +156,70 @@ class AdminPushDispatcherTest {
         assertThat(s.body()).doesNotContain("Jean").doesNotContain("42");
         assertThat(s.data()).containsEntry("type", "ADMIN_ALERT").containsEntry("route", "/m/alertes/" + alertId);
         assertThat(s.data()).hasSize(2);
-        // les permissions de l'admin sont bien transmises au fil
+    }
+
+    // ── Permissions (F7) ─────────────────────────────────────────────────────
+
+    private AdminUserEntity adminWith(UUID id, AdminRole role, Map<String, Boolean> overrides) {
+        AdminUserEntity a = new AdminUserEntity("uid-" + id, id + "@x.fr", role);
+        org.springframework.test.util.ReflectionTestUtils.setField(a, "id", id);
+        a.setStatus(AdminStatus.ACTIVE);
+        a.setPermissionOverrides(new java.util.HashMap<>(overrides));
+        when(admins.findById(id)).thenReturn(Optional.of(a));
+        return a;
+    }
+
+    /** Le fil filtre par permission (contrat de AdminNotificationService.feed) : on le reproduit. */
+    private void feedFiltersByPermission(UUID adminId, AdminNotificationItem... items) {
+        when(notifications.feed(eq(adminId), any(), any(), anyInt())).thenAnswer(inv -> {
+            Set<AdminPermission> permissions = inv.getArgument(1);
+            List<AdminNotificationItem> visible = java.util.Arrays.stream(items)
+                    .filter(i -> permissions.contains(i.type().permission())).toList();
+            return new AdminNotificationFeedResponse(visible, 0, false, T0, List.of());
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<AdminPermission> permissionsPassedToFeed(UUID adminId) {
         org.mockito.ArgumentCaptor<Set<AdminPermission>> perms = org.mockito.ArgumentCaptor.forClass(Set.class);
-        org.mockito.Mockito.verify(notifications).feed(eq(id), perms.capture(), any(), anyInt());
-        assertThat(perms.getValue()).containsAll(AdminRole.SUPER_ADMIN.permissions());
+        verify(notifications).feed(eq(adminId), perms.capture(), any(), anyInt());
+        return perms.getValue();
+    }
+
+    @Test
+    void dispatcher_readsTheFeedWithTheAdminsEffectivePermissions_notAllOfThem() {
+        UUID id = UUID.randomUUID();
+        Map<String, Boolean> overrides = Map.of("PAYMENT_VIEW", false, "USER_GDPR_DELETE", true);
+        adminWith(id, AdminRole.SUPPORT, overrides);
+        device(id, "tok1", T0);
+        feedReturns(id, item(AdminNotificationType.SUPPORT_TICKET_CREATED, UUID.randomUUID(), T0.plusSeconds(5)));
+
+        dispatcher.runOnce();
+
+        Set<AdminPermission> passed = permissionsPassedToFeed(id);
+        assertThat(passed).isEqualTo(AdminPermissions.effective(AdminRole.SUPPORT, overrides));
+        assertThat(passed).contains(AdminPermission.SUPPORT_TICKET_VIEW, AdminPermission.USER_GDPR_DELETE)
+                .doesNotContain(AdminPermission.PAYMENT_VIEW, AdminPermission.ADMIN_MANAGE,
+                        AdminPermission.USER_SUSPEND);
+        assertThat(passed).isNotEqualTo(AdminRole.SUPER_ADMIN.permissions());
+    }
+
+    @Test
+    void dispatcher_neverPushesTypesWhosePermissionWasRemoved() {
+        UUID id = UUID.randomUUID();
+        adminWith(id, AdminRole.SUPPORT, Map.of("PAYMENT_VIEW", false));
+        device(id, "tok1", T0);
+        UUID ticket = UUID.randomUUID();
+        feedFiltersByPermission(id,
+                item(AdminNotificationType.PAYOUT_HELD, UUID.randomUUID(), T0.plusSeconds(1)),
+                item(AdminNotificationType.WALLET_REFUND_REQUESTED, UUID.randomUUID(), T0.plusSeconds(2)),
+                item(AdminNotificationType.GDPR_REQUESTED, UUID.randomUUID(), T0.plusSeconds(3)),
+                item(AdminNotificationType.SUPPORT_TICKET_CREATED, ticket, T0.plusSeconds(4)));
+
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+
+        assertThat(sent).extracting(s -> s.data().get("type")).containsExactly("SUPPORT_TICKET_CREATED");
+        assertThat(sent).extracting(s -> s.data().get("route")).containsExactly("/m/support/" + ticket);
     }
 
     @Test
