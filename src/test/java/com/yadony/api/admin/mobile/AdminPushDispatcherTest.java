@@ -13,6 +13,7 @@ import com.yadony.api.admin.notifications.AdminNotificationType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +27,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AdminPushDispatcherTest {
@@ -51,8 +54,31 @@ class AdminPushDispatcherTest {
         admins = mock(AdminUserRepository.class);
         devices = mock(AdminDeviceRepository.class);
         at(T0.plusSeconds(10));
-        when(devices.findActive()).thenAnswer(i -> List.copyOf(stored));
-        when(devices.save(any(AdminDeviceEntity.class))).thenAnswer(i -> i.getArgument(0));
+        when(devices.findActive()).thenAnswer(i -> stored.stream().filter(d -> d.getDeletedAt() == null).toList());
+        // Faux UPDATE ciblés, mêmes gardes que les requêtes JPQL (couvertes par AdminDeviceControllerIT).
+        when(devices.advanceLastPushedAt(any(), any(), any())).thenAnswer(i -> {
+            UUID deviceId = i.getArgument(0);
+            UUID adminId = i.getArgument(1);
+            Instant at = i.getArgument(2);
+            for (AdminDeviceEntity d : stored) {
+                if (d.getId().equals(deviceId) && d.getAdminId().equals(adminId) && d.getDeletedAt() == null
+                        && d.getLastPushedAt().isBefore(at)) {
+                    d.setLastPushedAt(at);
+                    return 1;
+                }
+            }
+            return 0;
+        });
+        when(devices.softDeleteActive(any(), any())).thenAnswer(i -> {
+            UUID deviceId = i.getArgument(0);
+            for (AdminDeviceEntity d : stored) {
+                if (d.getId().equals(deviceId) && d.getDeletedAt() == null) {
+                    d.setDeletedAt(i.getArgument(1));
+                    return 1;
+                }
+            }
+            return 0;
+        });
         AdminPushSender sender = new AdminPushSender() {
             @Override
             public SendResult send(String token, String title, String body, Map<String, String> data) {
@@ -76,6 +102,7 @@ class AdminPushDispatcherTest {
 
     private AdminDeviceEntity device(UUID adminId, String token, Instant cursor) {
         AdminDeviceEntity d = new AdminDeviceEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(d, "id", UUID.randomUUID());
         d.setAdminId(adminId);
         d.setFcmToken(token);
         d.setLastPushedAt(cursor);
@@ -279,5 +306,115 @@ class AdminPushDispatcherTest {
         assertThat(dispatcher.runOnce()).isEqualTo(1);
         assertThat(sent).hasSize(2);
         assertThat(sent.get(1).data().get("route")).isEqualTo("/m/alertes/" + second.id().substring(second.id().indexOf(':') + 1));
+    }
+
+    // ── Plancher du curseur (F3) et écritures ciblées (F9) ───────────────────
+
+    private static AdminNotificationItem[] oldAlerts(int count, Instant from) {
+        AdminNotificationItem[] items = new AdminNotificationItem[count];
+        for (int i = 0; i < count; i++) {
+            items[i] = item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), from.plus(Duration.ofHours(i)));
+        }
+        return items;
+    }
+
+    /** Appareil repris, admin réactivé ou sorti d'une série d'erreurs : curseur vieux de 3 jours. */
+    @Test
+    void dispatcher_staleCursor_neverPushesItemsOlderThanMaxAge() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        Instant now = T0.plus(Duration.ofDays(3));
+        AdminDeviceEntity d = device(id, "tok1", T0);
+        feedReturns(id, oldAlerts(12, T0.plusSeconds(60)));
+        at(now);
+
+        assertThat(dispatcher.runOnce()).isZero();
+        assertThat(dispatcher.runOnce()).isZero();
+
+        assertThat(sent).isEmpty();
+        assertThat(d.getLastPushedAt()).isEqualTo(T0);
+    }
+
+    @Test
+    void dispatcher_staleCursor_stillPushesItemsWithinMaxAge() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        Instant now = T0.plus(Duration.ofDays(3));
+        device(id, "tok1", T0);
+        AdminNotificationItem[] old = oldAlerts(12, T0.plusSeconds(60));
+        UUID recentId = UUID.randomUUID();
+        AdminNotificationItem recent = item(AdminNotificationType.ADMIN_ALERT, recentId,
+                now.minus(AdminPushDispatcher.MAX_AGE).plusSeconds(60));
+        AdminNotificationItem[] all = java.util.Arrays.copyOf(old, old.length + 1);
+        all[old.length] = recent;
+        feedReturns(id, all);
+        at(now);
+
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+        assertThat(sent).extracting(s -> s.data().get("route")).containsExactly("/m/alertes/" + recentId);
+    }
+
+    @Test
+    void dispatcher_idleDevice_isNeverWritten() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        device(id, "tok1", T0);
+        feedReturns(id);
+
+        for (int pass = 0; pass < 5; pass++) {
+            at(T0.plusSeconds(10 + 30L * pass));
+            assertThat(dispatcher.runOnce()).isZero();
+        }
+
+        verify(devices, never()).advanceLastPushedAt(any(), any(), any());
+        verify(devices, never()).softDeleteActive(any(), any());
+        verify(devices, never()).save(any());
+    }
+
+    @Test
+    void dispatcher_writesCursorWithTargetedUpdate_neverWithSave() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        AdminDeviceEntity d = device(id, "tok1", T0);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+        at(T0.plusSeconds(120));
+
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+
+        verify(devices).advanceLastPushedAt(d.getId(), id, T0.plusSeconds(120).minus(AdminPushDispatcher.LOOKBACK));
+        verify(devices, never()).save(any());
+    }
+
+    /** Sans écriture des appareils au repos, l'anti-doublon doit couvrir toute la fenêtre du plancher. */
+    @Test
+    void dispatcher_neverResendsAnItem_whileItStaysWithinMaxAge() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        device(id, "tok1", T0);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+        at(T0.plusSeconds(10));
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+
+        // 25 minutes de passages : au-delà de MAX_AGE et de l'ancienne durée de l'anti-doublon (10 min).
+        for (int pass = 1; pass <= 50; pass++) {
+            at(T0.plusSeconds(10 + 30L * pass));
+            assertThat(dispatcher.runOnce()).as("passage %d", pass).isZero();
+        }
+        assertThat(sent).hasSize(1);
+    }
+
+    @Test
+    void dispatcher_invalidToken_softDeletesWithTargetedUpdate() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        AdminDeviceEntity bad = device(id, "bad", T0);
+        invalidTokens.add("bad");
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+
+        dispatcher.runOnce();
+
+        verify(devices).softDeleteActive(eq(bad.getId()), any());
+        verify(devices, never()).advanceLastPushedAt(eq(bad.getId()), any(), any());
+        verify(devices, never()).save(any());
     }
 }

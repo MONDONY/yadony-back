@@ -18,6 +18,8 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -26,12 +28,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Pousse les nouveautés du fil admin vers les appareils enregistrés. Sondage toutes les 30 s :
- * pour chaque appareil, toute entrée plus récente que {@code last_pushed_at} (et lisible avec les
+ * pour chaque appareil, toute entrée plus récente que son curseur (et lisible avec les
  * permissions de l'admin) part une fois, puis le curseur avance. Un envoi en erreur laisse le
  * curseur en place : il sera retenté au passage suivant.
+ *
+ * <p>Le curseur effectif ne remonte jamais au-delà de {@link #MAX_AGE} : un jeton repris, un
+ * admin réactivé ou un appareil sorti d'une série d'erreurs ne reçoit pas des entrées vieilles
+ * de plusieurs jours. Un appareil sans nouveauté n'est pas écrit en base ; seuls les appareils
+ * dont le curseur avance le sont, par un UPDATE ciblé.
  */
 @Component
 @ConditionalOnProperty(name = "yadony.admin-push.enabled", havingValue = "true", matchIfMissing = true)
@@ -43,6 +51,11 @@ public class AdminPushDispatcher {
     static final int MAX_PER_DEVICE = 5;
     private static final int FEED_SIZE = 50;
     static final Duration LOOKBACK = Duration.ofSeconds(45);
+    /**
+     * Âge maximal d'une entrée poussée : plancher du curseur, quel que soit {@code last_pushed_at}.
+     * Une notification de plus d'un quart d'heure n'a plus rien d'urgent, la cloche la garde.
+     */
+    static final Duration MAX_AGE = Duration.ofMinutes(15);
     private static final String TICKET_PARAM = "ticket=";
 
     private final AdminDeviceRepository devices;
@@ -54,11 +67,14 @@ public class AdminPushDispatcher {
     /**
      * Identifiants déjà poussés, par appareil. Le curseur recule de {@link #LOOKBACK} pour ne pas
      * perdre une entrée d'un type dont le cache (15 s, expiration indépendante par type) est en
-     * retard ; ce cache évite de la renvoyer. Il vit en mémoire : un redémarrage peut renvoyer au
-     * plus les 45 dernières secondes d'entrées.
+     * retard ; ce cache évite de la renvoyer. Il dure plus que {@link #MAX_AGE} : un appareil au
+     * repos n'est plus écrit, son curseur peut rester en deçà d'une entrée déjà poussée, et seul le
+     * plancher l'écarte ensuite. Il vit en mémoire : un redémarrage peut renvoyer au plus les
+     * entrées du dernier passage qui a poussé (5 par appareil). Horloge du répartiteur pour les tests.
      */
     private final Cache<String, Boolean> sentIds = Caffeine.newBuilder()
-            .expireAfterWrite(Duration.ofMinutes(10)).maximumSize(10_000).build();
+            .ticker(this::nanos)
+            .expireAfterWrite(MAX_AGE.plusMinutes(5)).maximumSize(10_000).build();
 
     public AdminPushDispatcher(AdminDeviceRepository devices, AdminUserRepository admins,
                                AdminNotificationService notifications, AdminPushSender sender) {
@@ -70,6 +86,10 @@ public class AdminPushDispatcher {
 
     void setClock(Clock clock) {
         this.clock = clock;
+    }
+
+    private long nanos() {
+        return TimeUnit.MILLISECONDS.toNanos(clock.instant().toEpochMilli());
     }
 
     @Scheduled(fixedDelayString = "${yadony.admin-push.interval-ms:30000}")
@@ -106,29 +126,37 @@ public class AdminPushDispatcher {
         Set<AdminPermission> permissions = AdminPermissions.effective(admin.getRole(), admin.getPermissionOverrides());
         List<AdminNotificationItem> feed = notifications.feed(adminId, permissions, null, FEED_SIZE).items();
         Instant pollStart = clock.instant();
+        Instant floor = pollStart.minus(MAX_AGE);
         int sent = 0;
         for (AdminDeviceEntity device : adminDevices) {
-            Instant startCursor = device.getLastPushedAt();
+            Instant stored = device.getLastPushedAt();
+            Instant startCursor = stored.isAfter(floor) ? stored : floor;
             String deviceKey = device.getId() != null ? device.getId().toString() : device.getFcmToken();
             List<AdminNotificationItem> fresh = feed.stream()
                     .filter(i -> i.createdAt().isAfter(startCursor))
                     .filter(i -> sentIds.getIfPresent(deviceKey + ":" + i.id()) == null)
                     .sorted(Comparator.comparing(AdminNotificationItem::createdAt))
                     .toList();
+            if (fresh.isEmpty()) {
+                continue; // au repos : rien à envoyer, rien à écrire
+            }
             boolean complete = fresh.size() <= MAX_PER_DEVICE;
             boolean stopped = false;
+            boolean removed = false;
+            Instant cursor = null; // null : le curseur ne bouge pas
             for (AdminNotificationItem item : fresh.stream().limit(MAX_PER_DEVICE).toList()) {
                 AdminPushSender.SendResult result = sender.send(device.getFcmToken(),
                         AdminPushCopy.titleFor(item.type()), AdminPushCopy.BODY, payload(item));
                 if (result == AdminPushSender.SendResult.OK) {
                     sent++;
                     sentIds.put(deviceKey + ":" + item.id(), Boolean.TRUE);
-                    if (item.createdAt().isAfter(device.getLastPushedAt())) {
-                        device.setLastPushedAt(item.createdAt());
+                    if (cursor == null || item.createdAt().isAfter(cursor)) {
+                        cursor = item.createdAt();
                     }
                 } else {
                     if (result == AdminPushSender.SendResult.INVALID_TOKEN) {
-                        device.softDelete();
+                        softDelete(device);
+                        removed = true;
                     }
                     stopped = true;
                     break;
@@ -136,11 +164,18 @@ public class AdminPushDispatcher {
             }
             if (!stopped && complete) {
                 Instant lookbackCursor = pollStart.minus(LOOKBACK);
-                device.setLastPushedAt(startCursor.isAfter(lookbackCursor) ? startCursor : lookbackCursor);
+                cursor = startCursor.isAfter(lookbackCursor) ? startCursor : lookbackCursor;
             }
-            devices.save(device);
+            if (!removed && cursor != null && cursor.isAfter(stored)) {
+                devices.advanceLastPushedAt(device.getId(), adminId, cursor);
+            }
         }
         return sent;
+    }
+
+    /** UPDATE ciblé : sans effet si l'appareil a déjà été supprimé entre-temps. */
+    private void softDelete(AdminDeviceEntity device) {
+        devices.softDeleteActive(device.getId(), LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
     }
 
     static Map<String, String> payload(AdminNotificationItem item) {

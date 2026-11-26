@@ -38,7 +38,12 @@ public class AdminDeviceController {
         this.repository = repository;
     }
 
-    /** Idempotent sur {@code fcmToken} : un jeton déjà connu (même supprimé) est repris et rattaché à l'appelant. */
+    /**
+     * Idempotent sur {@code fcmToken} : un jeton déjà connu (même supprimé) est repris et rattaché à
+     * l'appelant. Nouveau, repris après suppression ou passé à un autre admin, l'appareil repart de
+     * maintenant : sinon les entrées accumulées depuis son ancien curseur partiraient d'un coup. Le
+     * même admin qui ré-enregistre un appareil actif garde son curseur.
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Transactional
@@ -46,12 +51,14 @@ public class AdminDeviceController {
         UUID adminId = AdminPrincipal.requireAdminId(auth);
         AdminDeviceEntity device = repository.findAnyByFcmToken(request.fcmToken())
                 .orElseGet(AdminDeviceEntity::new);
+        boolean freshStart = device.getId() == null || device.getDeletedAt() != null
+                || !adminId.equals(device.getAdminId());
         device.setAdminId(adminId);
         device.setFcmToken(request.fcmToken());
         device.setDeviceName(request.deviceName());
         device.setPlatform(request.platform());
         device.setDeletedAt(null);
-        if (device.getId() == null) {
+        if (freshStart) {
             device.setLastPushedAt(Instant.now());
         }
         repository.save(device);

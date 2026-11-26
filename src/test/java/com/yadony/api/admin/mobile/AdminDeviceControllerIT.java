@@ -14,6 +14,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.UUID;
 
@@ -156,5 +157,119 @@ class AdminDeviceControllerIT {
     @Test
     void register_returns422_whenPlatformUnknown() throws Exception {
         expect422("{\"fcmToken\":\"t\",\"deviceName\":\"d\",\"platform\":\"symbian\"}");
+    }
+
+    // ── Curseur à la reprise d'un jeton (F3) ─────────────────────────────────
+
+    /**
+     * Curseur vieilli de onze mois. Sous H2, un {@code Instant} relu peut être décalé du fuseau de
+     * la JVM (heure de Paris en local, UTC en CI) : les assertions comparent des valeurs relues
+     * entre elles, ou « maintenant » à un jour près, jamais une valeur écrite à sa relecture.
+     */
+    private static final Instant OLD = Instant.parse("2026-01-01T00:00:00Z");
+
+    private void register(UUID adminId, String token) throws Exception {
+        mockMvc.perform(post("/admin/mobile/devices").with(authentication(admin(adminId)))
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY.formatted(token)))
+                .andExpect(status().isNoContent());
+    }
+
+    private void ageCursor(String token) {
+        AdminDeviceEntity d = repository.findAnyByFcmToken(token).orElseThrow();
+        d.setLastPushedAt(OLD);
+        repository.save(d);
+    }
+
+    private Instant cursorOf(String token) {
+        return repository.findAnyByFcmToken(token).orElseThrow().getLastPushedAt();
+    }
+
+    private static Instant aDayAgo() {
+        return Instant.now().minus(java.time.Duration.ofDays(1));
+    }
+
+    @Test
+    @DisplayName("un jeton supprimé puis ré-enregistré repart de maintenant, pas de son vieux curseur")
+    void register_revivedDevice_resetsCursorToNow() throws Exception {
+        register(ADMIN_A, "tok-revive");
+        ageCursor("tok-revive");
+        assertThat(cursorOf("tok-revive")).isBefore(aDayAgo());
+        mockMvc.perform(delete("/admin/mobile/devices").param("fcmToken", "tok-revive")
+                        .with(authentication(admin(ADMIN_A))))
+                .andExpect(status().isNoContent());
+
+        register(ADMIN_A, "tok-revive");
+
+        assertThat(cursorOf("tok-revive")).isAfter(aDayAgo());
+        assertThat(repository.findActiveByAdminId(ADMIN_A)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("un jeton repris par un autre admin repart de maintenant")
+    void register_reassignedDevice_resetsCursorToNow() throws Exception {
+        register(ADMIN_A, "tok-move");
+        ageCursor("tok-move");
+        assertThat(cursorOf("tok-move")).isBefore(aDayAgo());
+
+        register(ADMIN_B, "tok-move");
+
+        assertThat(cursorOf("tok-move")).isAfter(aDayAgo());
+        assertThat(repository.findActiveByAdminId(ADMIN_B)).hasSize(1);
+        assertThat(repository.findActiveByAdminId(ADMIN_A)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("le même admin qui ré-enregistre un appareil actif garde son curseur")
+    void register_sameAdminActiveDevice_keepsCursor() throws Exception {
+        register(ADMIN_A, "tok-same");
+        ageCursor("tok-same");
+        Instant aged = cursorOf("tok-same");
+        assertThat(aged).isBefore(aDayAgo());
+
+        register(ADMIN_A, "tok-same");
+
+        assertThat(cursorOf("tok-same")).isEqualTo(aged);
+    }
+
+    // ── Écritures ciblées du répartiteur (F9) ────────────────────────────────
+
+    @Test
+    @DisplayName("advanceLastPushedAt n'avance que vers l'avant, pour le bon admin, sur un appareil actif")
+    void advanceLastPushedAt_guards() throws Exception {
+        register(ADMIN_A, "tok-adv");
+        ageCursor("tok-adv");
+        Instant aged = cursorOf("tok-adv");
+        UUID id = repository.findAnyByFcmToken("tok-adv").orElseThrow().getId();
+        Instant later = OLD.plusSeconds(3600);
+
+        assertThat(repository.advanceLastPushedAt(id, ADMIN_A, later)).isEqualTo(1);
+        Instant advanced = cursorOf("tok-adv");
+        assertThat(advanced).isEqualTo(aged.plusSeconds(3600));
+        // jamais en arrière
+        assertThat(repository.advanceLastPushedAt(id, ADMIN_A, OLD)).isZero();
+        // jeton repris par un autre admin entre la lecture et l'écriture
+        assertThat(repository.advanceLastPushedAt(id, ADMIN_B, later.plusSeconds(60))).isZero();
+        assertThat(cursorOf("tok-adv")).isEqualTo(advanced);
+        // appareil désabonné entre-temps (le save du désabonnement réécrit le curseur relu : on relit)
+        mockMvc.perform(delete("/admin/mobile/devices").param("fcmToken", "tok-adv")
+                        .with(authentication(admin(ADMIN_A))))
+                .andExpect(status().isNoContent());
+        Instant unregistered = cursorOf("tok-adv");
+        assertThat(repository.advanceLastPushedAt(id, ADMIN_A, later.plusSeconds(120))).isZero();
+        assertThat(cursorOf("tok-adv")).isEqualTo(unregistered);
+    }
+
+    @Test
+    @DisplayName("softDeleteActive supprime une fois, sans retoucher un appareil déjà supprimé")
+    void softDeleteActive_onlyOnce() throws Exception {
+        register(ADMIN_A, "tok-del");
+        UUID id = repository.findAnyByFcmToken("tok-del").orElseThrow().getId();
+        java.time.LocalDateTime first = java.time.LocalDateTime.parse("2026-11-26T10:00:00");
+
+        assertThat(repository.softDeleteActive(id, first)).isEqualTo(1);
+        assertThat(repository.softDeleteActive(id, first.plusHours(1))).isZero();
+
+        assertThat(repository.findActive()).isEmpty();
+        assertThat(repository.findAnyByFcmToken("tok-del").orElseThrow().getDeletedAt()).isEqualTo(first);
     }
 }
