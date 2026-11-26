@@ -34,7 +34,8 @@ import java.util.concurrent.TimeUnit;
  * Pousse les nouveautés du fil admin vers les appareils enregistrés. Sondage toutes les 30 s :
  * pour chaque appareil, toute entrée plus récente que son curseur (et lisible avec les
  * permissions de l'admin) part une fois, puis le curseur avance. Un envoi en erreur laisse le
- * curseur en place : il sera retenté au passage suivant.
+ * curseur en place : il sera retenté au passage suivant ; après une série de refus, l'appareil est
+ * retiré (voir {@link #MAX_CONSECUTIVE_ERRORS}).
  *
  * <p>Le curseur effectif ne remonte jamais au-delà de {@link #MAX_AGE} : un jeton repris, un
  * admin réactivé ou un appareil sorti d'une série d'erreurs ne reçoit pas des entrées vieilles
@@ -56,6 +57,8 @@ public class AdminPushDispatcher {
      * Une notification de plus d'un quart d'heure n'a plus rien d'urgent, la cloche la garde.
      */
     static final Duration MAX_AGE = Duration.ofMinutes(15);
+    /** Refus d'envoi consécutifs avant retrait de l'appareil : 20 passages de 30 s, environ 10 min. */
+    static final int MAX_CONSECUTIVE_ERRORS = 20;
     private static final String TICKET_PARAM = "ticket=";
 
     private final AdminDeviceRepository devices;
@@ -75,6 +78,11 @@ public class AdminPushDispatcher {
     private final Cache<String, Boolean> sentIds = Caffeine.newBuilder()
             .ticker(this::nanos)
             .expireAfterWrite(MAX_AGE.plusMinutes(5)).maximumSize(10_000).build();
+
+    /** Séries d'échecs par appareil, remises à zéro au premier envoi réussi (voir {@link #recordFailure}). */
+    private final Cache<String, FailureStreak> failures = Caffeine.newBuilder()
+            .ticker(this::nanos)
+            .expireAfterAccess(Duration.ofHours(1)).maximumSize(10_000).build();
 
     public AdminPushDispatcher(AdminDeviceRepository devices, AdminUserRepository admins,
                                AdminNotificationService notifications, AdminPushSender sender) {
@@ -145,18 +153,22 @@ public class AdminPushDispatcher {
             boolean removed = false;
             Instant cursor = null; // null : le curseur ne bouge pas
             for (AdminNotificationItem item : fresh.stream().limit(MAX_PER_DEVICE).toList()) {
-                AdminPushSender.SendResult result = sender.send(device.getFcmToken(),
+                AdminPushSender.SendOutcome outcome = sender.send(device.getFcmToken(),
                         AdminPushCopy.titleFor(item.type()), AdminPushCopy.BODY, payload(item));
-                if (result == AdminPushSender.SendResult.OK) {
+                if (outcome.result() == AdminPushSender.SendResult.OK) {
                     sent++;
                     sentIds.put(deviceKey + ":" + item.id(), Boolean.TRUE);
+                    failures.invalidate(deviceKey);
                     if (cursor == null || item.createdAt().isAfter(cursor)) {
                         cursor = item.createdAt();
                     }
                 } else {
-                    if (result == AdminPushSender.SendResult.INVALID_TOKEN) {
-                        softDelete(device);
+                    if (outcome.result() == AdminPushSender.SendResult.INVALID_TOKEN) {
+                        log.warn("[AdminPush] Jeton non enregistré, appareil {} retiré", deviceKey);
+                        softDelete(device, deviceKey);
                         removed = true;
+                    } else {
+                        removed = recordFailure(device, deviceKey, outcome);
                     }
                     stopped = true;
                     break;
@@ -173,9 +185,45 @@ public class AdminPushDispatcher {
         return sent;
     }
 
+    /**
+     * Compte l'échec dans la série de l'appareil. Seul le premier d'une série part en ERROR (Sentry
+     * n'en retient pas d'autre) : une erreur permanente retentée toutes les 30 s ferait sinon 2 880
+     * événements par jour. Après {@link #MAX_CONSECUTIVE_ERRORS} refus d'envoi ({@code ERROR},
+     * environ 10 min), l'appareil est retiré ; une panne côté FCM ({@code SERVICE_ERROR}) ne
+     * compte pas pour le retrait.
+     *
+     * @return vrai si l'appareil vient d'être retiré
+     */
+    private boolean recordFailure(AdminDeviceEntity device, String deviceKey, AdminPushSender.SendOutcome outcome) {
+        FailureStreak streak = failures.get(deviceKey, k -> new FailureStreak());
+        streak.failures++;
+        if (outcome.result() == AdminPushSender.SendResult.ERROR) {
+            streak.sendErrors++;
+        }
+        if (streak.failures == 1) {
+            log.error("[AdminPush] Envoi échoué (appareil {}, {}) : {}", deviceKey, outcome.result(), outcome.detail());
+        } else {
+            log.warn("[AdminPush] Envoi toujours en échec (appareil {}, {}, {} échecs consécutifs) : {}",
+                    deviceKey, outcome.result(), streak.failures, outcome.detail());
+        }
+        if (streak.sendErrors < MAX_CONSECUTIVE_ERRORS) {
+            return false;
+        }
+        log.warn("[AdminPush] Appareil {} retiré après {} échecs d'envoi consécutifs", deviceKey, streak.sendErrors);
+        softDelete(device, deviceKey);
+        return true;
+    }
+
     /** UPDATE ciblé : sans effet si l'appareil a déjà été supprimé entre-temps. */
-    private void softDelete(AdminDeviceEntity device) {
+    private void softDelete(AdminDeviceEntity device, String deviceKey) {
+        failures.invalidate(deviceKey);
         devices.softDeleteActive(device.getId(), LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
+    }
+
+    /** Série d'échecs en cours d'un appareil ; le répartiteur tourne sur un seul fil (fixedDelay). */
+    private static final class FailureStreak {
+        private int failures;
+        private int sendErrors;
     }
 
     static Map<String, String> payload(AdminNotificationItem item) {

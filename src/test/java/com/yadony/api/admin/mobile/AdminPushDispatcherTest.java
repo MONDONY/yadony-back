@@ -1,5 +1,9 @@
 package com.yadony.api.admin.mobile;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.yadony.api.admin.account.AdminPermission;
 import com.yadony.api.admin.account.AdminRole;
 import com.yadony.api.admin.account.AdminStatus;
@@ -12,6 +16,7 @@ import com.yadony.api.admin.notifications.AdminNotificationSeverity;
 import com.yadony.api.admin.notifications.AdminNotificationType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -41,6 +46,9 @@ class AdminPushDispatcherTest {
     private final List<Sent> sent = new ArrayList<>();
     private int failAfter = -1;
     private final List<String> invalidTokens = new ArrayList<>();
+    /** Jetons en échec persistant, avec le résultat rendu à chaque envoi. */
+    private final Map<String, AdminPushSender.SendResult> failing = new java.util.HashMap<>();
+    private int attempts;
     private AdminPushDispatcher dispatcher;
     private final java.time.Clock clock = mock(java.time.Clock.class);
     private void at(Instant now) { when(clock.instant()).thenReturn(now); }
@@ -81,11 +89,13 @@ class AdminPushDispatcherTest {
         });
         AdminPushSender sender = new AdminPushSender() {
             @Override
-            public SendResult send(String token, String title, String body, Map<String, String> data) {
-                if (invalidTokens.contains(token)) return SendResult.INVALID_TOKEN;
-                if (failAfter >= 0 && sent.size() >= failAfter) return SendResult.ERROR;
+            public SendOutcome send(String token, String title, String body, Map<String, String> data) {
+                attempts++;
+                if (invalidTokens.contains(token)) return new SendOutcome(SendResult.INVALID_TOKEN, "unregistered");
+                if (failing.containsKey(token)) return new SendOutcome(failing.get(token), "refus FCM");
+                if (failAfter >= 0 && sent.size() >= failAfter) return new SendOutcome(SendResult.ERROR, "refus FCM");
                 sent.add(new Sent(token, title, body, data));
-                return SendResult.OK;
+                return new SendOutcome(SendResult.OK, null);
             }
         };
         dispatcher = new AdminPushDispatcher(devices, admins, notifications, sender);
@@ -416,5 +426,134 @@ class AdminPushDispatcherTest {
         verify(devices).softDeleteActive(eq(bad.getId()), any());
         verify(devices, never()).advanceLastPushedAt(eq(bad.getId()), any(), any());
         verify(devices, never()).save(any());
+    }
+
+    // ── Erreurs FCM persistantes (F4) ────────────────────────────────────────
+
+    /** Un passage toutes les 30 s à partir de T0 + 10 s ; rend le nombre de push envoyés. */
+    private int passes(int from, int count) {
+        int total = 0;
+        for (int pass = from; pass < from + count; pass++) {
+            at(T0.plusSeconds(10 + 30L * pass));
+            total += dispatcher.runOnce();
+        }
+        return total;
+    }
+
+    private ListAppender<ILoggingEvent> captureLogs() {
+        Logger logger = (Logger) LoggerFactory.getLogger(AdminPushDispatcher.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void release(ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger(AdminPushDispatcher.class)).detachAppender(appender);
+    }
+
+    private static long count(ListAppender<ILoggingEvent> appender, Level level) {
+        return appender.list.stream().filter(e -> e.getLevel() == level).count();
+    }
+
+    @Test
+    void dispatcher_removesDevice_after20ConsecutiveErrors() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        AdminDeviceEntity d = device(id, "tok1", T0);
+        failing.put("tok1", AdminPushSender.SendResult.ERROR);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+
+        passes(0, AdminPushDispatcher.MAX_CONSECUTIVE_ERRORS - 1);
+        assertThat(d.getDeletedAt()).isNull();
+        verify(devices, never()).softDeleteActive(any(), any());
+
+        passes(AdminPushDispatcher.MAX_CONSECUTIVE_ERRORS - 1, 1);
+        assertThat(d.getDeletedAt()).isNotNull();
+        verify(devices).softDeleteActive(eq(d.getId()), any());
+
+        int before = attempts;
+        passes(AdminPushDispatcher.MAX_CONSECUTIVE_ERRORS, 3);
+        assertThat(attempts).as("appareil retiré : plus aucun envoi").isEqualTo(before);
+    }
+
+    @Test
+    void dispatcher_successResetsTheFailureStreak() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        AdminDeviceEntity d = device(id, "tok1", T0);
+        failing.put("tok1", AdminPushSender.SendResult.ERROR);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+        passes(0, AdminPushDispatcher.MAX_CONSECUTIVE_ERRORS - 1);
+
+        failing.remove("tok1");
+        assertThat(passes(19, 1)).isEqualTo(1);
+
+        failing.put("tok1", AdminPushSender.SendResult.ERROR);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(20 * 30)));
+        passes(20, AdminPushDispatcher.MAX_CONSECUTIVE_ERRORS - 1);
+
+        assertThat(d.getDeletedAt()).isNull();
+        verify(devices, never()).softDeleteActive(any(), any());
+    }
+
+    /** FCM indisponible ou mal configuré : jamais la faute de l'appareil, qui reste abonné. */
+    @Test
+    void dispatcher_serviceErrors_neverRemoveTheDevice() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        AdminDeviceEntity d = device(id, "tok1", T0);
+        failing.put("tok1", AdminPushSender.SendResult.SERVICE_ERROR);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+
+        passes(0, 25);
+
+        assertThat(attempts).isEqualTo(25);
+        assertThat(d.getDeletedAt()).isNull();
+        verify(devices, never()).softDeleteActive(any(), any());
+    }
+
+    /** Sentry ne retient que les ERROR : la première d'une série, les suivantes en WARN. */
+    @Test
+    void dispatcher_logsOnlyTheFirstFailureOfAStreakAtError() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        device(id, "tok1", T0);
+        failing.put("tok1", AdminPushSender.SendResult.ERROR);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+        ListAppender<ILoggingEvent> logs = captureLogs();
+        try {
+            passes(0, 5);
+            assertThat(count(logs, Level.ERROR)).isEqualTo(1);
+            assertThat(count(logs, Level.WARN)).isEqualTo(4);
+
+            failing.remove("tok1");
+            passes(5, 1);
+            failing.put("tok1", AdminPushSender.SendResult.ERROR);
+            feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(6 * 30)));
+            passes(6, 3);
+            assertThat(count(logs, Level.ERROR)).as("nouvelle série après un succès").isEqualTo(2);
+        } finally {
+            release(logs);
+        }
+    }
+
+    @Test
+    void dispatcher_logsDeviceRemovalOnce() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        device(id, "tok1", T0);
+        failing.put("tok1", AdminPushSender.SendResult.ERROR);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(5)));
+        ListAppender<ILoggingEvent> logs = captureLogs();
+        try {
+            passes(0, AdminPushDispatcher.MAX_CONSECUTIVE_ERRORS + 3);
+            assertThat(logs.list).filteredOn(e -> e.getFormattedMessage().contains("retiré après"))
+                    .hasSize(1)
+                    .allSatisfy(e -> assertThat(e.getLevel()).isEqualTo(Level.WARN));
+            assertThat(count(logs, Level.ERROR)).isEqualTo(1);
+        } finally {
+            release(logs);
+        }
     }
 }
