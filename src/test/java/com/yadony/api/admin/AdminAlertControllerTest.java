@@ -468,6 +468,11 @@ class AdminAlertControllerTest {
         when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
         var admin = new com.yadony.api.admin.account.AdminUserEntity();
         when(adminUserRepo.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+        when(alertRepo.claimIfFree(eq(id), eq(ADMIN_ID), any())).thenAnswer(inv -> {
+            entity.setClaimedBy(ADMIN_ID);
+            entity.setClaimedAt(inv.getArgument(2));
+            return 1;
+        });
 
         var resp = controller().claim(id, adminAuth());
 
@@ -494,7 +499,7 @@ class AdminAlertControllerTest {
 
         assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(ex.getErrorCode()).isEqualTo("ALERT_ALREADY_CLAIMED");
-        verify(alertRepo, never()).save(any());
+        verify(alertRepo).claimIfFree(eq(id), eq(ADMIN_ID), any());
         verifyNoInteractions(auditService);
     }
 
@@ -511,7 +516,6 @@ class AdminAlertControllerTest {
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(entity.getClaimedAt()).isEqualTo(at);
-        verify(alertRepo, never()).save(any());
         verifyNoInteractions(auditService);
     }
 
@@ -522,6 +526,12 @@ class AdminAlertControllerTest {
         entity.setClaimedBy(ADMIN_ID);
         entity.setClaimedAt(java.time.OffsetDateTime.now());
         when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        when(alertRepo.releaseIfClaimedBy(id, ADMIN_ID)).thenAnswer(inv -> {
+            entity.setClaimedBy(null);
+            entity.setClaimedAt(null);
+            return 1;
+        });
 
         var resp = controller().releaseClaim(id, authOf(ADMIN_ID, "ALERT_RESOLVE"));
 
@@ -536,8 +546,13 @@ class AdminAlertControllerTest {
     void release_byAdminManage_isAllowedForSomeoneElsesClaim() {
         UUID id = UUID.randomUUID();
         AdminAlertEntity entity = alert("X", false);
-        entity.setClaimedBy(UUID.randomUUID());
+        UUID owner = UUID.randomUUID();
+        entity.setClaimedBy(owner);
         when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+        when(alertRepo.releaseIfClaimedBy(id, owner)).thenAnswer(inv -> {
+            entity.setClaimedBy(null);
+            return 1;
+        });
 
         controller().releaseClaim(id, authOf(ADMIN_ID, "ALERT_RESOLVE", "ADMIN_MANAGE"));
 
@@ -571,7 +586,7 @@ class AdminAlertControllerTest {
         var resp = controller().releaseClaim(id, authOf(ADMIN_ID, "ALERT_RESOLVE"));
 
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
-        verify(alertRepo, never()).save(any());
+        verify(alertRepo, never()).releaseIfClaimedBy(any(), any());
         verifyNoInteractions(auditService);
     }
 

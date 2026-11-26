@@ -251,19 +251,20 @@ public class AdminAlertController {
     @Transactional
     public ResponseEntity<AdminAlertResponse> claim(@PathVariable UUID id, Authentication authentication) {
         UUID adminId = AdminPrincipal.requireAdminId(authentication);
-        AdminAlertEntity alert = find(id);
-        if (alert.getClaimedBy() != null) {
-            if (alert.getClaimedBy().equals(adminId)) {
-                return ResponseEntity.ok(toResponse(alert));
-            }
-            throw new YadonyBusinessException(HttpStatus.CONFLICT, "ALERT_ALREADY_CLAIMED", "Alert Already Claimed",
-                    "Cette alerte est déjà prise en charge par un autre administrateur");
+        find(id); // 404 si l'alerte n'existe pas
+        // Écriture atomique conditionnelle : seule la requête qui trouve l'alerte libre la prend.
+        if (alertRepo.claimIfFree(id, adminId, OffsetDateTime.now(ZoneOffset.UTC)) == 1) {
+            AdminAlertEntity claimed = find(id);
+            auditService.log("ADMIN_ALERT", id, "ALERT_CLAIMED", adminId, auditPayload(claimed, ""));
+            return ResponseEntity.ok(toResponse(claimed));
         }
-        alert.setClaimedBy(adminId);
-        alert.setClaimedAt(OffsetDateTime.now(ZoneOffset.UTC));
-        alertRepo.save(alert);
-        auditService.log("ADMIN_ALERT", id, "ALERT_CLAIMED", adminId, auditPayload(alert, ""));
-        return ResponseEntity.ok(toResponse(alert));
+        // 0 ligne : déjà prise. Par le même admin = répétition idempotente, sans trace.
+        AdminAlertEntity alert = find(id);
+        if (adminId.equals(alert.getClaimedBy())) {
+            return ResponseEntity.ok(toResponse(alert));
+        }
+        throw new YadonyBusinessException(HttpStatus.CONFLICT, "ALERT_ALREADY_CLAIMED", "Alert Already Claimed",
+                "Cette alerte est déjà prise en charge par un autre administrateur");
     }
 
     /** Libère la prise en charge : par celui qui l'a prise, ou par un admin avec ADMIN_MANAGE. */
@@ -283,12 +284,12 @@ public class AdminAlertController {
                     "Seul l'administrateur qui a pris l'alerte en charge peut la libérer");
         }
         UUID previous = alert.getClaimedBy();
-        alert.setClaimedBy(null);
-        alert.setClaimedAt(null);
-        alertRepo.save(alert);
-        auditService.log("ADMIN_ALERT", id, "ALERT_CLAIM_RELEASED", adminId,
-                auditPayload(alert, "", "claimedBy", previous.toString()));
-        return ResponseEntity.ok(toResponse(alert));
+        // Atomique : ne libère que si la prise n'a pas changé de main entre la lecture et l'écriture.
+        if (alertRepo.releaseIfClaimedBy(id, previous) == 1) {
+            auditService.log("ADMIN_ALERT", id, "ALERT_CLAIM_RELEASED", adminId,
+                    auditPayload(alert, "", "claimedBy", previous.toString()));
+        }
+        return ResponseEntity.ok(toResponse(find(id)));
     }
 
     /** Réponse avec le nom de l'admin qui a pris l'alerte (son e-mail, les comptes admin n'ont pas de nom). */
