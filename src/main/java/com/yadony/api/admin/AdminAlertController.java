@@ -263,8 +263,8 @@ public class AdminAlertController {
         if (adminId.equals(alert.getClaimedBy())) {
             return ResponseEntity.ok(toResponse(alert));
         }
-        throw new YadonyBusinessException(HttpStatus.CONFLICT, "ALERT_ALREADY_CLAIMED", "Alert Already Claimed",
-                "Cette alerte est déjà prise en charge par un autre administrateur");
+        throw YadonyBusinessException.localized(HttpStatus.CONFLICT, "ALERT_ALREADY_CLAIMED",
+                "problem.admin.alert-already-claimed");
     }
 
     /** Libère la prise en charge : par celui qui l'a prise, ou par un admin avec ADMIN_MANAGE. */
@@ -280,8 +280,8 @@ public class AdminAlertController {
         boolean canManage = authentication.getAuthorities().stream()
                 .anyMatch(a -> "ADMIN_MANAGE".equals(a.getAuthority()));
         if (!alert.getClaimedBy().equals(adminId) && !canManage) {
-            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "ALERT_CLAIM_NOT_YOURS", "Alert Claim Not Yours",
-                    "Seul l'administrateur qui a pris l'alerte en charge peut la libérer");
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "ALERT_CLAIM_NOT_YOURS",
+                    "problem.admin.alert-claim-not-yours");
         }
         UUID previous = alert.getClaimedBy();
         // Atomique : ne libère que si la prise n'a pas changé de main entre la lecture et l'écriture.
