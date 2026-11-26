@@ -45,6 +45,8 @@ Dans le panneau d'un domaine du menu de gauche, un chiffre à droite d'une page 
 
 Les compteurs se mettent à jour d'eux-mêmes régulièrement, tant que l'onglet de la console est affiché.
 
+Les nouveautés peuvent aussi vous parvenir en notification push sur l'application mobile de la console, voir [L'application mobile de la console](/aide/application-mobile).
+
 ## Bon à savoir
 
 > **Bon à savoir :** vous ne recevez que les notifications et les compteurs des pages autorisées pour votre rôle.
