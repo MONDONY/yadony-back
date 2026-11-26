@@ -72,8 +72,9 @@ public class AdminPushDispatcher {
      * perdre une entrée d'un type dont le cache (15 s, expiration indépendante par type) est en
      * retard ; ce cache évite de la renvoyer. Il dure plus que {@link #MAX_AGE} : un appareil au
      * repos n'est plus écrit, son curseur peut rester en deçà d'une entrée déjà poussée, et seul le
-     * plancher l'écarte ensuite. Il vit en mémoire : un redémarrage peut renvoyer au plus les
-     * entrées du dernier passage qui a poussé (5 par appareil). Horloge du répartiteur pour les tests.
+     * plancher l'écarte ensuite. Il vit en mémoire : un redémarrage peut renvoyer les entrées créées
+     * dans les 45 s qui précèdent le dernier passage ayant poussé (5 par appareil et par passage au
+     * plus). Horloge du répartiteur, pour que les tests fassent avancer le temps.
      */
     private final Cache<String, Boolean> sentIds = Caffeine.newBuilder()
             .ticker(this::nanos)
