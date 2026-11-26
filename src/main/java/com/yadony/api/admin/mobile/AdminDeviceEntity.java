@@ -9,13 +9,13 @@ import org.hibernate.annotations.Where;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Appareil d'un administrateur (PWA mobile) abonné aux notifications push (voir V401). */
+/** Appareil d'un administrateur (PWA mobile) abonné aux notifications push (voir V402). */
 @Entity
 @Table(name = "admin_devices")
 @Where(clause = "deleted_at IS NULL")
 public class AdminDeviceEntity extends BaseEntity {
 
-    /** Pointe vers {@code admin_users} sans clé étrangère (voir V401). */
+    /** Pointe vers {@code admin_users} sans clé étrangère (voir V402). */
     @Column(name = "admin_id", nullable = false)
     private UUID adminId;
 
