@@ -26,6 +26,10 @@ import org.springframework.web.bind.annotation.*;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -70,11 +74,12 @@ public class AdminAlertController {
             @RequestParam(required = false) Boolean snoozed,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<AdminAlertResponse> result = alertRepo
+        Page<AdminAlertEntity> found = alertRepo
                 .findFiltered(type, severity, resolved, snoozed, OffsetDateTime.now(ZoneOffset.UTC),
-                        PageRequest.of(page, size, Sort.by("createdAt").descending()))
-                .map(this::toResponse);
-        return ResponseEntity.ok(result);
+                        PageRequest.of(page, size, Sort.by("createdAt").descending()));
+        // Une seule lecture des comptes admin pour toute la page (pas de N+1).
+        Map<UUID, String> names = claimerNames(found.getContent());
+        return ResponseEntity.ok(found.map(a -> toResponse(a, names)));
     }
 
     /** Une alerte, pour le lien « voir l'alerte » d'une autre fiche (paiement…). */
@@ -129,7 +134,7 @@ public class AdminAlertController {
                 Map.of("alertType", Objects.toString(alert.getType(), ""),
                         "severity", Objects.toString(alert.getSeverity(), ""),
                         "note", request != null ? Objects.toString(request.note(), "") : ""));
-        return ResponseEntity.ok(AdminAlertResponse.from(alert));
+        return ResponseEntity.ok(toResponse(alert));
     }
 
     /** Autres alertes sur le même paiement ou colis, et gestes tracés sur celle-ci. */
@@ -202,7 +207,7 @@ public class AdminAlertController {
         alert.setSnoozedUntil(null);
         alertRepo.save(alert);
         auditService.log("ADMIN_ALERT", id, "ADMIN_ALERT_REOPENED", adminId, auditPayload(alert, note));
-        return ResponseEntity.ok(AdminAlertResponse.from(alert));
+        return ResponseEntity.ok(toResponse(alert));
     }
 
     /** Reporte une alerte ouverte de 1 à 168 h : elle quitte la file « ouvertes » puis y revient. */
@@ -226,7 +231,7 @@ public class AdminAlertController {
         alert.setSnoozedUntil(OffsetDateTime.now(ZoneOffset.UTC).plusHours(hours));
         alertRepo.save(alert);
         auditService.log("ADMIN_ALERT", id, "ADMIN_ALERT_SNOOZED", adminId, auditPayload(alert, note, "hours", String.valueOf(hours)));
-        return ResponseEntity.ok(AdminAlertResponse.from(alert));
+        return ResponseEntity.ok(toResponse(alert));
     }
 
     /** Remet une alerte reportée dans la file « ouvertes » sans attendre la fin du report. */
@@ -239,7 +244,7 @@ public class AdminAlertController {
         alert.setSnoozedUntil(null);
         alertRepo.save(alert);
         auditService.log("ADMIN_ALERT", id, "ADMIN_ALERT_UNSNOOZED", adminId, auditPayload(alert, ""));
-        return ResponseEntity.ok(AdminAlertResponse.from(alert));
+        return ResponseEntity.ok(toResponse(alert));
     }
 
     /**
@@ -292,12 +297,25 @@ public class AdminAlertController {
         return ResponseEntity.ok(toResponse(find(id)));
     }
 
-    /** Réponse avec le nom de l'admin qui a pris l'alerte (son e-mail, les comptes admin n'ont pas de nom). */
+    /** Réponse avec l'identifiant et le nom de l'admin qui a pris l'alerte (son e-mail, les comptes admin n'ont pas de nom). */
     private AdminAlertResponse toResponse(AdminAlertEntity alert) {
-        String name = alert.getClaimedBy() == null ? null
-                : adminUserRepo.findById(alert.getClaimedBy())
-                        .map(a -> a.getEmail()).orElse(null);
-        return AdminAlertResponse.from(alert, name);
+        return toResponse(alert, claimerNames(List.of(alert)));
+    }
+
+    private AdminAlertResponse toResponse(AdminAlertEntity alert, Map<UUID, String> names) {
+        return AdminAlertResponse.from(alert, alert.getClaimedBy() == null ? null : names.get(alert.getClaimedBy()));
+    }
+
+    /** Noms (e-mails) des admins qui ont pris ces alertes : une requete pour les identifiants distincts, aucune sinon. */
+    private Map<UUID, String> claimerNames(Collection<AdminAlertEntity> alerts) {
+        Set<UUID> ids = alerts.stream().map(AdminAlertEntity::getClaimedBy)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> names = new HashMap<>();
+        adminUserRepo.findAllById(ids).forEach(a -> names.put(a.getId(), a.getEmail()));
+        return names;
     }
 
     private AdminAlertEntity find(UUID id) {

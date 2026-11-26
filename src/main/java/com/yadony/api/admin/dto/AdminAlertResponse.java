@@ -26,6 +26,8 @@ public record AdminAlertResponse(
         UUID paymentId,
         /** Reportée jusqu'à cette date (UTC) ; absente si l'alerte n'est pas reportée. */
         OffsetDateTime snoozedUntil,
+        /** Identifiant de l'admin qui a pris l'alerte en charge ; absent si personne. */
+        UUID claimedById,
         /** Nom (e-mail) de l'admin qui a pris l'alerte en charge ; absent si personne. */
         String claimedByName,
         /** Date de la prise en charge (UTC) ; absente si personne ne l'a prise. */
@@ -50,6 +52,7 @@ public record AdminAlertResponse(
                 e.getCreatedAt(),
                 paymentIdOf(e.getType(), payload),
                 e.getSnoozedUntil(),
+                e.getClaimedBy(),
                 e.getClaimedBy() == null ? null : claimedByName,
                 e.getClaimedAt()
         );

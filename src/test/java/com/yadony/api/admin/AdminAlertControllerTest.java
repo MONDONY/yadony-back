@@ -466,8 +466,8 @@ class AdminAlertControllerTest {
         java.time.OffsetDateTime snooze = java.time.OffsetDateTime.now().plusHours(5);
         entity.setSnoozedUntil(snooze);
         when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
-        var admin = new com.yadony.api.admin.account.AdminUserEntity();
-        when(adminUserRepo.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+        var admin = adminWithId(ADMIN_ID, "admin@yadony.test");
+        when(adminUserRepo.findAllById(java.util.Set.of(ADMIN_ID))).thenReturn(List.of(admin));
         when(alertRepo.claimIfFree(eq(id), eq(ADMIN_ID), any())).thenAnswer(inv -> {
             entity.setClaimedBy(ADMIN_ID);
             entity.setClaimedAt(inv.getArgument(2));
@@ -539,6 +539,7 @@ class AdminAlertControllerTest {
         assertThat(entity.getClaimedBy()).isNull();
         assertThat(entity.getClaimedAt()).isNull();
         assertThat(resp.getBody().claimedByName()).isNull();
+        assertThat(resp.getBody().claimedById()).isNull();
         verify(auditService).log(eq("ADMIN_ALERT"), eq(id), eq("ALERT_CLAIM_RELEASED"), eq(ADMIN_ID), anyMap());
     }
 
@@ -596,10 +597,87 @@ class AdminAlertControllerTest {
         AdminAlertEntity entity = alert("X", false);
         entity.setClaimedBy(adminId);
         entity.setClaimedAt(java.time.OffsetDateTime.parse("2026-11-26T09:30:00Z"));
-        when(adminUserRepo.findById(adminId)).thenReturn(Optional.of(
-                new com.yadony.api.admin.account.AdminUserEntity("uid-claimer", email,
-                        com.yadony.api.admin.account.AdminRole.SUPPORT)));
+        when(adminUserRepo.findAllById(java.util.Set.of(adminId))).thenReturn(List.of(adminWithId(adminId, email)));
         return entity;
+    }
+
+    private static com.yadony.api.admin.account.AdminUserEntity adminWithId(UUID id, String email) {
+        var admin = new com.yadony.api.admin.account.AdminUserEntity("uid-" + id, email,
+                com.yadony.api.admin.account.AdminRole.SUPPORT);
+        org.springframework.test.util.ReflectionTestUtils.setField(admin, "id", id);
+        return admin;
+    }
+
+    @Test
+    void get_claimedAlert_carriesClaimedById() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = claimedBy(ADMIN_ID, "claimer@yadony.test");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+
+        AdminAlertResponse body = controller().get(id).getBody();
+
+        assertThat(body.claimedById()).isEqualTo(ADMIN_ID);
+        assertThat(body.claimedByName()).isEqualTo("claimer@yadony.test");
+    }
+
+    @Test
+    void get_unclaimedAlert_hasNoClaimFieldsAndNoAdminLookup() {
+        UUID id = UUID.randomUUID();
+        when(alertRepo.findById(id)).thenReturn(Optional.of(alert("X", false)));
+
+        AdminAlertResponse body = controller().get(id).getBody();
+
+        assertThat(body.claimedById()).isNull();
+        assertThat(body.claimedByName()).isNull();
+        assertThat(body.claimedAt()).isNull();
+        verifyNoInteractions(adminUserRepo);
+    }
+
+    @Test
+    void list_threeClaimedAlertsByTwoAdmins_doesOneAdminLookup() {
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        AdminAlertEntity e1 = alert("X", false);
+        e1.setClaimedBy(a);
+        e1.setClaimedAt(java.time.OffsetDateTime.now());
+        AdminAlertEntity e2 = alert("Y", false);
+        e2.setClaimedBy(b);
+        e2.setClaimedAt(java.time.OffsetDateTime.now());
+        AdminAlertEntity e3 = alert("Z", false);
+        e3.setClaimedBy(a);
+        e3.setClaimedAt(java.time.OffsetDateTime.now());
+        when(alertRepo.findFiltered(isNull(), isNull(), eq(false), isNull(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(e1, e2, e3)));
+        when(adminUserRepo.findAllById(java.util.Set.of(a, b)))
+                .thenReturn(List.of(adminWithId(a, "a@yadony.test"), adminWithId(b, "b@yadony.test")));
+
+        Page<AdminAlertResponse> page = controller().list(null, null, false, null, 0, 20).getBody();
+
+        assertThat(page.getContent()).extracting(AdminAlertResponse::claimedByName)
+                .containsExactly("a@yadony.test", "b@yadony.test", "a@yadony.test");
+        assertThat(page.getContent()).extracting(AdminAlertResponse::claimedById).containsExactly(a, b, a);
+        verify(adminUserRepo, times(1)).findAllById(any());
+        verify(adminUserRepo, never()).findById(any());
+    }
+
+    @Test
+    void resolve_snooze_unsnooze_reopen_carryTheClaimFields() {
+        UUID id = UUID.randomUUID();
+        AdminAlertEntity entity = claimedBy(ADMIN_ID, "claimer@yadony.test");
+        when(alertRepo.findById(id)).thenReturn(Optional.of(entity));
+        var auth = authOf(ADMIN_ID, "ALERT_RESOLVE");
+
+        var snoozed = controller().snooze(id, new com.yadony.api.admin.dto.AlertBatchDtos.SnoozeAlertRequest(
+                2, "plus tard"), auth).getBody();
+        var unsnoozed = controller().unsnooze(id, auth).getBody();
+        var resolved = controller().resolve(id, new ResolveAlertRequest("ok"), auth).getBody();
+        var reopened = controller().reopen(id, new com.yadony.api.admin.dto.AlertBatchDtos.ReopenAlertRequest("retour"), auth).getBody();
+
+        for (AdminAlertResponse r : List.of(resolved, snoozed, unsnoozed, reopened)) {
+            assertThat(r.claimedById()).isEqualTo(ADMIN_ID);
+            assertThat(r.claimedByName()).isEqualTo("claimer@yadony.test");
+            assertThat(r.claimedAt()).isEqualTo(entity.getClaimedAt());
+        }
     }
 
     @Test
