@@ -36,8 +36,11 @@ class AdminPushDispatcherTest {
     private AdminUserRepository admins;
     private AdminDeviceRepository devices;
     private final List<Sent> sent = new ArrayList<>();
+    private int failAfter = -1;
     private final List<String> invalidTokens = new ArrayList<>();
     private AdminPushDispatcher dispatcher;
+    private final java.time.Clock clock = mock(java.time.Clock.class);
+    private void at(Instant now) { when(clock.instant()).thenReturn(now); }
     private final List<AdminDeviceEntity> stored = new ArrayList<>();
 
     record Sent(String token, String title, String body, Map<String, String> data) {}
@@ -47,17 +50,20 @@ class AdminPushDispatcherTest {
         notifications = mock(AdminNotificationService.class);
         admins = mock(AdminUserRepository.class);
         devices = mock(AdminDeviceRepository.class);
+        at(T0.plusSeconds(10));
         when(devices.findActive()).thenAnswer(i -> List.copyOf(stored));
         when(devices.save(any(AdminDeviceEntity.class))).thenAnswer(i -> i.getArgument(0));
         AdminPushSender sender = new AdminPushSender() {
             @Override
             public SendResult send(String token, String title, String body, Map<String, String> data) {
                 if (invalidTokens.contains(token)) return SendResult.INVALID_TOKEN;
+                if (failAfter >= 0 && sent.size() >= failAfter) return SendResult.ERROR;
                 sent.add(new Sent(token, title, body, data));
                 return SendResult.OK;
             }
         };
         dispatcher = new AdminPushDispatcher(devices, admins, notifications, sender);
+        dispatcher.setClock(clock);
     }
 
     private AdminUserEntity admin(UUID id, AdminStatus status) {
@@ -135,7 +141,7 @@ class AdminPushDispatcherTest {
         feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), at));
 
         assertThat(dispatcher.runOnce()).isEqualTo(1);
-        assertThat(d.getLastPushedAt()).isEqualTo(at);
+        assertThat(d.getLastPushedAt()).isAfterOrEqualTo(T0);
         assertThat(dispatcher.runOnce()).isZero();
         assertThat(sent).hasSize(1);
     }
@@ -166,5 +172,54 @@ class AdminPushDispatcherTest {
 
         assertThat(dispatcher.runOnce()).isZero();
         assertThat(sent).isEmpty();
+    }
+
+    @Test
+    void dispatcher_doesNotLoseItemFromStaleCacheType() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        device(id, "tok1", T0);
+        UUID bId = UUID.randomUUID();
+        UUID aId = UUID.randomUUID();
+        AdminNotificationItem b = item(AdminNotificationType.ADMIN_ALERT, bId, T0.plusSeconds(30));
+        AdminNotificationItem a = item(AdminNotificationType.SUPPORT_TICKET_CREATED, aId, T0.plusSeconds(20));
+        at(T0.plusSeconds(40));
+        feedReturns(id, b);
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+        at(T0.plusSeconds(50));
+        feedReturns(id, b, a);
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+        assertThat(sent).extracting(s -> s.data().get("route"))
+                .containsExactly("/m/alertes/" + bId, "/m/support/" + aId);
+    }
+
+    @Test
+    void dispatcher_dedupesWithinLookback() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        device(id, "tok1", T0);
+        feedReturns(id, item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(30)));
+        at(T0.plusSeconds(40));
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+        at(T0.plusSeconds(60));
+        assertThat(dispatcher.runOnce()).isZero();
+        assertThat(sent).hasSize(1);
+    }
+
+    @Test
+    void dispatcher_partialFailure_doesNotResendDeliveredItems() {
+        UUID id = UUID.randomUUID();
+        admin(id, AdminStatus.ACTIVE);
+        AdminDeviceEntity d = device(id, "tok1", T0);
+        AdminNotificationItem first = item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(1));
+        AdminNotificationItem second = item(AdminNotificationType.ADMIN_ALERT, UUID.randomUUID(), T0.plusSeconds(2));
+        feedReturns(id, second, first);
+        failAfter = 1;
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+        assertThat(d.getLastPushedAt()).isEqualTo(first.createdAt());
+        failAfter = -1;
+        assertThat(dispatcher.runOnce()).isEqualTo(1);
+        assertThat(sent).hasSize(2);
+        assertThat(sent.get(1).data().get("route")).isEqualTo("/m/alertes/" + second.id().substring(second.id().indexOf(':') + 1));
     }
 }

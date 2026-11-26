@@ -8,13 +8,18 @@ import com.yadony.api.admin.account.AdminUserRepository;
 import com.yadony.api.admin.notifications.AdminNotificationItem;
 import com.yadony.api.admin.notifications.AdminNotificationService;
 import com.yadony.api.admin.notifications.AdminNotificationType;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,11 +42,22 @@ public class AdminPushDispatcher {
     /** Au plus ce nombre de push par appareil et par passage : un rattrapage ne doit pas inonder. */
     static final int MAX_PER_DEVICE = 5;
     private static final int FEED_SIZE = 50;
+    static final Duration LOOKBACK = Duration.ofSeconds(45);
 
     private final AdminDeviceRepository devices;
     private final AdminUserRepository admins;
     private final AdminNotificationService notifications;
     private final AdminPushSender sender;
+    private Clock clock = Clock.systemUTC();
+
+    /**
+     * Identifiants déjà poussés, par appareil. Le curseur recule de {@link #LOOKBACK} pour ne pas
+     * perdre une entrée d'un type dont le cache (15 s, expiration indépendante par type) est en
+     * retard ; ce cache évite de la renvoyer. Il vit en mémoire : un redémarrage peut renvoyer au
+     * plus les 45 dernières secondes d'entrées.
+     */
+    private final Cache<String, Boolean> sentIds = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(10)).maximumSize(10_000).build();
 
     public AdminPushDispatcher(AdminDeviceRepository devices, AdminUserRepository admins,
                                AdminNotificationService notifications, AdminPushSender sender) {
@@ -49,6 +65,10 @@ public class AdminPushDispatcher {
         this.admins = admins;
         this.notifications = notifications;
         this.sender = sender;
+    }
+
+    void setClock(Clock clock) {
+        this.clock = clock;
     }
 
     @Scheduled(fixedDelayString = "${yadony.admin-push.interval-ms:30000}")
@@ -64,7 +84,7 @@ public class AdminPushDispatcher {
     public int runOnce() {
         Map<UUID, List<AdminDeviceEntity>> byAdmin = new LinkedHashMap<>();
         for (AdminDeviceEntity d : devices.findActive()) {
-            byAdmin.computeIfAbsent(d.getAdminId(), k -> new java.util.ArrayList<>()).add(d);
+            byAdmin.computeIfAbsent(d.getAdminId(), k -> new ArrayList<>()).add(d);
         }
         int total = 0;
         for (Map.Entry<UUID, List<AdminDeviceEntity>> e : byAdmin.entrySet()) {
@@ -84,37 +104,40 @@ public class AdminPushDispatcher {
         }
         Set<AdminPermission> permissions = AdminPermissions.effective(admin.getRole(), admin.getPermissionOverrides());
         List<AdminNotificationItem> feed = notifications.feed(adminId, permissions, null, FEED_SIZE).items();
+        Instant pollStart = clock.instant();
         int sent = 0;
         for (AdminDeviceEntity device : adminDevices) {
-            Instant cursor = device.getLastPushedAt();
+            Instant startCursor = device.getLastPushedAt();
+            String deviceKey = device.getId() != null ? device.getId().toString() : device.getFcmToken();
             List<AdminNotificationItem> fresh = feed.stream()
-                    .filter(i -> i.createdAt().isAfter(cursor))
-                    .sorted(Comparator.comparing(AdminNotificationItem::createdAt).reversed())
+                    .filter(i -> i.createdAt().isAfter(startCursor))
+                    .filter(i -> sentIds.getIfPresent(deviceKey + ":" + i.id()) == null)
+                    .sorted(Comparator.comparing(AdminNotificationItem::createdAt))
                     .toList();
-            if (fresh.isEmpty()) {
-                continue;
-            }
-            boolean failed = false;
-            boolean removed = false;
+            boolean complete = fresh.size() <= MAX_PER_DEVICE;
+            boolean stopped = false;
             for (AdminNotificationItem item : fresh.stream().limit(MAX_PER_DEVICE).toList()) {
                 AdminPushSender.SendResult result = sender.send(device.getFcmToken(),
                         AdminPushCopy.titleFor(item.type()), AdminPushCopy.BODY, payload(item));
                 if (result == AdminPushSender.SendResult.OK) {
                     sent++;
-                } else if (result == AdminPushSender.SendResult.INVALID_TOKEN) {
-                    device.softDelete();
-                    devices.save(device);
-                    removed = true;
-                    break;
+                    sentIds.put(deviceKey + ":" + item.id(), Boolean.TRUE);
+                    if (item.createdAt().isAfter(device.getLastPushedAt())) {
+                        device.setLastPushedAt(item.createdAt());
+                    }
                 } else {
-                    failed = true;
+                    if (result == AdminPushSender.SendResult.INVALID_TOKEN) {
+                        device.softDelete();
+                    }
+                    stopped = true;
                     break;
                 }
             }
-            if (!removed && !failed) {
-                device.setLastPushedAt(fresh.get(0).createdAt());
-                devices.save(device);
+            if (!stopped && complete) {
+                Instant lookbackCursor = pollStart.minus(LOOKBACK);
+                device.setLastPushedAt(startCursor.isAfter(lookbackCursor) ? startCursor : lookbackCursor);
             }
+            devices.save(device);
         }
         return sent;
     }
