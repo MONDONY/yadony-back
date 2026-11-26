@@ -17,12 +17,6 @@ public record AdminOverviewResponse(
         @JsonInclude(JsonInclude.Include.NON_NULL) PeriodStats period
 ) {
 
-    /** Contrat historique : sans bloc {@code period}, qui reste absent du JSON. */
-    public AdminOverviewResponse(Users users, Announcements announcements, Bids bids, Gmv gmv,
-                                 List<GmvByCurrency> gmvByCurrency, Queues queues) {
-        this(users, announcements, bids, gmv, gmvByCurrency, queues, null);
-    }
-
     /**
      * Activite d'une periode ({@code ?period=TODAY|D7|D30}).
      *
