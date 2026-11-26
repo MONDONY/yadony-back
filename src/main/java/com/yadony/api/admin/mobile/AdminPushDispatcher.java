@@ -7,7 +7,6 @@ import com.yadony.api.admin.account.AdminUserEntity;
 import com.yadony.api.admin.account.AdminUserRepository;
 import com.yadony.api.admin.notifications.AdminNotificationItem;
 import com.yadony.api.admin.notifications.AdminNotificationService;
-import com.yadony.api.admin.notifications.AdminNotificationType;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
@@ -24,6 +23,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -43,6 +43,7 @@ public class AdminPushDispatcher {
     static final int MAX_PER_DEVICE = 5;
     private static final int FEED_SIZE = 50;
     static final Duration LOOKBACK = Duration.ofSeconds(45);
+    private static final String TICKET_PARAM = "ticket=";
 
     private final AdminDeviceRepository devices;
     private final AdminUserRepository admins;
@@ -146,13 +147,37 @@ public class AdminPushDispatcher {
         return Map.of("type", item.type().name(), "route", routeFor(item));
     }
 
+    /**
+     * Page mobile ouverte au tap. Une alerte ouvre sa fiche ; un ticket ou un message support ouvre
+     * le ticket ; les autres types ouvrent la liste des alertes sur l'entrée ({@code ?item=} reprend
+     * l'id du fil, sans donnée personnelle).
+     */
     static String routeFor(AdminNotificationItem item) {
-        String entityId = item.id().substring(item.id().indexOf(':') + 1);
-        AdminNotificationType type = item.type();
-        return switch (type) {
-            case ADMIN_ALERT -> "/m/alertes/" + entityId;
-            case SUPPORT_TICKET_CREATED, SUPPORT_MESSAGE_RECEIVED -> "/m/support/" + entityId;
-            default -> "/m/alertes";
+        return switch (item.type()) {
+            case ADMIN_ALERT -> "/m/alertes/" + item.id().substring(item.id().indexOf(':') + 1);
+            // L'id d'un message support est celui du message : le ticket n'est porté que par le lien.
+            case SUPPORT_TICKET_CREATED, SUPPORT_MESSAGE_RECEIVED -> ticketIdIn(item.link())
+                    .map(ticket -> "/m/support/" + ticket)
+                    .orElse("/m/support");
+            default -> "/m/alertes?item=" + item.id();
         };
+    }
+
+    /** Ticket du lien {@code /support?ticket=<uuid>} ; vide si absent ou illisible. */
+    private static Optional<UUID> ticketIdIn(String link) {
+        if (link == null) {
+            return Optional.empty();
+        }
+        int start = link.indexOf(TICKET_PARAM);
+        if (start < 0) {
+            return Optional.empty();
+        }
+        start += TICKET_PARAM.length();
+        int end = link.indexOf('&', start);
+        try {
+            return Optional.of(UUID.fromString(end < 0 ? link.substring(start) : link.substring(start, end)));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
     }
 }

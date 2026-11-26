@@ -83,9 +83,17 @@ class AdminPushDispatcherTest {
         return d;
     }
 
+    /** Lien comme {@code AdminNotificationItems} : le ticket support n'est porté que par le lien. */
     private static AdminNotificationItem item(AdminNotificationType type, UUID entityId, Instant at) {
+        boolean support = type == AdminNotificationType.SUPPORT_TICKET_CREATED
+                || type == AdminNotificationType.SUPPORT_MESSAGE_RECEIVED;
         return new AdminNotificationItem(type.name() + ":" + entityId, type, "Titre secret Jean", "Résumé 42 EUR",
-                AdminNotificationSeverity.INFO, at, "/x");
+                AdminNotificationSeverity.INFO, at, support ? "/support?ticket=" + entityId : "/x");
+    }
+
+    private static AdminNotificationItem itemWithLink(AdminNotificationType type, UUID entityId, String link) {
+        return new AdminNotificationItem(type.name() + ":" + entityId, type, "t", "s",
+                AdminNotificationSeverity.INFO, T0, link);
     }
 
     private void feedReturns(UUID adminId, AdminNotificationItem... items) {
@@ -122,14 +130,64 @@ class AdminPushDispatcherTest {
         admin(id, AdminStatus.ACTIVE);
         device(id, "tok1", T0);
         UUID ticket = UUID.randomUUID();
+        UUID dispute = UUID.randomUUID();
         feedReturns(id,
                 item(AdminNotificationType.SUPPORT_TICKET_CREATED, ticket, T0.plusSeconds(2)),
-                item(AdminNotificationType.DISPUTE_OPENED, UUID.randomUUID(), T0.plusSeconds(1)));
+                item(AdminNotificationType.DISPUTE_OPENED, dispute, T0.plusSeconds(1)));
 
         dispatcher.runOnce();
 
         assertThat(sent).extracting(s -> s.data().get("route"))
-                .containsExactlyInAnyOrder("/m/support/" + ticket, "/m/alertes");
+                .containsExactlyInAnyOrder("/m/support/" + ticket, "/m/alertes?item=DISPUTE_OPENED:" + dispute);
+    }
+
+    @Test
+    void routeFor_adminAlert_opensTheAlert() {
+        UUID alert = UUID.randomUUID();
+        assertThat(AdminPushDispatcher.routeFor(itemWithLink(AdminNotificationType.ADMIN_ALERT, alert, "/alertes")))
+                .isEqualTo("/m/alertes/" + alert);
+    }
+
+    @Test
+    void routeFor_supportTicket_opensTheTicket() {
+        UUID ticket = UUID.randomUUID();
+        assertThat(AdminPushDispatcher.routeFor(itemWithLink(AdminNotificationType.SUPPORT_TICKET_CREATED, ticket,
+                "/support?ticket=" + ticket))).isEqualTo("/m/support/" + ticket);
+    }
+
+    /** L'id d'un message support est celui du message ; le ticket n'est que dans le lien (régression F2). */
+    @Test
+    void routeFor_supportMessage_opensTheTicket_notTheMessageId() {
+        UUID message = UUID.randomUUID();
+        UUID ticket = UUID.randomUUID();
+        String route = AdminPushDispatcher.routeFor(itemWithLink(AdminNotificationType.SUPPORT_MESSAGE_RECEIVED,
+                message, "/support?ticket=" + ticket));
+        assertThat(route).isEqualTo("/m/support/" + ticket).doesNotContain(message.toString());
+    }
+
+    @Test
+    void routeFor_supportWithoutTicketInLink_opensTheSupportList() {
+        UUID message = UUID.randomUUID();
+        assertThat(AdminPushDispatcher.routeFor(itemWithLink(AdminNotificationType.SUPPORT_MESSAGE_RECEIVED,
+                message, "/support"))).isEqualTo("/m/support");
+        assertThat(AdminPushDispatcher.routeFor(itemWithLink(AdminNotificationType.SUPPORT_MESSAGE_RECEIVED,
+                message, "/support?ticket=pas-un-uuid"))).isEqualTo("/m/support");
+        assertThat(AdminPushDispatcher.routeFor(itemWithLink(AdminNotificationType.SUPPORT_TICKET_CREATED,
+                message, null))).isEqualTo("/m/support");
+    }
+
+    @Test
+    void routeFor_otherTypes_openTheAlertListOnTheItem() {
+        java.util.EnumSet<AdminNotificationType> others = java.util.EnumSet.complementOf(java.util.EnumSet.of(
+                AdminNotificationType.ADMIN_ALERT, AdminNotificationType.SUPPORT_TICKET_CREATED,
+                AdminNotificationType.SUPPORT_MESSAGE_RECEIVED));
+        assertThat(others).hasSize(7);
+        for (AdminNotificationType type : others) {
+            UUID entity = UUID.randomUUID();
+            assertThat(AdminPushDispatcher.routeFor(itemWithLink(type, entity, "/x")))
+                    .as(type.name())
+                    .isEqualTo("/m/alertes?item=" + type.name() + ":" + entity);
+        }
     }
 
     @Test
