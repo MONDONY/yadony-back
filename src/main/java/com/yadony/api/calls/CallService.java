@@ -119,6 +119,7 @@ public class CallService {
             case CONVERSATION_CLOSED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-conversation-closed", "problem.call-conversation-closed");
             case OUT_OF_WINDOW -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-out-of-window", "problem.call-out-of-window");
             case BLOCKED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-blocked", "problem.call-blocked");
+            case MESSAGING_MUTED -> YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "messaging-muted", "problem.call-messaging-muted");
             case CALLEE_UNAVAILABLE -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-callee-unavailable", "problem.call-callee-unavailable");
         };
     }

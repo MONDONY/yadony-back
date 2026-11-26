@@ -147,6 +147,29 @@ class CallEligibilityServiceTest {
         assertThat(service.check(UUID.randomUUID(), inquiry.getId()).reason()).isEqualTo(NOT_PARTICIPANT);
     }
 
+    private UserEntity senderUser(java.time.Instant mutedUntil) {
+        UserEntity senderUser = new UserEntity();
+        ReflectionTestUtils.setField(senderUser, "id", sender);
+        senderUser.setStatus(UserStatus.ACTIVE);
+        senderUser.setMessagingMutedUntil(mutedUntil);
+        lenient().when(users.findById(sender)).thenReturn(Optional.of(senderUser));
+        return senderUser;
+    }
+
+    @Test
+    void appelantDontLaMessagerieEstCoupeeEstRefuse_commeEnQuestionAvantReservation() {
+        senderUser(NOW.plusSeconds(3600));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(MESSAGING_MUTED);
+        assertThat(service.check(sender, inquiry().getId()).reason()).isEqualTo(MESSAGING_MUTED);
+        assertThat(service.canCall(sender, conv.getId())).isFalse();
+    }
+
+    @Test
+    void coupureTermineeNeBloquePlus() {
+        senderUser(NOW.minusSeconds(60));
+        assertThat(service.check(sender, conv.getId()).allowed()).isTrue();
+    }
+
     @Test
     void bidIntrouvableEstHorsFenetre() {
         lenient().when(bids.findById(bidId)).thenReturn(Optional.empty());

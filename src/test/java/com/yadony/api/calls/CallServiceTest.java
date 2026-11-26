@@ -138,6 +138,7 @@ class CallServiceTest {
         List<Case> cases = List.of(
                 new Case(CallEligibilityService.Reason.NOT_PARTICIPANT, HttpStatus.FORBIDDEN, "call-not-participant"),
                 new Case(CallEligibilityService.Reason.CONVERSATION_CLOSED, HttpStatus.UNPROCESSABLE_ENTITY, "call-conversation-closed"),
+                new Case(CallEligibilityService.Reason.MESSAGING_MUTED, HttpStatus.FORBIDDEN, "messaging-muted"),
                 new Case(CallEligibilityService.Reason.BLOCKED, HttpStatus.UNPROCESSABLE_ENTITY, "call-blocked"),
                 new Case(CallEligibilityService.Reason.CALLEE_UNAVAILABLE, HttpStatus.UNPROCESSABLE_ENTITY, "call-callee-unavailable"),
                 new Case(CallEligibilityService.Reason.CALLS_DISABLED, HttpStatus.SERVICE_UNAVAILABLE, "calls-disabled"));

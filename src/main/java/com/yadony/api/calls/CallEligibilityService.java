@@ -1,5 +1,6 @@
 package com.yadony.api.calls;
 
+import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.auth.UserStatus;
 import com.yadony.api.common.BlockVisibility;
@@ -29,7 +30,7 @@ import java.util.UUID;
 @Service
 public class CallEligibilityService implements CallAvailability {
 
-    public enum Reason { CALLS_DISABLED, NOT_FOUND, NOT_PARTICIPANT, CONVERSATION_CLOSED, OUT_OF_WINDOW, BLOCKED, CALLEE_UNAVAILABLE }
+    public enum Reason { CALLS_DISABLED, NOT_FOUND, NOT_PARTICIPANT, CONVERSATION_CLOSED, OUT_OF_WINDOW, BLOCKED, CALLEE_UNAVAILABLE, MESSAGING_MUTED }
 
     public record Eligibility(Reason reason, ConversationEntity conversation, UUID calleeId) {
         public boolean allowed() { return reason == null; }
@@ -91,6 +92,12 @@ public class CallEligibilityService implements CallAvailability {
         if (callerId.equals(conv.getSenderId())) calleeId = conv.getTravelerId();
         else if (callerId.equals(conv.getTravelerId())) calleeId = conv.getSenderId();
         else return Eligibility.denied(Reason.NOT_PARTICIPANT);
+
+        // Messagerie coupée par un admin : appeler est une autre façon de contacter, même règle que pour écrire.
+        UserEntity caller = users.findById(callerId).orElse(null);
+        if (caller != null && caller.isMessagingMuted(clock.instant())) {
+            return Eligibility.denied(Reason.MESSAGING_MUTED);
+        }
 
         if (conv.isClosed() || conv.isDeletedByUser(callerId) || conv.isReadOnlyFor(callerId)) {
             return Eligibility.denied(Reason.CONVERSATION_CLOSED);
