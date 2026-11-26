@@ -1,6 +1,7 @@
 package com.yadony.api.admin;
 
 import com.yadony.api.admin.account.AdminPrincipal;
+import com.yadony.api.admin.account.AdminUserRepository;
 import com.yadony.api.admin.dto.AdminAlertContextResponse;
 import com.yadony.api.admin.dto.AdminAlertResponse;
 import com.yadony.api.admin.dto.AdminAlertViolationsResponse;
@@ -48,9 +49,12 @@ public class AdminAlertController {
     private final AuditService auditService;
     private final MoneyIntegrityMonitor moneyIntegrityMonitor;
     private final AlertContextService contextService;
+    private final AdminUserRepository adminUserRepo;
 
     public AdminAlertController(AdminAlertRepository alertRepo, AuditService auditService,
-                                MoneyIntegrityMonitor moneyIntegrityMonitor, AlertContextService contextService) {
+                                MoneyIntegrityMonitor moneyIntegrityMonitor, AlertContextService contextService,
+                                AdminUserRepository adminUserRepo) {
+        this.adminUserRepo = adminUserRepo;
         this.alertRepo = alertRepo;
         this.auditService = auditService;
         this.moneyIntegrityMonitor = moneyIntegrityMonitor;
@@ -69,7 +73,7 @@ public class AdminAlertController {
         Page<AdminAlertResponse> result = alertRepo
                 .findFiltered(type, severity, resolved, snoozed, OffsetDateTime.now(ZoneOffset.UTC),
                         PageRequest.of(page, size, Sort.by("createdAt").descending()))
-                .map(AdminAlertResponse::from);
+                .map(this::toResponse);
         return ResponseEntity.ok(result);
     }
 
@@ -78,7 +82,7 @@ public class AdminAlertController {
     @GetMapping("/{id}")
     public ResponseEntity<AdminAlertResponse> get(@PathVariable UUID id) {
         return alertRepo.findById(id)
-                .map(AdminAlertResponse::from)
+                .map(this::toResponse)
                 .map(ResponseEntity::ok)
                 .orElseThrow(() -> YadonyBusinessException.localized(HttpStatus.NOT_FOUND, "alert-not-found", "problem.admin.alert-not-found"));
     }
@@ -236,6 +240,63 @@ public class AdminAlertController {
         alertRepo.save(alert);
         auditService.log("ADMIN_ALERT", id, "ADMIN_ALERT_UNSNOOZED", adminId, auditPayload(alert, ""));
         return ResponseEntity.ok(AdminAlertResponse.from(alert));
+    }
+
+    /**
+     * Prend l'alerte en charge : marqueur « je m'en occupe », sans toucher à resolved ni snoozedUntil.
+     * Déjà prise par un autre admin : 409. Reprise par le même admin : sans effet (pas de nouvelle trace).
+     */
+    @PreAuthorize("hasAuthority('ALERT_RESOLVE')")
+    @PostMapping("/{id}/claim")
+    @Transactional
+    public ResponseEntity<AdminAlertResponse> claim(@PathVariable UUID id, Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        AdminAlertEntity alert = find(id);
+        if (alert.getClaimedBy() != null) {
+            if (alert.getClaimedBy().equals(adminId)) {
+                return ResponseEntity.ok(toResponse(alert));
+            }
+            throw new YadonyBusinessException(HttpStatus.CONFLICT, "ALERT_ALREADY_CLAIMED", "Alert Already Claimed",
+                    "Cette alerte est déjà prise en charge par un autre administrateur");
+        }
+        alert.setClaimedBy(adminId);
+        alert.setClaimedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        alertRepo.save(alert);
+        auditService.log("ADMIN_ALERT", id, "ALERT_CLAIMED", adminId, auditPayload(alert, ""));
+        return ResponseEntity.ok(toResponse(alert));
+    }
+
+    /** Libère la prise en charge : par celui qui l'a prise, ou par un admin avec ADMIN_MANAGE. */
+    @PreAuthorize("hasAuthority('ALERT_RESOLVE')")
+    @DeleteMapping("/{id}/claim")
+    @Transactional
+    public ResponseEntity<AdminAlertResponse> releaseClaim(@PathVariable UUID id, Authentication authentication) {
+        UUID adminId = AdminPrincipal.requireAdminId(authentication);
+        AdminAlertEntity alert = find(id);
+        if (alert.getClaimedBy() == null) {
+            return ResponseEntity.ok(toResponse(alert));
+        }
+        boolean canManage = authentication.getAuthorities().stream()
+                .anyMatch(a -> "ADMIN_MANAGE".equals(a.getAuthority()));
+        if (!alert.getClaimedBy().equals(adminId) && !canManage) {
+            throw new YadonyBusinessException(HttpStatus.FORBIDDEN, "ALERT_CLAIM_NOT_YOURS", "Alert Claim Not Yours",
+                    "Seul l'administrateur qui a pris l'alerte en charge peut la libérer");
+        }
+        UUID previous = alert.getClaimedBy();
+        alert.setClaimedBy(null);
+        alert.setClaimedAt(null);
+        alertRepo.save(alert);
+        auditService.log("ADMIN_ALERT", id, "ALERT_CLAIM_RELEASED", adminId,
+                auditPayload(alert, "", "claimedBy", previous.toString()));
+        return ResponseEntity.ok(toResponse(alert));
+    }
+
+    /** Réponse avec le nom de l'admin qui a pris l'alerte (son e-mail, les comptes admin n'ont pas de nom). */
+    private AdminAlertResponse toResponse(AdminAlertEntity alert) {
+        String name = alert.getClaimedBy() == null ? null
+                : adminUserRepo.findById(alert.getClaimedBy())
+                        .map(a -> a.getEmail()).orElse(null);
+        return AdminAlertResponse.from(alert, name);
     }
 
     private AdminAlertEntity find(UUID id) {

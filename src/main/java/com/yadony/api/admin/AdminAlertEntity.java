@@ -65,6 +65,13 @@ public class AdminAlertEntity {
     @Column(name = "snoozed_until")
     private OffsetDateTime snoozedUntil;
 
+    /** Admin qui a pris l'alerte en charge ; simple marqueur, sans effet sur l'état. */
+    @Column(name = "claimed_by")
+    private UUID claimedBy;
+
+    @Column(name = "claimed_at")
+    private OffsetDateTime claimedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -97,6 +104,12 @@ public class AdminAlertEntity {
 
     public OffsetDateTime getSnoozedUntil() { return snoozedUntil; }
     public void setSnoozedUntil(OffsetDateTime snoozedUntil) { this.snoozedUntil = snoozedUntil; }
+
+    public UUID getClaimedBy() { return claimedBy; }
+    public void setClaimedBy(UUID claimedBy) { this.claimedBy = claimedBy; }
+
+    public OffsetDateTime getClaimedAt() { return claimedAt; }
+    public void setClaimedAt(OffsetDateTime claimedAt) { this.claimedAt = claimedAt; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

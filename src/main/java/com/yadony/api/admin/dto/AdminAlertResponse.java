@@ -25,11 +25,19 @@ public record AdminAlertResponse(
          */
         UUID paymentId,
         /** Reportée jusqu'à cette date (UTC) ; absente si l'alerte n'est pas reportée. */
-        OffsetDateTime snoozedUntil
+        OffsetDateTime snoozedUntil,
+        /** Nom (e-mail) de l'admin qui a pris l'alerte en charge ; absent si personne. */
+        String claimedByName,
+        /** Date de la prise en charge (UTC) ; absente si personne ne l'a prise. */
+        OffsetDateTime claimedAt
 ) {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public static AdminAlertResponse from(AdminAlertEntity e) {
+        return from(e, null);
+    }
+
+    public static AdminAlertResponse from(AdminAlertEntity e, String claimedByName) {
         Map<String, Object> payload = parsePayload(e.getPayload());
         return new AdminAlertResponse(
                 e.getId(),
@@ -41,7 +49,9 @@ public record AdminAlertResponse(
                 e.getResolvedAt(),
                 e.getCreatedAt(),
                 paymentIdOf(e.getType(), payload),
-                e.getSnoozedUntil()
+                e.getSnoozedUntil(),
+                e.getClaimedBy() == null ? null : claimedByName,
+                e.getClaimedAt()
         );
     }
 
