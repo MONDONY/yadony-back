@@ -52,6 +52,9 @@ stripe:
     billing-secret: whsec_test_billing
 
 yadony:
+  # Aucun push admin ni Firebase pendant les tests : le répartiteur est testé directement.
+  admin-push:
+    enabled: false
   declared-phone:
     hash-key: test-only-declared-phone-hash-key
   # Frais d'annulation : ÉTEINTS ici comme en production (défaut d'application.yml), toute la suite tourne donc
