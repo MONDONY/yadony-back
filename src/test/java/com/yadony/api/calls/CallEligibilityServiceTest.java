@@ -29,6 +29,7 @@ import static com.yadony.api.calls.CallEligibilityService.Reason.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class CallEligibilityServiceTest {
@@ -101,15 +102,72 @@ class CallEligibilityServiceTest {
         assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
     }
 
-    @Test
-    void conversationDeQuestionsSansBidEstHorsFenetre_sansRequeteSurLeBid() {
-        // JPA refuse findById(null) : sans garde, l'appel de la conversation INQUIRY serait un 500.
-        lenient().when(bids.findById(null)).thenThrow(new IllegalArgumentException("id must not be null"));
+    private ConversationEntity inquiry() {
         ConversationEntity inquiry = ConversationEntity.forInquiry(sender, UUID.randomUUID(), traveler, "conv_inq_1");
         ReflectionTestUtils.setField(inquiry, "id", UUID.randomUUID());
         lenient().when(conversations.findById(inquiry.getId())).thenReturn(Optional.of(inquiry));
+        return inquiry;
+    }
 
-        assertThat(service.check(sender, inquiry.getId()).reason()).isEqualTo(OUT_OF_WINDOW);
+    @Test
+    void conversationDeQuestionsSansBidEstAppelable_sansRequeteSurLeBid() {
+        // Question avant réservation : pas de fenêtre de commande, et JPA refuse findById(null).
+        lenient().when(bids.findById(null)).thenThrow(new IllegalArgumentException("id must not be null"));
+        ConversationEntity inquiry = inquiry();
+
+        var e = service.check(sender, inquiry.getId());
+
+        assertThat(e.allowed()).isTrue();
+        assertThat(e.calleeId()).isEqualTo(traveler);
+        // Le voyageur peut aussi rappeler le demandeur.
+        UserEntity senderUser = new UserEntity();
+        ReflectionTestUtils.setField(senderUser, "id", sender);
+        senderUser.setStatus(UserStatus.ACTIVE);
+        lenient().when(users.findById(sender)).thenReturn(Optional.of(senderUser));
+        assertThat(service.check(traveler, inquiry.getId()).calleeId()).isEqualTo(sender);
+    }
+
+    @Test
+    void conversationDeQuestionsBloqueeEstRefusee() {
+        ConversationEntity inquiry = inquiry();
+        when(blocks.isHidden(sender, traveler)).thenReturn(true);
+        assertThat(service.check(sender, inquiry.getId()).reason()).isEqualTo(BLOCKED);
+    }
+
+    @Test
+    void conversationDeQuestionsAvecVoyageurInactifEstRefusee() {
+        ConversationEntity inquiry = inquiry();
+        travelerUser.setStatus(UserStatus.SUSPENDED);
+        assertThat(service.check(sender, inquiry.getId()).reason()).isEqualTo(CALLEE_UNAVAILABLE);
+    }
+
+    @Test
+    void conversationDeQuestionsDUnTiersEstRefusee() {
+        ConversationEntity inquiry = inquiry();
+        assertThat(service.check(UUID.randomUUID(), inquiry.getId()).reason()).isEqualTo(NOT_PARTICIPANT);
+    }
+
+    private UserEntity senderUser(java.time.Instant mutedUntil) {
+        UserEntity senderUser = new UserEntity();
+        ReflectionTestUtils.setField(senderUser, "id", sender);
+        senderUser.setStatus(UserStatus.ACTIVE);
+        senderUser.setMessagingMutedUntil(mutedUntil);
+        lenient().when(users.findById(sender)).thenReturn(Optional.of(senderUser));
+        return senderUser;
+    }
+
+    @Test
+    void appelantDontLaMessagerieEstCoupeeEstRefuse_commeEnQuestionAvantReservation() {
+        senderUser(NOW.plusSeconds(3600));
+        assertThat(service.check(sender, conv.getId()).reason()).isEqualTo(MESSAGING_MUTED);
+        assertThat(service.check(sender, inquiry().getId()).reason()).isEqualTo(MESSAGING_MUTED);
+        assertThat(service.canCall(sender, conv.getId())).isFalse();
+    }
+
+    @Test
+    void coupureTermineeNeBloquePlus() {
+        senderUser(NOW.minusSeconds(60));
+        assertThat(service.check(sender, conv.getId()).allowed()).isTrue();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.yadony.api.calls;
 
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -50,6 +51,7 @@ class CallServiceTest {
         ReflectionTestUtils.setField(caller, "id", UUID.randomUUID());
         caller.setFirstName("Awa");
         caller.setLastName("Diop");
+        caller.setKycStatus(KycStatus.VERIFIED);
         lenient().when(users.findByFirebaseUid("uid")).thenReturn(Optional.of(caller));
         UserEntity callee = new UserEntity();
         ReflectionTestUtils.setField(callee, "id", calleeId);
@@ -106,11 +108,37 @@ class CallServiceTest {
     }
 
     @Test
+    void appelantNonVerifieRefuseEn403_sansFaireSonner() {
+        for (KycStatus status : List.of(KycStatus.NOT_STARTED, KycStatus.PENDING, KycStatus.REJECTED)) {
+            reset(eligibility);
+            caller.setKycStatus(status);
+            allowed();
+            assertThatThrownBy(() -> service.start("uid", conv.getId()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("call-kyc-required");
+                    });
+        }
+        verifyNoInteractions(stream);
+        verify(calls, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void lesRefusDeLaReglePrimentSurLExigenceDIdentite() {
+        caller.setKycStatus(KycStatus.PENDING);
+        denied(CallEligibilityService.Reason.BLOCKED);
+        assertThatThrownBy(() -> service.start("uid", conv.getId()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("call-blocked"));
+    }
+
+    @Test
     void chaqueRefusALeBonStatutEtCode() {
         record Case(CallEligibilityService.Reason reason, HttpStatus status, String code) {}
         List<Case> cases = List.of(
                 new Case(CallEligibilityService.Reason.NOT_PARTICIPANT, HttpStatus.FORBIDDEN, "call-not-participant"),
                 new Case(CallEligibilityService.Reason.CONVERSATION_CLOSED, HttpStatus.UNPROCESSABLE_ENTITY, "call-conversation-closed"),
+                new Case(CallEligibilityService.Reason.MESSAGING_MUTED, HttpStatus.FORBIDDEN, "messaging-muted"),
                 new Case(CallEligibilityService.Reason.BLOCKED, HttpStatus.UNPROCESSABLE_ENTITY, "call-blocked"),
                 new Case(CallEligibilityService.Reason.CALLEE_UNAVAILABLE, HttpStatus.UNPROCESSABLE_ENTITY, "call-callee-unavailable"),
                 new Case(CallEligibilityService.Reason.CALLS_DISABLED, HttpStatus.SERVICE_UNAVAILABLE, "calls-disabled"));

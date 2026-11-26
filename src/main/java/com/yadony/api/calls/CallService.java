@@ -1,5 +1,6 @@
 package com.yadony.api.calls;
 
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.calls.dto.CallTokenResponse;
@@ -65,6 +66,11 @@ public class CallService {
         UserEntity caller = currentUser(firebaseUid);
         var e = eligibility.check(caller.getId(), conversationId);
         if (!e.allowed()) throw refusal(e.reason(), conversationId);
+        // Seuls les comptes dont l'identité est vérifiée peuvent appeler. L'app guide les autres vers la
+        // vérification (403 call-kyc-required) ; celui qu'on appelle n'a pas besoin d'être vérifié.
+        if (caller.getKycStatus() != KycStatus.VERIFIED) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "call-kyc-required", "problem.call-kyc-required");
+        }
         UserEntity callee = users.findById(e.calleeId())
                 .orElseThrow(() -> refusal(CallEligibilityService.Reason.CALLEE_UNAVAILABLE, conversationId));
 
@@ -113,6 +119,7 @@ public class CallService {
             case CONVERSATION_CLOSED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-conversation-closed", "problem.call-conversation-closed");
             case OUT_OF_WINDOW -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-out-of-window", "problem.call-out-of-window");
             case BLOCKED -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-blocked", "problem.call-blocked");
+            case MESSAGING_MUTED -> YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "messaging-muted", "problem.call-messaging-muted");
             case CALLEE_UNAVAILABLE -> YadonyBusinessException.localized(HttpStatus.UNPROCESSABLE_ENTITY, "call-callee-unavailable", "problem.call-callee-unavailable");
         };
     }

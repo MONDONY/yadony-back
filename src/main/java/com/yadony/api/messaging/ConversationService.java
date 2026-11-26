@@ -887,7 +887,9 @@ public class ConversationService {
                                   boolean visibilityChecked) {
         // Filtre sans requête : la règle complète (plusieurs lectures) ne tourne que pour une commande
         // en cours dans une conversation active, soit une poignée de fils par liste.
-        if (!isContactCandidate(conv, bid) || conv.isClosed()
+        // Question avant réservation : pas de bid, l'appel dépend de la seule règle de CallEligibilityService.
+        boolean inquiryWithoutBid = conv.isInquiry() && conv.getBidId() == null;
+        if ((!inquiryWithoutBid && !isContactCandidate(conv, bid)) || conv.isClosed()
                 || conv.isDeletedByUser(currentUserId) || conv.isArchivedByUser(currentUserId)) {
             return false;
         }
