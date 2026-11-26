@@ -21,7 +21,10 @@ import java.util.UUID;
 /**
  * Règle unique : qui peut appeler qui, et quand (de l'acceptation jusqu'à J+3 après livraison,
  * pendant le retour d'un colis annulé après sa remise, et 48 h après l'annulation d'une commande
- * en cours, voir {@link ContactWindow#isRecentlyCancelled}).
+ * en cours, voir {@link ContactWindow#isRecentlyCancelled}), ainsi que dans une conversation de
+ * questions avant réservation tant qu'elle est ouverte. L'exigence d'identité vérifiée de
+ * l'appelant est contrôlée au lancement de l'appel ({@link CallService#start}), pas ici : le bouton
+ * reste visible pour un compte non vérifié, qui est alors guidé vers la vérification.
  */
 @Service
 public class CallEligibilityService implements CallAvailability {
@@ -93,10 +96,14 @@ public class CallEligibilityService implements CallAvailability {
             return Eligibility.denied(Reason.CONVERSATION_CLOSED);
         }
 
-        // Conversation de questions avant réservation : pas de bid, donc pas d'appel.
-        if (conv.getBidId() == null) return Eligibility.denied(Reason.OUT_OF_WINDOW);
-        BidEntity bid = bids.findById(conv.getBidId()).orElse(null);
-        if (bid == null || !inWindow(bid, conv)) return Eligibility.denied(Reason.OUT_OF_WINDOW);
+        // Conversation de questions avant réservation : pas de bid, donc pas de fenêtre de commande.
+        // L'appel y est permis tant qu'elle est ouverte ; blocage et compte actif restent vérifiés.
+        boolean inquiryWithoutBid = conv.isInquiry() && conv.getBidId() == null;
+        if (!inquiryWithoutBid) {
+            if (conv.getBidId() == null) return Eligibility.denied(Reason.OUT_OF_WINDOW);
+            BidEntity bid = bids.findById(conv.getBidId()).orElse(null);
+            if (bid == null || !inWindow(bid, conv)) return Eligibility.denied(Reason.OUT_OF_WINDOW);
+        }
 
         if (!visibilityChecked
                 && (blocks.isHidden(callerId, calleeId) || blocks.isHidden(calleeId, callerId))) {

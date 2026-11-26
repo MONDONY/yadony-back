@@ -1,5 +1,6 @@
 package com.yadony.api.calls;
 
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.calls.dto.CallTokenResponse;
@@ -65,6 +66,11 @@ public class CallService {
         UserEntity caller = currentUser(firebaseUid);
         var e = eligibility.check(caller.getId(), conversationId);
         if (!e.allowed()) throw refusal(e.reason(), conversationId);
+        // Seuls les comptes dont l'identité est vérifiée peuvent appeler. L'app guide les autres vers la
+        // vérification (403 call-kyc-required) ; celui qu'on appelle n'a pas besoin d'être vérifié.
+        if (caller.getKycStatus() != KycStatus.VERIFIED) {
+            throw YadonyBusinessException.localized(HttpStatus.FORBIDDEN, "call-kyc-required", "problem.call-kyc-required");
+        }
         UserEntity callee = users.findById(e.calleeId())
                 .orElseThrow(() -> refusal(CallEligibilityService.Reason.CALLEE_UNAVAILABLE, conversationId));
 

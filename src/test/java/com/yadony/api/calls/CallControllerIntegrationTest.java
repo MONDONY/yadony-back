@@ -102,6 +102,19 @@ class CallControllerIntegrationTest {
     }
 
     @Test
+    void unAppelantNonVerifieEstRefuseEn403_etRienNeSonne() throws Exception {
+        ConversationEntity conv = persistConversation(BidStatus.ACCEPTED);
+        sender.setKycStatus(KycStatus.PENDING);
+        userRepository.save(sender);
+
+        mockMvc.perform(post("/conversations/{id}/calls", conv.getId()).with(authentication(as(sender))))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("call-kyc-required"));
+        assertThat(callRepository.findAll()).noneMatch(c -> c.getConversationId().equals(conv.getId()));
+    }
+
+    @Test
     void unTiersEstRefuseEn403() throws Exception {
         ConversationEntity conv = persistConversation(BidStatus.ACCEPTED);
         mockMvc.perform(post("/conversations/{id}/calls", conv.getId()).with(authentication(as(persistUser("Tiers")))))
@@ -135,7 +148,7 @@ class CallControllerIntegrationTest {
         u.setFirstName(firstName);
         u.setLastName("Test");
         u.setStatus(UserStatus.ACTIVE);
-        u.setKycStatus(KycStatus.PENDING);
+        u.setKycStatus(KycStatus.VERIFIED);
         Set<Role> roles = new HashSet<>();
         roles.add(Role.SENDER);
         roles.add(Role.TRAVELER);

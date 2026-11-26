@@ -1,5 +1,6 @@
 package com.yadony.api.calls;
 
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -50,6 +51,7 @@ class CallServiceTest {
         ReflectionTestUtils.setField(caller, "id", UUID.randomUUID());
         caller.setFirstName("Awa");
         caller.setLastName("Diop");
+        caller.setKycStatus(KycStatus.VERIFIED);
         lenient().when(users.findByFirebaseUid("uid")).thenReturn(Optional.of(caller));
         UserEntity callee = new UserEntity();
         ReflectionTestUtils.setField(callee, "id", calleeId);
@@ -103,6 +105,31 @@ class CallServiceTest {
                     assertThat(e.getErrorCode()).isEqualTo("call-out-of-window");
                 });
         verifyNoInteractions(stream);
+    }
+
+    @Test
+    void appelantNonVerifieRefuseEn403_sansFaireSonner() {
+        for (KycStatus status : List.of(KycStatus.NOT_STARTED, KycStatus.PENDING, KycStatus.REJECTED)) {
+            reset(eligibility);
+            caller.setKycStatus(status);
+            allowed();
+            assertThatThrownBy(() -> service.start("uid", conv.getId()))
+                    .isInstanceOfSatisfying(YadonyBusinessException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(e.getErrorCode()).isEqualTo("call-kyc-required");
+                    });
+        }
+        verifyNoInteractions(stream);
+        verify(calls, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void lesRefusDeLaReglePrimentSurLExigenceDIdentite() {
+        caller.setKycStatus(KycStatus.PENDING);
+        denied(CallEligibilityService.Reason.BLOCKED);
+        assertThatThrownBy(() -> service.start("uid", conv.getId()))
+                .isInstanceOfSatisfying(YadonyBusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo("call-blocked"));
     }
 
     @Test

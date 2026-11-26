@@ -101,6 +101,36 @@ class ConversationServiceCallAvailableTest {
         assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
     }
 
+    // ── Question avant réservation : pas de bid, la règle d'éligibilité décide ──
+
+    private void withInquiry() {
+        conv = ConversationEntity.forInquiry(senderId, UUID.randomUUID(), UUID.randomUUID(), "fs-inq");
+        ReflectionTestUtils.setField(conv, "id", UUID.randomUUID());
+    }
+
+    @Test
+    void questionAvantReservationInterrogeLaRegleSansBid() {
+        withInquiry();
+        when(callAvailability.canCall(senderId, conv.getId())).thenReturn(true);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isTrue();
+        verify(bidRepository, never()).findById(any());
+    }
+
+    @Test
+    void questionAvantReservationRefuseParLaRegle() {
+        withInquiry();
+        when(callAvailability.canCall(senderId, conv.getId())).thenReturn(false);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+    }
+
+    @Test
+    void questionAvantReservationArchiveeSansInterrogerLaRegle() {
+        withInquiry();
+        conv.archiveForUser(senderId);
+        assertThat(service.toResponse(conv, senderId, Map.of()).callAvailable()).isFalse();
+        verify(callAvailability, never()).canCall(any(), any());
+    }
+
     // ── Retour d'un colis annulé après remise (FLUTTER-FM) ──────────────────
 
     private void withCancelledBid(java.time.LocalDateTime returnDeadline, java.time.LocalDateTime returnedAt) {
