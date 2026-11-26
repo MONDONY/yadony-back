@@ -382,52 +382,30 @@ class PriceGridServiceTest {
         verifyNoInteractions(auditService);
     }
 
-    // ── Plancher d'un article de grille : 5 € convertis dans la devise active ──
-
-    private static void assertGridRefusal(Throwable e, String reason) {
-        assertThat(e).isInstanceOf(com.yadony.api.common.YadonyBusinessException.class);
-        var ex = (com.yadony.api.common.YadonyBusinessException) e;
-        assertThat(ex.getErrorCode()).isEqualTo("price-grid/price-out-of-bounds");
-        assertThat(ex.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(ex.getProperties()).containsEntry("reason", reason);
-    }
+    // ── Pas de plancher ni de plafond : tout prix positif est accepté, dans toute devise ──
 
     @Test
-    void addItem_refuse_un_article_sous_5_euros() {
+    void addItem_accepte_un_petit_prix() {
         UUID travelerId = UUID.randomUUID();
-        Throwable e = org.assertj.core.api.Assertions.catchThrowable(() ->
-                service.addItem(travelerId, new PriceGridItemRequest("Clé", new BigDecimal("4.99")), travelerId));
-        assertGridRefusal(e, "too-low");
-        verify(gridRepo, never()).save(any());
-    }
-
-    @Test
-    void addItem_en_fcfa_refuse_8_et_3279_accepte_3280() {
-        UUID travelerId = UUID.randomUUID();
-        when(activeCurrencyResolver.resolve(travelerId)).thenReturn("XOF");
-        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
-                service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("8")), travelerId)),
-                "too-low");
-        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
-                service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("3279")), travelerId)),
-                "too-low");
-
         when(gridRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
-        assertThat(service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("3280")), travelerId)
-                .unitPriceNet()).isEqualByComparingTo("3280");
+
+        assertThat(service.addItem(travelerId, new PriceGridItemRequest("Sac", new BigDecimal("10")), travelerId)
+                .unitPriceNet()).isEqualByComparingTo("10");
     }
 
     @Test
-    void addItem_refuse_un_article_au_dessus_de_500_euros() {
+    void addItem_accepte_un_prix_eleve() {
         UUID travelerId = UUID.randomUUID();
-        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
-                service.addItem(travelerId, new PriceGridItemRequest("Moto", new BigDecimal("500.01")), travelerId)),
-                "too-high");
+        when(gridRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
+
+        assertThat(service.addItem(travelerId, new PriceGridItemRequest("Moto", new BigDecimal("2500")), travelerId)
+                .unitPriceNet()).isEqualByComparingTo("2500");
     }
 
     @Test
-    void updateItem_refuse_aussi_un_prix_sous_le_plancher() {
+    void updateItem_accepte_un_petit_prix() {
         UUID travelerId = UUID.randomUUID();
         UUID itemId = UUID.randomUUID();
         PriceGridItemEntity existing = new PriceGridItemEntity();
@@ -435,11 +413,12 @@ class PriceGridServiceTest {
         existing.setLabel("Valise");
         existing.setUnitPriceNet(new BigDecimal("20"));
         when(gridRepo.findById(itemId)).thenReturn(java.util.Optional.of(existing));
+        when(gridRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(commissionRateResolver.resolve(any())).thenReturn(new BigDecimal("0.12"));
 
-        assertGridRefusal(org.assertj.core.api.Assertions.catchThrowable(() ->
-                service.updateItem(travelerId, itemId, new PriceGridItemRequest("Valise", new BigDecimal("2")),
-                        travelerId)), "too-low");
-        assertThat(existing.getUnitPriceNet()).isEqualByComparingTo("20");
+        service.updateItem(travelerId, itemId, new PriceGridItemRequest("Valise", new BigDecimal("2")), travelerId);
+
+        assertThat(existing.getUnitPriceNet()).isEqualByComparingTo("2");
     }
 
     // ── « dès X » : prix expéditeur le plus bas de la grille d'une annonce ──

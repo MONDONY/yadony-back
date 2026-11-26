@@ -62,7 +62,6 @@ public class PriceGridService {
             throw new LocalizedResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                 "problem.price-grid.limit");
         }
-        assertItemPrice(travelerId, req);
         int position = (int) currentCount;
         PriceGridItemEntity entity = new PriceGridItemEntity();
         entity.setTravelerId(travelerId);
@@ -87,7 +86,6 @@ public class PriceGridService {
                 .filter(e -> e.getTravelerId().equals(travelerId))
                 .orElseThrow(() -> new LocalizedResponseStatusException(HttpStatus.NOT_FOUND,
                         "problem.price-grid.item-not-found"));
-        assertItemPrice(travelerId, req);
         entity.setLabel(req.label());
         entity.setUnitPriceNet(req.unitPriceNet());
         PriceGridItemEntity saved = gridRepo.save(entity);
@@ -279,12 +277,6 @@ public class PriceGridService {
                 )).toList();
     }
 
-    /** Le net saisi est dans la devise active du voyageur : 5 € au moins, 500 € au plus. */
-    private void assertItemPrice(UUID travelerId, PriceGridItemRequest req) {
-        com.yadony.api.payments.currency.GridItemPriceBounds.assertWithinBounds(
-                req.unitPriceNet(),
-                SupportedCurrency.fromCodeOrDefault(activeCurrencyResolver.resolve(travelerId)));
-    }
 
     /**
      * Prix affiché ({@link #displayPrice} : net + commission sans grille, net sous grille) le
