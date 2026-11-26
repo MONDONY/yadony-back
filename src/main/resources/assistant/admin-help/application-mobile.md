@@ -47,6 +47,9 @@ Après 30 minutes sans utilisation, la session mobile se ferme d'elle-même : vo
 
 - Le titre est générique, par exemple « Nouvelle alerte », et ne contient aucune donnée personnelle. Le détail s'affiche une fois l'application ouverte.
 - Vous ne recevez que les types de notifications que vos permissions autorisent.
+- Toucher une notification ouvre l'élément : l'alerte, le ticket du support, ou la liste des alertes pour les autres types.
+- Seules les nouveautés de moins d'un quart d'heure sont envoyées : un téléphone resté éteint ne reçoit pas tout l'historique d'un coup. La cloche, elle, garde tout.
+- Si un téléphone refuse les notifications pendant une dizaine de minutes, il est désabonné : réactivez-les depuis l'application mobile.
 - Vous les activez ou les désactivez depuis l'application mobile, sur chaque téléphone.
 
 > **Bon à savoir :** pour les notifications de la cloche sur ordinateur, voir [Cloche de notifications et pastilles](/aide/notifications-et-pastilles).
