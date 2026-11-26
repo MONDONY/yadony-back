@@ -110,6 +110,7 @@ public class NotificationPrefsService {
             Map.entry("RECIPIENT_PARCEL_ANNOUNCED",   "pushRecipientParcels"),
             Map.entry("RECIPIENT_PARCEL_DEPARTED",    "pushRecipientParcels"),
             Map.entry("RECIPIENT_PARCEL_ARRIVED",     "pushRecipientParcels"),
+            Map.entry("RECIPIENT_CODE_READY",         "pushRecipientParcels"),
             Map.entry("RECIPIENT_PARCEL_DELIVERED",   "pushRecipientParcels"),
             Map.entry("RECIPIENT_PARCEL_CANCELLED",   "pushRecipientParcels"),
             Map.entry("RECIPIENT_PARCEL_RESCHEDULED", "pushRecipientParcels"),

@@ -11,7 +11,10 @@ import org.hibernate.annotations.Where;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /** Une campagne de modal vidéo (table {@code video_modal_campaigns}, V366). */
 @Entity
@@ -191,6 +194,35 @@ public class VideoModalCampaignEntity extends BaseEntity {
     @Column(name = "corridors", nullable = false, columnDefinition = "TEXT")
     private List<VideoModalCorridor> corridors = new ArrayList<>();
 
+    // ── Étapes du colis (V401) ─────────────────────────────────────────────
+
+    /**
+     * Rôles visés sur le colis, comparés par l'app (le back ne connaît pas le colis à l'éligibilité) ;
+     * vide = tous. Colonne nulle pour les campagnes d'avant V401 et pour celles sans rôle.
+     */
+    @Convert(converter = VideoModalJsonConverters.ParcelRoles.class)
+    @Column(name = "parcel_roles", columnDefinition = "TEXT")
+    private Set<VideoModalParcelRole> parcelRoles = EnumSet.noneOf(VideoModalParcelRole.class);
+
+    /**
+     * Vrai si l'app doit connaître {@code caps=parcel} : un déclencheur d'étape du colis, la fréquence
+     * « une fois par colis », des rôles sur le colis ou un bouton {@code PARCEL_*}. Les apps qui ne
+     * l'annoncent pas ne reçoivent pas la campagne.
+     */
+    public boolean needsParcelCapability() {
+        return triggers.stream().anyMatch(VideoModalTrigger::isParcelStep)
+                || frequency == VideoModalFrequency.ONCE_PER_PARCEL
+                || !parcelRoles.isEmpty()
+                || (primaryAction != null && primaryAction.opensParcelScreen())
+                || (secondaryAction != null && secondaryAction.opensParcelScreen());
+    }
+
+    public Set<VideoModalParcelRole> getParcelRoles() { return parcelRoles; }
+    public void setParcelRoles(Collection<VideoModalParcelRole> parcelRoles) {
+        this.parcelRoles = parcelRoles == null || parcelRoles.isEmpty()
+                ? EnumSet.noneOf(VideoModalParcelRole.class) : EnumSet.copyOf(parcelRoles);
+    }
+
     /** Condition(s) de ciblage fin : jamais envoyée à un visiteur sans compte. */
     public boolean needsAccount() {
         return connectedOnly || hasConditions() || !situations.isEmpty() || samplePercent < 100;
@@ -208,12 +240,15 @@ public class VideoModalCampaignEntity extends BaseEntity {
         return frequency.needsTargetingCapability() || allowDontShowAgain;
     }
 
-    /** Nombre d'affichages maximal de la version, ou {@code null} sans plafond (EVERY_OPEN, EVERY_N_DAYS). */
+    /**
+     * Nombre d'affichages maximal de la version, ou {@code null} sans plafond (EVERY_OPEN, EVERY_N_DAYS,
+     * EVERY_TIME, et ONCE_PER_PARCEL que l'app dédoublonne elle-même par colis).
+     */
     public Integer displayCap() {
         return switch (frequency) {
             case ONCE -> 1;
             case UP_TO_N -> maxDisplays;
-            case EVERY_OPEN, EVERY_N_DAYS, EVERY_TIME -> null;
+            case EVERY_OPEN, EVERY_N_DAYS, EVERY_TIME, ONCE_PER_PARCEL -> null;
         };
     }
 

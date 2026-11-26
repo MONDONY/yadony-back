@@ -18,11 +18,17 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Gestion des campagnes depuis l'admin. Chaque écriture laisse une entrée audit_log. */
 @Service
@@ -37,6 +43,16 @@ public class VideoModalAdminService {
     static final int MAX_PRIORITY = 1000;
     static final int MIN_FREQUENCY_DAYS = 1;
     static final int MAX_FREQUENCY_DAYS = 365;
+
+    /**
+     * Variables que l'app remplit à l'ouverture d'un modal d'étape (avec repli si le nom est vide), dans les
+     * titres et les textes. Ordre d'affichage du message d'erreur. Identiques dans l'admin et l'app.
+     */
+    static final Set<String> PARCEL_VARIABLES = Collections.unmodifiableSet(new LinkedHashSet<>(
+            List.of("{destinataire}", "{voyageur}", "{expéditeur}", "{ville_arrivee}")));
+
+    /** Tout ce qui est écrit entre accolades, sans accolade à l'intérieur ({@code {}} compris). */
+    private static final Pattern VARIABLE = Pattern.compile("\\{[^{}]*}");
 
     private final VideoModalCampaignRepository campaignRepository;
     private final VideoModalResponseRepository responseRepository;
@@ -185,6 +201,64 @@ public class VideoModalAdminService {
         }
         applyLayout(c, r, type);
         applyTargeting(c, r, situations);
+        applyParcelSteps(c, r);
+    }
+
+    /**
+     * Étapes du colis : rôles visés, boutons {@code PARCEL_*} et variables des textes. Le rôle et les
+     * variables sont l'affaire de l'app (le back ne connaît pas le colis) ; ici seules les combinaisons
+     * incohérentes sont refusées, toujours en 422. La règle de {@code ONCE_PER_PARCEL} est vérifiée avec
+     * la fréquence ({@link #applyTargeting}).
+     */
+    private static void applyParcelSteps(VideoModalCampaignEntity c, VideoModalRequest r) {
+        Set<VideoModalParcelRole> roles = parseParcelRoles(r.parcelRoles());
+        boolean parcelStep = c.getTriggers().stream().anyMatch(VideoModalTrigger::isParcelStep);
+        if (!roles.isEmpty() && !parcelStep) {
+            throw invalid("video-modal-parcel-roles-need-parcel-trigger",
+                    "Le rôle sur le colis ne s'applique qu'avec au moins un déclencheur d'étape du colis");
+        }
+        if (!parcelStep && (opensParcelScreen(c.getPrimaryAction()) || opensParcelScreen(c.getSecondaryAction()))) {
+            throw invalid("video-modal-parcel-action-needs-parcel-trigger",
+                    "Un bouton lié au colis n'est permis qu'avec au moins un déclencheur d'étape du colis");
+        }
+        requireKnownVariables(c.getTitleFr(), c.getTitleEn(), c.getBodyFr(), c.getBodyEn());
+        c.setParcelRoles(roles);
+    }
+
+    private static boolean opensParcelScreen(VideoModalAction action) {
+        return action != null && action.opensParcelScreen();
+    }
+
+    /** Rôles : {@code SENDER}, {@code TRAVELER} ou {@code RECIPIENT} (espaces rognés), doublons ignorés ; sinon 422. */
+    private static Set<VideoModalParcelRole> parseParcelRoles(List<String> raw) {
+        Set<VideoModalParcelRole> roles = EnumSet.noneOf(VideoModalParcelRole.class);
+        if (raw == null) return roles;
+        for (String item : raw) {
+            VideoModalParcelRole role = parseEnum(VideoModalParcelRole.class, item);
+            if (role == null) {
+                throw invalid("video-modal-invalid-parcel-role", "Rôle sur le colis inconnu : « " + item
+                        + " » (SENDER, TRAVELER ou RECIPIENT)");
+            }
+            roles.add(role);
+        }
+        return roles;
+    }
+
+    /**
+     * Variables entre accolades d'un titre ou d'un texte : seules celles que l'app sait remplir sont
+     * permises. Toute autre (dont {@code {code}} : le code de retrait n'apparaît jamais dans un modal) : 422.
+     */
+    private static void requireKnownVariables(String... texts) {
+        for (String text : texts) {
+            if (text == null) continue;
+            Matcher m = VARIABLE.matcher(text);
+            while (m.find()) {
+                if (!PARCEL_VARIABLES.contains(m.group())) {
+                    throw invalid("video-modal-unknown-variable", "Variable inconnue : « " + m.group()
+                            + " ». Variables permises : " + String.join(", ", PARCEL_VARIABLES));
+                }
+            }
+        }
     }
 
     /**
@@ -213,6 +287,15 @@ public class VideoModalAdminService {
             if (!onlyMoments) {
                 throw invalid("video-modal-every-time-moments-only",
                         "La fréquence « à chaque fois » n'est permise que si tous les déclencheurs sont des moments d'action");
+            }
+        }
+        if (frequency == VideoModalFrequency.ONCE_PER_PARCEL) {
+            // Situations seules : servies avec APP_OPEN, qui n'est pas une étape du colis.
+            boolean onlyParcelSteps = !c.getTriggers().isEmpty()
+                    && c.getTriggers().stream().allMatch(VideoModalTrigger::isParcelStep);
+            if (!onlyParcelSteps) {
+                throw invalid("video-modal-once-per-parcel-parcel-triggers-only",
+                        "La fréquence « une fois par colis » n'est permise que si tous les déclencheurs sont des étapes du colis");
             }
         }
         int sample = r.samplePercent() == null ? 100 : r.samplePercent();
@@ -544,6 +627,7 @@ public class VideoModalAdminService {
                 .map(x -> (x.from() == null ? "*" : x.from()) + ">" + (x.to() == null ? "*" : x.to())).toList());
         payload.put("situations", c.getSituations().stream()
                 .map(x -> x.value() == null ? x.kind().name() : x.kind().name() + ":" + x.value()).toList());
+        payload.put("parcelRoles", c.getParcelRoles().stream().map(Enum::name).toList());
         // Empreinte de la règle, jamais ses valeurs (même convention que la Diffusion).
         AudienceRule.Group rule = c.hasConditions()
                 ? AudienceRule.parse(VideoModalTargeting.readConditions(c.getConditions())) : null;
@@ -570,7 +654,7 @@ public class VideoModalAdminService {
                 c.getPriority(), c.isConnectedOnly(),
                 c.hasConditions() ? VideoModalTargeting.readConditions(c.getConditions()) : null,
                 c.getMinAppVersion(), c.getMaxAppVersion(), c.getPlatforms(), c.getSamplePercent(),
-                c.getSituations(), c.getTriggerOptions(), c.getCorridors(),
+                c.getSituations(), c.getTriggerOptions(), c.getCorridors(), List.copyOf(c.getParcelRoles()),
                 stats == null ? VideoModalAdminResponse.Stats.EMPTY : stats);
     }
 

@@ -116,6 +116,14 @@ public class TrackingService {
         this.recipientLinkRepository = recipientLinkRepository;
     }
 
+    /** Numéro de l'expéditeur pour reconnaître « destinataire = expéditeur » ; absent, seul l'identifiant compte. */
+    private com.yadony.api.auth.FirebaseContactService firebaseContact;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setFirebaseContact(com.yadony.api.auth.FirebaseContactService firebaseContact) {
+        this.firebaseContact = firebaseContact;
+    }
+
     /** Raisons de bloquer la remise (supplément de prix, modification du colis) ; aucune tant que Spring ne les a pas injectées. */
     private List<HandoverBlocker> handoverBlockers = List.of();
 
@@ -413,8 +421,11 @@ public class TrackingService {
                 bid.setConfirmationCode(code);
                 bid.setConfirmationCodeAttempts(0);
                 bid.setConfirmationCodeExpiry(computeCodeExpiry(announcement));
+                // Variante selon le destinataire : nom saisi, sans nom, ou l'expéditeur lui-même.
+                boolean recipientIsSender = com.yadony.api.matching.RecipientIsSender.resolve(
+                        bid, userRepository.findById(bid.getSenderId()).orElse(null), firebaseContact);
                 var text = com.yadony.api.notifications.NotificationTexts.confirmationCodeReady(
-                        notificationDispatcher.messagesFor(bid.getSenderId()));
+                        notificationDispatcher.messagesFor(bid.getSenderId()), bid.getRecipientName(), recipientIsSender);
                 notificationDispatcher.notifyUser(
                         bid.getSenderId(),
                         text.title(),

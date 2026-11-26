@@ -8,6 +8,7 @@ import com.yadony.api.videomodal.VideoModalIcon;
 import com.yadony.api.videomodal.VideoModalImageFit;
 import com.yadony.api.videomodal.VideoModalImageMode;
 import com.yadony.api.videomodal.VideoModalLayout;
+import com.yadony.api.videomodal.VideoModalParcelRole;
 import com.yadony.api.videomodal.VideoModalPlatform;
 import com.yadony.api.videomodal.VideoModalSituation;
 import com.yadony.api.videomodal.VideoModalCorridor;
@@ -22,6 +23,7 @@ import java.util.UUID;
 /**
  * Campagne vue par l'admin, avec les statistiques de la version courante. {@code conditions} est
  * toujours un arbre de règles (groupe ET vide quand la campagne n'a aucune condition).
+ * {@code parcelRoles} est toujours une liste (vide = tous les rôles), en ordre fixe.
  */
 public record VideoModalAdminResponse(
         UUID id,
@@ -75,6 +77,7 @@ public record VideoModalAdminResponse(
         List<VideoModalSituation> situations,
         VideoModalTriggerOptions triggerOptions,
         List<VideoModalCorridor> corridors,
+        List<VideoModalParcelRole> parcelRoles,
         Stats stats) {
 
     public record Highlight(VideoModalIcon icon, String textFr, String textEn) {

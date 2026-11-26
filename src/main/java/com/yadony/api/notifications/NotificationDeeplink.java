@@ -94,6 +94,7 @@ public final class NotificationDeeplink {
 
             // Le destinataire n'est pas partie au colis : il le suit depuis ses réceptions.
             case "RECIPIENT_PARCEL_INCOMING", "RECIPIENT_PARCEL_ANNOUNCED", "RECIPIENT_PARCEL_DEPARTED", "RECIPIENT_PARCEL_ARRIVED",
+                 "RECIPIENT_CODE_READY",
                  "RECIPIENT_PARCEL_DELIVERED", "RECIPIENT_PARCEL_CANCELLED",
                  "RECIPIENT_PARCEL_RESCHEDULED", "RECIPIENT_PICKUP_UPDATED" -> bidId.map(id -> "receptions/" + id);
             // L'ancien destinataire n'a plus accès au colis : il retombe sur son onglet Suivi.

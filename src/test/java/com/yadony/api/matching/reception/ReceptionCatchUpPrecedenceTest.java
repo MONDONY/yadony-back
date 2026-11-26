@@ -125,4 +125,27 @@ class ReceptionCatchUpPrecedenceTest {
         assertThat(linker.catchUp(me)).isZero();
         verify(links, never()).save(any());
     }
+
+    @Test
+    void trustedRecipientOnAlreadyHandedOverParcel_publishesLinkConfirmedEvent() {
+        UserEntity me = yadony("uid-a");
+        bid.setStatus(BidStatus.HANDED_OVER);
+        RecipientTrust trust = mock(RecipientTrust.class);
+        when(trust.isTrusted(any(), any())).thenReturn(true);
+        linker = new ReceptionLinker(mock(BidRepository.class), mock(AnnouncementRepository.class), users, links,
+                firebase, block, mock(NotificationDispatcher.class), mock(AuditService.class),
+                trust, mock(DesignatedRecipientNaming.class),
+                new PhoneLookupService(firebase, users, hasher, new DeclaredPhoneResolver(hasher)));
+        List<Object> published = new java.util.ArrayList<>();
+        linker.setEventPublisher(published::add);
+        when(firebase.findPhoneOwner(PHONE)).thenReturn(FirebaseContactService.PhoneOwnerLookup.notFound());
+        when(users.findTop3ByDeclaredPhoneHashAndDeclaredPhoneLevel(hasher.hash(PHONE), DeclaredPhoneLevel.YADONY_VERIFIED))
+                .thenReturn(List.of(me));
+        claimsFor("uid-a");
+
+        assertThat(linker.catchUp(me)).isEqualTo(1);
+
+        assertThat(published).containsExactly(
+                new com.yadony.api.matching.events.RecipientLinkConfirmedEvent(bid.getId()));
+    }
 }

@@ -30,7 +30,8 @@ class VideoModalMomentsTest {
     @Test
     @DisplayName("les treize nouveaux moments exigent caps=moments")
     void nouveauxMoments() {
-        List<VideoModalTrigger> news = List.of(VideoModalTrigger.values()).subList(8, VideoModalTrigger.values().length);
+        // Les étapes du colis (PARCEL_*) viennent ensuite : VideoModalParcelStepsTest.
+        List<VideoModalTrigger> news = List.of(VideoModalTrigger.values()).subList(8, 21);
         assertThat(news).extracting(Enum::name).containsExactly(
                 "DELIVERY_CONFIRMED", "PAYMENT_SUCCEEDED", "TRIP_PUBLISHED", "REQUEST_PUBLISHED", "KYC_VERIFIED",
                 "SEARCH_NO_TRIP_RESULTS", "SEARCH_NO_PARCEL_RESULTS", "SEARCH_FEW_RESULTS", "FAVORITE_ADDED",

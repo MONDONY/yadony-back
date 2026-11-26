@@ -3,7 +3,8 @@ package com.yadony.api.videomodal;
 /**
  * Endroit ou moment de l'app où un modal peut s'ouvrir. Les huit premières valeurs sont le « où »
  * (écran ou bouton) ; les autres sont des « moments » déclenchés par l'app quand quelque chose se
- * passe (étape 2) et exigent {@code caps=moments}.
+ * passe (étape 2) et exigent {@code caps=moments}. Les étapes du colis ({@code PARCEL_*}, en dernier)
+ * exigent aussi {@code caps=parcel}. Nouvelles valeurs toujours ajoutées à la fin.
  */
 public enum VideoModalTrigger {
     /** Premier écran après lancement, une fois l'app prête. */
@@ -46,11 +47,33 @@ public enum VideoModalTrigger {
     /** Paiement échoué ou annulé par la personne. */
     PAYMENT_FAILED,
     /** Première ouverture après un changement de version (jamais à l'installation). */
-    APP_UPDATED;
+    APP_UPDATED,
+
+    // ── Étapes du colis (toujours à la fin : les ordinaux d'avant ne bougent pas) ──
+    // L'app les déclenche à l'ouverture du détail du colis à ce statut, ou à l'ouverture de l'app après la
+    // notification de l'étape. Elles exigent caps=moments ET caps=parcel.
+    /** Offre acceptée (statut ACCEPTED). */
+    PARCEL_ACCEPTED,
+    /** Colis remis au voyageur (statut HANDED_OVER). */
+    PARCEL_HANDED_OVER,
+    /** Colis en voyage (statut IN_TRANSIT). */
+    PARCEL_IN_TRANSIT,
+    /** Colis arrivé dans la ville de destination (statut ARRIVED). */
+    PARCEL_ARRIVED,
+    /** Colis livré (statut COMPLETED). */
+    PARCEL_DELIVERED;
 
     /** Vrai pour les déclencheurs que les apps sans {@code caps=moments} ne savent pas déclencher. */
     public boolean needsMomentsCapability() {
         return ordinal() >= DELIVERY_CONFIRMED.ordinal();
+    }
+
+    /** Vrai pour les étapes du colis ({@code PARCEL_*}), qui exigent en plus {@code caps=parcel}. */
+    public boolean isParcelStep() {
+        return switch (this) {
+            case PARCEL_ACCEPTED, PARCEL_HANDED_OVER, PARCEL_IN_TRANSIT, PARCEL_ARRIVED, PARCEL_DELIVERED -> true;
+            default -> false;
+        };
     }
 
     /**

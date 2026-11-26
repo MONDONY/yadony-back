@@ -6,6 +6,14 @@ import com.yadony.api.cancellation.events.TripCancelledEvent;
 import com.yadony.api.common.i18n.TestMessages;
 import com.yadony.api.matching.AnnouncementEntity;
 import com.yadony.api.matching.AnnouncementRepository;
+import com.yadony.api.matching.BidEntity;
+import com.yadony.api.matching.BidRepository;
+import com.yadony.api.matching.BidStatus;
+import com.yadony.api.matching.events.RecipientLinkConfirmedEvent;
+import com.yadony.api.notifications.NotificationDeeplink;
+import com.yadony.api.notifications.NotificationTypes;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import com.yadony.api.matching.events.ArrivalInstructionsUpdatedEvent;
 import com.yadony.api.matching.events.BidRecipientChangedEvent;
 import com.yadony.api.matching.events.RecipientReplacementRequestedEvent;
@@ -29,6 +37,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -43,6 +52,7 @@ class ReceptionNotificationListenerTest {
 
     @Mock BidRecipientLinkRepository linkRepository;
     @Mock AnnouncementRepository announcementRepository;
+    @Mock BidRepository bidRepository;
     @Mock NotificationDispatcher notificationDispatcher;
     @InjectMocks ReceptionNotificationListener listener;
 
@@ -61,6 +71,137 @@ class ReceptionNotificationListenerTest {
             l.respond(status, null);
         }
         return l;
+    }
+
+    // ── Code de retrait prêt, côté destinataire (RECIPIENT_CODE_READY) ──────
+
+    private Map<String, String> codeReadyData() {
+        return Map.of("type", "RECIPIENT_CODE_READY", "bidId", bidId.toString());
+    }
+
+    private BidEntity bidWith(BidStatus status, String code) {
+        BidEntity b = new BidEntity();
+        b.setStatus(status);
+        b.setConfirmationCode(code);
+        return b;
+    }
+
+    @Test
+    void noCodeReadyAtHandover_departedKeepsTypeAndPayloadWithRewrittenText() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+
+        listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Votre colis est en route"),
+                eq("Votre code de retrait est prêt : gardez-le pour l'arrivée."),
+                eq(Map.of("type", "RECIPIENT_PARCEL_DEPARTED", "bidId", bidId.toString())));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), eq(codeReadyData()));
+    }
+
+    @Test
+    void codeReadyKeyIsReleasedWhenSendFails_soARetryGoesThrough() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "123456")));
+        org.mockito.Mockito.doThrow(new IllegalStateException("fcm down")).doNothing()
+                .when(notificationDispatcher).notifyUser(any(), anyString(), anyString(), eq(codeReadyData()));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher, org.mockito.Mockito.times(2))
+                .notifyUser(eq(recipientId), anyString(), anyString(), eq(codeReadyData()));
+    }
+
+    @Test
+    void notPushedWithoutConfirmedLink() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.PENDING)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "123456")));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.empty());
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class, names = {"HANDED_OVER", "IN_TRANSIT", "ARRIVED"})
+    void pushedOnLinkConfirmationWhenBidAlreadyHandedOver(BidStatus status) {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(status, "123456")));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Code de retrait prêt"),
+                anyString(), eq(codeReadyData()));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = BidStatus.class, names = {"ACCEPTED", "PAYMENT_ESCROWED", "COMPLETED", "CANCELLED"})
+    void notPushedOnLinkConfirmationBeforeHandover(BidStatus status) {
+        lenient().when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(status, "123456")));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void notPushedOnLinkConfirmationWithoutCode() {
+        lenient().when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, null)));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void notPushedOnLinkConfirmationWhenLinkIsNotConfirmed() {
+        lenient().when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.DECLINED)));
+        lenient().when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.IN_TRANSIT, "123456")));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher, never()).notifyUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void payloadHasTypeAndBidIdOnly() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "987654")));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        org.mockito.ArgumentCaptor<String> title = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> body = org.mockito.ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, String>> data = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(notificationDispatcher).notifyUser(eq(recipientId), title.capture(), body.capture(), data.capture());
+        assertThat(data.getValue()).containsOnlyKeys("type", "bidId");
+        assertThat(title.getValue() + body.getValue() + data.getValue()).doesNotContain("987654");
+    }
+
+    @Test
+    void dedupe_secondTriggerForSameBidIsIgnored() {
+        when(linkRepository.findByBidId(bidId)).thenReturn(Optional.of(link(ReceptionLinkStatus.CONFIRMED)));
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bidWith(BidStatus.HANDED_OVER, "123456")));
+
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+        listener.onRecipientLinkConfirmed(new RecipientLinkConfirmedEvent(bidId));
+
+        verify(notificationDispatcher, org.mockito.Mockito.times(1))
+                .notifyUser(eq(recipientId), anyString(), anyString(), eq(codeReadyData()));
+    }
+
+    @Test
+    void notCritical() {
+        assertThat(NotificationTypes.CRITICAL).doesNotContain("RECIPIENT_CODE_READY");
+    }
+
+    @Test
+    void deeplinkOpensReception() {
+        assertThat(NotificationDeeplink.of("RECIPIENT_CODE_READY", Map.of("bidId", bidId.toString())))
+                .contains("yadony://receptions/" + bidId);
     }
 
     // ── Changement de destinataire (lot 3A) ─────────────────────────────────
@@ -140,7 +281,7 @@ class ReceptionNotificationListenerTest {
         listener.onParcelDeparted(new ParcelDepartedEvent(bidId));
 
         verify(notificationDispatcher).notifyUser(eq(recipientId), eq("Votre colis est en route"),
-                eq("Votre code de retrait est disponible dans l'app."),
+                eq("Votre code de retrait est prêt : gardez-le pour l'arrivée."),
                 eq(Map.of("type", "RECIPIENT_PARCEL_DEPARTED", "bidId", bidId.toString())));
     }
 

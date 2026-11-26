@@ -5427,6 +5427,38 @@ class AnnouncementServiceTest {
         }
 
         @Test
+        @DisplayName("markArrived — l'événement porte le nom du destinataire et le drapeau « vous »")
+        void markArrived_eventCarriesRecipientNameAndSelfFlag() {
+            UserEntity traveler = buildTraveler();
+            AnnouncementEntity announcement = buildAnnouncement(traveler);
+            BidEntity named = buildBid(BidStatus.IN_TRANSIT, announcement.getId());
+            named.setRecipientName("Awa Diallo");
+            BidEntity self = buildBid(BidStatus.IN_TRANSIT, announcement.getId());
+            self.setRecipientName("Moi");
+            self.setRecipientUserId(self.getSenderId());
+            UserEntity selfSender = buildTraveler();
+            setId(selfSender, self.getSenderId());
+            when(userRepository.findByFirebaseUid(FIREBASE_UID)).thenReturn(Optional.of(traveler));
+            when(userRepository.findById(traveler.getId())).thenReturn(Optional.of(traveler));
+            when(userRepository.findAllById(anyCollection())).thenReturn(List.of(selfSender));
+            when(announcementRepository.findByIdForUpdate(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(announcementRepository.findById(announcement.getId())).thenReturn(Optional.of(announcement));
+            when(bidRepository.findByAnnouncementIdAndStatusNotIn(eq(announcement.getId()), anyCollection()))
+                    .thenReturn(List.of(named, self));
+            when(bidRepository.countVisibleByAnnouncementId(announcement.getId())).thenReturn(2L);
+            when(bidRepository.countByAnnouncementIdAndStatusIn(eq(announcement.getId()), anyList())).thenReturn(0L);
+            when(announcementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            announcementService.markArrived(announcement.getId(), FIREBASE_UID, "Gare de Dakar");
+
+            ArgumentCaptor<TripArrivedEvent> captor = ArgumentCaptor.forClass(TripArrivedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().getTargets()).containsExactly(
+                    new TripArrivedEvent.BidTarget(named.getId(), named.getSenderId(), "Awa Diallo", false),
+                    new TripArrivedEvent.BidTarget(self.getId(), self.getSenderId(), "Moi", true));
+        }
+
+        @Test
         @DisplayName("markArrived — refuse si aucun colis actif")
         void markArrived_noActiveParcel_throws() {
             UserEntity traveler = buildTraveler();

@@ -6,7 +6,8 @@ routes:
   - path: /envois
     label: Mes colis
 ---
-Le code de retrait est un code secret à 6 chiffres : le destinataire ne le donne au voyageur qu'au moment de la remise, pas avant.
-L'expéditeur le voit dans le détail de son envoi et le transmet à son destinataire ; il ne le donne pas au voyageur.
-S'il est bloqué après trop d'essais incorrects, ou expiré, l'expéditeur en génère un nouveau avec « Régénérer le code » : la limite est de 5 régénérations, puis le bouton se réactive automatiquement après un délai.
-Ne le confondez pas avec le numéro de suivi DON-…, qui est un identifiant du colis et non un code de remise.
+Le code de retrait est un code secret à 6 chiffres, créé au scan de départ du voyageur, pas à l'acceptation. L'expéditeur le donne au destinataire (« Prévenir ») ; sans l'app, le destinataire ne reçoit rien de Yadony.
+Le voyageur ne remet rien sans le code.
+Bloqué ou expiré : l'expéditeur le régénère (le voyageur peut en demander un), 5 fois par 24 h.
+Expéditeur et destinataire sont la même personne : gardez votre code.
+Ce n'est pas le numéro de suivi DON-….

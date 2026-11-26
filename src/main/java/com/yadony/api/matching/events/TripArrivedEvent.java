@@ -22,5 +22,14 @@ public class TripArrivedEvent {
     public UUID getAnnouncementId() { return announcementId; }
     public List<BidTarget> getTargets() { return targets; }
 
-    public record BidTarget(UUID bidId, UUID senderId) {}
+    /**
+     * @param recipientName     nom saisi par l'expéditeur pour le destinataire (peut être null), pour le push
+     * @param recipientIsSender l'expéditeur retire lui-même le colis (voir RecipientIsSender)
+     */
+    public record BidTarget(UUID bidId, UUID senderId, String recipientName, boolean recipientIsSender) {
+        /** Sans destinataire connu : texte « votre destinataire ». */
+        public BidTarget(UUID bidId, UUID senderId) {
+            this(bidId, senderId, null, false);
+        }
+    }
 }

@@ -38,7 +38,13 @@ final class VideoModalEligibility {
         VideoModalResponseEntity current = current(campaign, responses).orElse(null);
         // « Ne plus afficher » : définitif pour la version, quelles que soient fréquence et réponse.
         if (current != null && current.isDontShowAgain()) return null;
-        if (campaign.isStopAfterAnswer() && current != null && current.getStatus().isAnswer()) return null;
+        // Pas de branche propre à EVERY_TIME : stopAfterAnswer vaut true par défaut, donc une campagne
+        // EVERY_TIME avec stopAfterAnswer=true est écartée dès qu'une réponse existe. ONCE_PER_PARCEL n'est
+        // jamais écartée après une réponse (l'app dédoublonne par colis : une réponse sur un colis ne doit pas
+        // éteindre la campagne pour les suivants), ce qui la rend plus permissive qu'EVERY_TIME. Aucun plafond
+        // (displayCap nul) ; « ne plus afficher » reste définitif.
+        if (campaign.getFrequency() != VideoModalFrequency.ONCE_PER_PARCEL
+                && campaign.isStopAfterAnswer() && current != null && current.getStatus().isAnswer()) return null;
         int displays = current == null ? 0 : current.getDisplays();
         Integer cap = campaign.displayCap();
         if (cap != null && displays >= cap) return null;

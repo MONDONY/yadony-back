@@ -1906,9 +1906,67 @@ class TrackingServiceTest {
         QrScanRequest req = new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null);
         service.processScan(req, "uid-traveler");
 
-        verify(notificationDispatcher).notifyUser(eq(senderId), contains("récupéré"), any(), argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type"))));
+        verify(notificationDispatcher).notifyUser(eq(senderId), contains("Envoyez le code"), any(), argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type"))));
         // Le destinataire qui suit le colis dans l'app est prévenu par événement.
         verify(eventPublisher).publishEvent(new com.yadony.api.tracking.events.ParcelDepartedEvent(bidId));
+    }
+
+    /** Scan de départ prêt à l'emploi : renvoie le corps du push CONFIRMATION_CODE_READY. */
+    private String departScanCodeReadyBody(BidEntity bid, UserEntity sender) {
+        AnnouncementEntity ann = buildAnnouncement();
+        UserEntity traveler = buildUser(travelerId, "uid-traveler");
+        when(bidRepository.findById(bidId)).thenReturn(Optional.of(bid));
+        when(announcementRepository.findById(annId)).thenReturn(Optional.of(ann));
+        when(userRepository.findByFirebaseUid("uid-traveler")).thenReturn(Optional.of(traveler));
+        when(userRepository.findById(senderId)).thenReturn(Optional.of(sender));
+        when(trackingEventRepository.save(any())).thenAnswer(inv -> {
+            TrackingEventEntity e = inv.getArgument(0);
+            setId(e, UUID.randomUUID());
+            return e;
+        });
+        service.processScan(new QrScanRequest(bidId, TrackingEventType.DEPART, null, null, null, null, null), "uid-traveler");
+        var body = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(notificationDispatcher).notifyUser(eq(senderId), any(), body.capture(),
+                argThat(d -> "CONFIRMATION_CODE_READY".equals(d.get("type")) && bidId.toString().equals(d.get("bidId"))));
+        return body.getValue();
+    }
+
+    @Test
+    void processScan_depart_codeReadyBodyNamesTheRecipient() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setRecipientName("Awa Diallo");
+        String body = departScanCodeReadyBody(bid, buildUser(senderId, "uid-sender"));
+        assertThat(body).isEqualTo("Donnez le code à Awa Diallo. Sans lui, rien n'est remis.");
+    }
+
+    @Test
+    void processScan_depart_codeReadyBodyWithoutNameSaysYourRecipient() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setRecipientName("  ");
+        String body = departScanCodeReadyBody(bid, buildUser(senderId, "uid-sender"));
+        assertThat(body).isEqualTo("Donnez le code à votre destinataire. Sans lui, rien n'est remis.");
+    }
+
+    @Test
+    void processScan_depart_senderIsTheRecipientKeepsHisCode() {
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setRecipientName("Moi");
+        bid.setRecipientUserId(senderId);
+        String body = departScanCodeReadyBody(bid, buildUser(senderId, "uid-sender"));
+        assertThat(body).isEqualTo("C'est vous qui retirez. Le voyageur vous demandera ce code.");
+    }
+
+    @Test
+    void processScan_depart_recipientPhoneIsTheSenderPhoneKeepsHisCode() {
+        var firebaseContact = org.mockito.Mockito.mock(com.yadony.api.auth.FirebaseContactService.class);
+        when(firebaseContact.getContact("uid-sender"))
+                .thenReturn(new com.yadony.api.auth.FirebaseContactService.Contact("+33612345678", null));
+        ReflectionTestUtils.invokeMethod(service, "setFirebaseContact", firebaseContact);
+        BidEntity bid = buildBid(BidStatus.ACCEPTED, "qt");
+        bid.setRecipientName("Moi");
+        bid.setRecipientPhone("+33 6 12 34 56 78");
+        String body = departScanCodeReadyBody(bid, buildUser(senderId, "uid-sender"));
+        assertThat(body).isEqualTo("C'est vous qui retirez. Le voyageur vous demandera ce code.");
     }
 
     // ── getEvents : destinataire rattaché (lot 2) ─────────────────────────────

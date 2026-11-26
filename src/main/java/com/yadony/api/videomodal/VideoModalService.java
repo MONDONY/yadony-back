@@ -94,6 +94,9 @@ public class VideoModalService {
     /** Capacité envoyée par la nouvelle app : elle sait rouvrir un modal à chaque occurrence du moment (EVERY_TIME). */
     static final String CAP_EVERYTIME = "everytime";
 
+    /** Capacité envoyée par la nouvelle app : elle sait déclencher les modals d'étape du colis (PARCEL_*, ONCE_PER_PARCEL). */
+    static final String CAP_PARCEL = "parcel";
+
     /** Équivaut à {@code eligible(firebaseUid, lang, null)} : une app sans capacité déclarée. */
     @Transactional(readOnly = true)
     public List<VideoModalEligibleResponse> eligible(String firebaseUid, String lang) {
@@ -126,6 +129,11 @@ public class VideoModalService {
         return hasCap(caps, CAP_EVERYTIME);
     }
 
+    /** Vrai si la liste contient {@code parcel}. */
+    static boolean supportsParcel(String caps) {
+        return hasCap(caps, CAP_PARCEL);
+    }
+
     /**
      * Une app sans {@code caps=everytime} ne connaît pas EVERY_TIME : elle reçoit EVERY_OPEN (au moins
      * une fois par lancement) plutôt qu'une valeur inconnue.
@@ -154,7 +162,8 @@ public class VideoModalService {
      *                    ou « tous les N jours » ou avec la case « Ne plus afficher » ne le sont pas
      *                    non plus. Sans {@code moments}, les déclencheurs « moments d'action » sont retirés
      *                    de {@code triggers} et une campagne qui n'en garde aucun n'est pas envoyée. Sans
-     *                    {@code everytime}, une fréquence EVERY_TIME est servie sous la forme EVERY_OPEN. Les
+     *                    {@code everytime}, une fréquence EVERY_TIME est servie sous la forme EVERY_OPEN. Sans {@code parcel},
+     *                    toute campagne d'étape du colis (déclencheur PARCEL_*, ONCE_PER_PARCEL, rôles, bouton PARCEL_*) est absente. Les
      *                    campagnes ordinaires restent envoyées à tous.
      * @param appVersion  version de l'app ({@code 1.0.6}), nulle si inconnue
      * @param platform    {@code android} ou {@code ios}, nul si inconnu
@@ -166,6 +175,7 @@ public class VideoModalService {
         boolean targetingCapable = supportsTargeting(caps);
         boolean momentsCapable = supportsMoments(caps);
         boolean everyTimeCapable = supportsEveryTime(caps);
+        boolean parcelCapable = supportsParcel(caps);
         boolean english = lang != null && lang.trim().toLowerCase().startsWith("en");
         Instant now = clock.instant();
         int[] version = VideoModalAppVersions.parseLenient(appVersion).orElse(null);
@@ -174,6 +184,9 @@ public class VideoModalService {
                 .filter(c -> c.isLiveAt(now))
                 .filter(c -> layoutCapable || !c.needsLayoutCapability())
                 .filter(c -> targetingCapable || !c.needsTargetingCapability())
+                // Sans caps=parcel, aucune campagne d'étape du colis (au niveau de la campagne : une campagne
+                // mixte étape + autre déclencheur est absente, jamais amputée de ses étapes).
+                .filter(c -> parcelCapable || !c.needsParcelCapability())
                 // Sans caps=moments, les nouveaux moments sont retirés ; plus aucun déclencheur : pas envoyée.
                 .filter(c -> !c.servedTriggers(momentsCapable).isEmpty())
                 .filter(c -> VideoModalEligibility.matchesClient(c, version, device))

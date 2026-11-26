@@ -247,8 +247,29 @@ public final class NotificationTexts {
                 m.get("notification.traveler-no-show.body"));
     }
 
-    public static NotificationText tripArrived(Messages m) {
-        return new NotificationText(m.get("notification.trip-arrived.title"), m.get("notification.trip-arrived.body"));
+    /**
+     * Arrivée du voyageur, pour l'expéditeur. {@code recipientIsSender} : c'est lui qui retire le colis.
+     * Le nom du destinataire est raccourci ici ; vide ou absent, le texte dit « votre destinataire ».
+     */
+    public static NotificationText tripArrived(Messages m, String recipientName, boolean recipientIsSender) {
+        String title = m.get("notification.trip-arrived.title");
+        if (recipientIsSender) return new NotificationText(title, m.get("notification.trip-arrived.body.self"));
+        String nom = shortRecipientName(recipientName);
+        return new NotificationText(title, nom == null
+                ? m.get("notification.trip-arrived.body.no-name")
+                : m.get("notification.trip-arrived.body", nom));
+    }
+
+    /** Nom du destinataire pour un push : coupé à un mot entier vers 20 caractères ; vide donne {@code null}. */
+    public static String shortRecipientName(String name) {
+        if (name == null || name.isBlank()) return null;
+        return truncateAtWord(name.trim(), 20);
+    }
+
+    /** Code de retrait du destinataire prêt (il reçoit le sien, jamais le chiffre dans le push). */
+    public static NotificationText recipientCodeReady(Messages m) {
+        return new NotificationText(m.get("notification.recipient-code-ready.title"),
+                m.get("notification.recipient-code-ready.body"));
     }
 
     public static NotificationText tripInProgress(Messages m) {
@@ -277,9 +298,19 @@ public final class NotificationTexts {
                 m.get("notification.handover-reminder.body", lieu));
     }
 
-    public static NotificationText confirmationCodeReady(Messages m) {
-        return new NotificationText(m.get("notification.confirmation-code-ready.title"),
-                m.get("notification.confirmation-code-ready.body"));
+    /**
+     * Colis remis au voyageur, pour l'expéditeur : dit à qui donner le code de retrait. Jamais le code
+     * lui-même. {@code recipientIsSender} : l'expéditeur retire lui-même, il garde son code.
+     */
+    public static NotificationText confirmationCodeReady(Messages m, String recipientName, boolean recipientIsSender) {
+        if (recipientIsSender) {
+            return new NotificationText(m.get("notification.confirmation-code-ready.title.self"),
+                    m.get("notification.confirmation-code-ready.body.self"));
+        }
+        String nom = shortRecipientName(recipientName);
+        return new NotificationText(m.get("notification.confirmation-code-ready.title"), nom == null
+                ? m.get("notification.confirmation-code-ready.body.no-name")
+                : m.get("notification.confirmation-code-ready.body", nom));
     }
 
     public static NotificationText confirmationCodeBlocked(Messages m) {

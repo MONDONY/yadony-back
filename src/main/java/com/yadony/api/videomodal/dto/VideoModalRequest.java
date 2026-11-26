@@ -45,6 +45,13 @@ import java.util.List;
  * <p>Moments d'action (étape 2, facultatifs) : {@code triggerOptions} ({@code fewResultsMax} 1 à 20 défaut 2,
  * {@code tripViewedTimes} 2 à 10 défaut 3) et {@code corridors} (0 à 10 entrées, 80 caractères au plus par
  * côté ; un côté vide veut dire « n'importe lequel »). Bornes contrôlées par le service, toujours en 422.
+ *
+ * <p>Étapes du colis (facultatif) : {@code parcelRoles} ({@code SENDER}, {@code TRAVELER}, {@code RECIPIENT} ;
+ * vide ou absent = tous). Chaînes et non enum, pour qu'un rôle inconnu soit refusé en 422 avec un message
+ * clair. Règles du service (422) : rôles seulement avec au moins un déclencheur {@code PARCEL_*} ;
+ * {@code ONCE_PER_PARCEL} seulement si tous les déclencheurs sont des étapes ; bouton {@code PARCEL_*}
+ * seulement avec au moins une étape ; dans les titres et les textes, seules les variables
+ * {@code {destinataire}}, {@code {voyageur}}, {@code {expéditeur}} et {@code {ville_arrivee}} (remplies par l'app).
  */
 public record VideoModalRequest(
         @Size(max = 120) String name,
@@ -89,7 +96,31 @@ public record VideoModalRequest(
         List<SituationRequest> situations,
         VideoModalAudience audience,
         TriggerOptionsRequest triggerOptions,
-        List<CorridorRequest> corridors) {
+        List<CorridorRequest> corridors,
+        List<String> parcelRoles) {
+
+    /** Sans rôles sur le colis ({@code parcelRoles}) : la campagne vaut pour tous les rôles. */
+    public VideoModalRequest(String name, VideoModalType type, String youtubeUrl, Integer durationSeconds,
+                             String titleFr, String titleEn, String subtitleFr, String subtitleEn,
+                             String primaryLabelFr, String primaryLabelEn, String secondaryLabelFr,
+                             String secondaryLabelEn, String bodyFr, String bodyEn, VideoModalIcon icon,
+                             ActionRequest primaryAction, ActionRequest secondaryAction,
+                             List<HighlightRequest> highlights, List<VideoModalTrigger> triggers,
+                             Integer maxDisplays, Instant startsAt, Instant endsAt, VideoModalLayout layout,
+                             Integer sizePercent, VideoModalImageMode imageMode, VideoModalImageFit imageFit,
+                             String imageAltFr, String imageAltEn, VideoModalFrequency frequency,
+                             Integer frequencyDays, Boolean stopAfterAnswer, Boolean allowDontShowAgain,
+                             Integer priority, Boolean connectedOnly, JsonNode conditions, String minAppVersion,
+                             String maxAppVersion, List<VideoModalPlatform> platforms, Integer samplePercent,
+                             List<SituationRequest> situations, VideoModalAudience audience,
+                             TriggerOptionsRequest triggerOptions, List<CorridorRequest> corridors) {
+        this(name, type, youtubeUrl, durationSeconds, titleFr, titleEn, subtitleFr, subtitleEn, primaryLabelFr,
+                primaryLabelEn, secondaryLabelFr, secondaryLabelEn, bodyFr, bodyEn, icon, primaryAction,
+                secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
+                imageMode, imageFit, imageAltFr, imageAltEn, frequency, frequencyDays, stopAfterAnswer,
+                allowDontShowAgain, priority, connectedOnly, conditions, minAppVersion, maxAppVersion,
+                platforms, samplePercent, situations, audience, triggerOptions, corridors, null);
+    }
 
     /** Sans moments d'action ({@code triggerOptions}, {@code corridors}) : seuils par défaut, tous les corridors. */
     public VideoModalRequest(String name, VideoModalType type, String youtubeUrl, Integer durationSeconds,
@@ -110,7 +141,7 @@ public record VideoModalRequest(
                 secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
                 imageMode, imageFit, imageAltFr, imageAltEn, frequency, frequencyDays, stopAfterAnswer,
                 allowDontShowAgain, priority, connectedOnly, conditions, minAppVersion, maxAppVersion,
-                platforms, samplePercent, situations, audience, null, null);
+                platforms, samplePercent, situations, audience, null, null, null);
     }
 
     /** Sans {@code audience} : défaut selon le type à la création (EVERYONE pour INFO, NEVER_ANSWERED pour VIDEO), inchangé à la modification. */
@@ -132,7 +163,7 @@ public record VideoModalRequest(
                 secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
                 imageMode, imageFit, imageAltFr, imageAltEn, frequency, frequencyDays, stopAfterAnswer,
                 allowDontShowAgain, priority, connectedOnly, conditions, minAppVersion, maxAppVersion,
-                platforms, samplePercent, situations, null, null, null);
+                platforms, samplePercent, situations, null, null, null, null);
     }
 
     /**
@@ -152,7 +183,7 @@ public record VideoModalRequest(
                 primaryLabelEn, secondaryLabelFr, secondaryLabelEn, bodyFr, bodyEn, icon, primaryAction,
                 secondaryAction, highlights, triggers, maxDisplays, startsAt, endsAt, layout, sizePercent,
                 imageMode, imageFit, imageAltFr, imageAltEn,
-                null, null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     /** Seuils des moments ; une valeur absente reprend le défaut. */

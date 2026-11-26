@@ -79,6 +79,14 @@ public class ReceptionLinker {
         this.designatedNaming = designatedNaming;
     }
 
+    /** Publie la confirmation d'un lien d'emblée confirmé ; sans effet tant que Spring ne l'a pas injecté. */
+    private org.springframework.context.ApplicationEventPublisher eventPublisher = event -> { };
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setEventPublisher(org.springframework.context.ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
+    }
+
     /** Mode recette (FLUTTER-FB) ; fermé tant que Spring ne l'a pas injecté. */
     private RecetteMode recetteMode = RecetteMode.disabled();
 
@@ -265,7 +273,10 @@ public class ReceptionLinker {
     private BidRecipientLinkEntity saveConfirmed(BidEntity bid, UUID recipientId, String action) {
         BidRecipientLinkEntity link = new BidRecipientLinkEntity(bid.getId(), recipientId);
         link.respond(ReceptionLinkStatus.CONFIRMED, OffsetDateTime.now(ZoneOffset.UTC));
-        return persist(bid, link, action);
+        BidRecipientLinkEntity saved = persist(bid, link, action);
+        // Colis déjà remis (rattrapage tardif) : le destinataire apprend que son code est prêt.
+        eventPublisher.publishEvent(new com.yadony.api.matching.events.RecipientLinkConfirmedEvent(bid.getId()));
+        return saved;
     }
 
     private BidRecipientLinkEntity persist(BidEntity bid, BidRecipientLinkEntity toSave, String action) {

@@ -63,6 +63,14 @@ public class ReceptionService {
     private final DesignatedRecipientNaming designatedNaming;
     private final Clock clock;
 
+    /** Publie la confirmation du lien ; sans effet tant que Spring ne l'a pas injecté. */
+    private org.springframework.context.ApplicationEventPublisher eventPublisher = event -> { };
+
+    @Autowired
+    void setEventPublisher(org.springframework.context.ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
+    }
+
     @Autowired
     public ReceptionService(BidRecipientLinkRepository linkRepository,
                             BidRepository bidRepository,
@@ -195,6 +203,7 @@ public class ReceptionService {
                     notificationDispatcher.messagesFor(bid.getSenderId()), user.getFirstName());
             notificationDispatcher.notifyUser(bid.getSenderId(), text.title(), text.body(),
                     Map.of("type", ReceptionNotifications.CONFIRMED, "bidId", bidId.toString()));
+            eventPublisher.publishEvent(new com.yadony.api.matching.events.RecipientLinkConfirmedEvent(bidId));
         }
         return toResponse(link, bid);
     }

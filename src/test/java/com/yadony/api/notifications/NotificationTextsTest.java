@@ -113,14 +113,20 @@ class NotificationTextsTest {
         map.put("tripRescheduleKept sans prénom", NotificationTexts.tripRescheduleKept(m, null));
         map.put("tripRescheduleWithdrawn", NotificationTexts.tripRescheduleWithdrawn(m));
         map.put("travelerNoShow", NotificationTexts.travelerNoShow(m));
-        map.put("tripArrived", NotificationTexts.tripArrived(m));
+        String nom20 = "A".repeat(20);
+        map.put("tripArrived", NotificationTexts.tripArrived(m, nom20, false));
+        map.put("tripArrived sans nom", NotificationTexts.tripArrived(m, null, false));
+        map.put("tripArrived soi-même", NotificationTexts.tripArrived(m, nom20, true));
+        map.put("tripArrivalPrompt", NotificationTexts.tripArrivalPrompt(m));
+        map.put("confirmationCodeReady", NotificationTexts.confirmationCodeReady(m, nom20, false));
+        map.put("confirmationCodeReady sans nom", NotificationTexts.confirmationCodeReady(m, null, false));
+        map.put("confirmationCodeReady soi-même", NotificationTexts.confirmationCodeReady(m, nom20, true));
+        map.put("recipientCodeReady", NotificationTexts.recipientCodeReady(m));
         map.put("tripInProgress", NotificationTexts.tripInProgress(m));
         map.put("tripDeparturePrompt", NotificationTexts.tripDeparturePrompt(m));
-        map.put("tripArrivalPrompt", NotificationTexts.tripArrivalPrompt(m));
         map.put("handoverReminder", NotificationTexts.handoverReminder(m,
                 "Aéroport Roissy Charles-de-Gaulle, terminal 2E, porte 12, devant le comptoir"));
         map.put("handoverReminder sans lieu", NotificationTexts.handoverReminder(m, " "));
-        map.put("confirmationCodeReady", NotificationTexts.confirmationCodeReady(m));
         map.put("confirmationCodeBlocked", NotificationTexts.confirmationCodeBlocked(m));
         map.put("confirmationCodeRequested", NotificationTexts.confirmationCodeRequested(m));
         map.put("deliveryConfirmed", NotificationTexts.deliveryConfirmed(m));
@@ -400,18 +406,6 @@ class NotificationTextsTest {
                 .isEqualTo("Karim T., 12 kg, Paris vers Dakar.");
         assertThat(NotificationTexts.newBid(en, "Karim Traoré", new BigDecimal("12.0"), "Paris → Dakar").body())
                 .isEqualTo("Karim T., 12 kg, Paris to Dakar.");
-    }
-
-    // Sentry FLUTTER-5S : envoyé dès la récupération du colis, l'ancien texte
-    // (« prêt à remettre votre colis ») faisait croire à une arrivée.
-    @Test
-    void confirmationCodeReady_saysParcelPickedUpNotReadyToDeliver() {
-        var fr = NotificationTexts.confirmationCodeReady(TestMessages.fr());
-        var en = NotificationTexts.confirmationCodeReady(TestMessages.en());
-        assertThat(fr.title()).isEqualTo("Colis récupéré");
-        assertThat(fr.body()).contains("en route").doesNotContain("prêt à remettre");
-        assertThat(en.title()).isEqualTo("Parcel picked up");
-        assertThat(en.body()).contains("on its way").doesNotContain("ready to hand over");
     }
 
     // FLUTTER-G1 : le code bloqué après trop d'essais ne se débloque qu'avec un nouveau
@@ -834,5 +828,163 @@ class NotificationTextsTest {
                 new NotificationText("Last reminder: your verification",
                         "A few minutes are enough to publish your trips or parcels and get paid. Your documents "
                                 + "stay confidential."));
+    }
+
+    // ── Textes d'étape qui disent quoi faire ─────────────────────────────────
+
+    @Test
+    void confirmationCodeReady_withName() {
+        assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), "Mamadou", false)).isEqualTo(
+                new NotificationText("Envoyez le code de retrait",
+                        "Donnez le code à Mamadou. Sans lui, rien n'est remis."));
+    }
+
+    @Test
+    void confirmationCodeReady_withoutName() {
+        var attendu = new NotificationText("Envoyez le code de retrait",
+                "Donnez le code à votre destinataire. Sans lui, rien n'est remis.");
+        assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), null, false)).isEqualTo(attendu);
+        assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), "  ", false)).isEqualTo(attendu);
+    }
+
+    @Test
+    void confirmationCodeReady_self() {
+        assertThat(NotificationTexts.confirmationCodeReady(TestMessages.fr(), "Mamadou", true)).isEqualTo(
+                new NotificationText("Colis remis, gardez le code",
+                        "C'est vous qui retirez. Le voyageur vous demandera ce code."));
+    }
+
+    @Test
+    void tripArrived_withNameWithoutNameAndSelf() {
+        var fr = TestMessages.fr();
+        assertThat(NotificationTexts.tripArrived(fr, "Mamadou", false)).isEqualTo(
+                new NotificationText("Votre voyageur est arrivé",
+                        "Mamadou peut retirer le colis. Rappelez-lui son code."));
+        assertThat(NotificationTexts.tripArrived(fr, null, false).body())
+                .isEqualTo("Votre destinataire peut retirer le colis. Rappelez-lui son code.");
+        assertThat(NotificationTexts.tripArrived(fr, "Mamadou", true).body())
+                .isEqualTo("Retirez votre colis. Ayez votre code prêt.");
+    }
+
+    @Test
+    void handoverReminder_body() {
+        assertThat(NotificationTexts.handoverReminder(TestMessages.fr(), "Gare du Nord")).isEqualTo(
+                new NotificationText("Plus que 2 h pour déposer", "Dernier créneau : Gare du Nord. Ayez le QR prêt."));
+    }
+
+    @Test
+    void tripArrivalPrompt_body() {
+        assertThat(NotificationTexts.tripArrivalPrompt(TestMessages.fr())).isEqualTo(
+                new NotificationText("Vous êtes arrivé ?",
+                        "Prévenez vos expéditeurs. Pas de remise sans le code à 6 chiffres."));
+    }
+
+    @Test
+    void recipientParcelDeparted_bodyRewritten_frAndEn_underCaps() {
+        assertThat(NotificationTexts.recipientParcelDeparted(TestMessages.fr())).isEqualTo(
+                new NotificationText("Votre colis est en route",
+                        "Votre code de retrait est prêt : gardez-le pour l'arrivée."));
+        NotificationText en = NotificationTexts.recipientParcelDeparted(TestMessages.en());
+        assertThat(en.body()).isEqualTo("Your pickup code is ready: keep it for arrival.");
+        assertThat(en.title().length()).isLessThanOrEqualTo(28);
+        assertThat(en.body().length()).isLessThanOrEqualTo(72);
+    }
+
+    @Test
+    void recipientCodeReady() {
+        assertThat(NotificationTexts.recipientCodeReady(TestMessages.fr())).isEqualTo(
+                new NotificationText("Code de retrait prêt",
+                        "Gardez-le : le voyageur vous le demandera à l'arrivée."));
+    }
+
+    @Test
+    void shortRecipientName_truncatesAtWord() {
+        assertThat(NotificationTexts.shortRecipientName("  Mamadou  ")).isEqualTo("Mamadou");
+        String court = NotificationTexts.shortRecipientName("Mamadou Lamine Diallo Senior");
+        assertThat(court).hasSizeLessThanOrEqualTo(20).endsWith("…").startsWith("Mamadou Lamine");
+    }
+
+    @Test
+    void shortRecipientName_null() {
+        assertThat(NotificationTexts.shortRecipientName(null)).isNull();
+        assertThat(NotificationTexts.shortRecipientName("   ")).isNull();
+    }
+
+    @Test
+    void shortRecipientName_longEmojiName() {
+        String nom = "\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00\uD83D\uDE00 "
+                .repeat(8).trim();
+        String court = NotificationTexts.shortRecipientName(nom);
+        assertThat(court).isNotNull().hasSizeLessThanOrEqualTo(20);
+    }
+
+    @ParameterizedTest
+    @MethodSource("deuxLangues")
+    void noPushBodyContainsSixDigitCode(Messages m) {
+        var six = java.util.regex.Pattern.compile("\\d{6}");
+        for (NotificationText t : List.of(
+                NotificationTexts.confirmationCodeReady(m, "Mamadou", false),
+                NotificationTexts.confirmationCodeReady(m, null, false),
+                NotificationTexts.confirmationCodeReady(m, "Mamadou", true),
+                NotificationTexts.tripArrived(m, "Mamadou", false),
+                NotificationTexts.tripArrived(m, null, false),
+                NotificationTexts.tripArrived(m, "Mamadou", true),
+                NotificationTexts.handoverReminder(m, "Gare du Nord"),
+                NotificationTexts.tripArrivalPrompt(m),
+                NotificationTexts.recipientCodeReady(m))) {
+            assertThat(six.matcher(t.body()).find()).as(t.body()).isFalse();
+            assertThat(t.title()).hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(t.body()).hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX);
+            assertThat(t.title() + t.body()).doesNotContain("\u2014").doesNotContain("{0}");
+        }
+    }
+
+    @Test
+    void englishKeysExistForEveryNewKey() throws Exception {
+        var fr = new java.util.Properties();
+        var en = new java.util.Properties();
+        try (var r = new java.io.InputStreamReader(new java.io.FileInputStream(
+                "src/main/resources/i18n/messages_fr.properties"), java.nio.charset.StandardCharsets.UTF_8)) {
+            fr.load(r);
+        }
+        try (var r = new java.io.InputStreamReader(new java.io.FileInputStream(
+                "src/main/resources/i18n/messages_en.properties"), java.nio.charset.StandardCharsets.UTF_8)) {
+            en.load(r);
+        }
+        for (String k : List.of(
+                "notification.confirmation-code-ready.title", "notification.confirmation-code-ready.body",
+                "notification.confirmation-code-ready.body.no-name",
+                "notification.confirmation-code-ready.title.self", "notification.confirmation-code-ready.body.self",
+                "notification.trip-arrived.title", "notification.trip-arrived.body",
+                "notification.trip-arrived.body.no-name", "notification.trip-arrived.body.self",
+                "notification.recipient-code-ready.title", "notification.recipient-code-ready.body")) {
+            assertThat(fr.getProperty(k)).as("fr " + k).isNotBlank();
+            assertThat(en.getProperty(k)).as("en " + k).isNotBlank();
+        }
+    }
+
+    // Pire cas exact : nom de 20 caractères pile, lieu de 33 caractères et plus, FR et EN.
+    @ParameterizedTest
+    @MethodSource("deuxLangues")
+    void etapes_pireCasNom20Lieu33_tiennentDansLesPlafonds(Messages m) {
+        String nom = NotificationTexts.shortRecipientName("A".repeat(20));
+        assertThat(nom).hasSize(20);
+        String lieu = "Aéroport Roissy Charles-de-Gaulle, terminal 2E, porte 12";
+        List<NotificationText> textes = List.of(
+                NotificationTexts.confirmationCodeReady(m, nom, false),
+                NotificationTexts.confirmationCodeReady(m, null, false),
+                NotificationTexts.confirmationCodeReady(m, nom, true),
+                NotificationTexts.tripArrived(m, nom, false),
+                NotificationTexts.tripArrived(m, null, false),
+                NotificationTexts.tripArrived(m, nom, true),
+                NotificationTexts.tripArrivalPrompt(m),
+                NotificationTexts.recipientCodeReady(m),
+                NotificationTexts.handoverReminder(m, lieu),
+                NotificationTexts.handoverReminder(m, "B".repeat(33)),
+                NotificationTexts.handoverReminder(m, " "));
+        for (NotificationText t : textes) {
+            assertThat(t.title()).as(t.title()).hasSizeLessThanOrEqualTo(NotificationCaps.TITLE_MAX);
+            assertThat(t.body()).as(t.body()).hasSizeLessThanOrEqualTo(NotificationCaps.BODY_MAX);
+        }
     }
 }

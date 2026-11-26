@@ -1997,8 +1997,23 @@ public class BidService {
                 bid.getVolumeM3(),
                 depositedAt(bid, prefetch),
                 callerIsSender && bid.getRecipientUserId() != null,
-                designatedUsername(bid, recipientLink, callerIsSender)
+                designatedUsername(bid, recipientLink, callerIsSender),
+                recipientIsSender(bid, sender, callerIsSender, prefetch)
         );
+    }
+
+    /**
+     * L'expéditeur est son propre destinataire (voir {@link RecipientIsSender}). Servi à l'expéditeur seul : le
+     * voyageur ne reçoit jamais le drapeau (toujours false), sinon il apprendrait l'égalité de deux numéros que les
+     * règles de visibilité lui masquent. Le numéro de l'expéditeur vient de Firebase (cache Caffeine) et n'est lu
+     * que s'il sert : colis sans compte désigné et avec un numéro de destinataire.
+     */
+    private boolean recipientIsSender(BidEntity bid, UserEntity sender, boolean callerIsSender,
+                                      BidResponsePrefetch prefetch) {
+        if (sender == null || !callerIsSender) {
+            return false;
+        }
+        return RecipientIsSender.resolve(bid, sender, firebaseContact);
     }
 
     /**

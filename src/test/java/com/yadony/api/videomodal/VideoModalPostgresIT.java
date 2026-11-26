@@ -139,6 +139,68 @@ class VideoModalPostgresIT {
     }
 
     @Test
+    @DisplayName("V401 : chaque étape, ONCE_PER_PARCEL, chaque bouton du colis et parcel_roles s'écrivent et se relisent (CHECK compris)")
+    void migrationAcceptsNewEnumValues() {
+        List<VideoModalTrigger> steps = List.of(VideoModalTrigger.PARCEL_ACCEPTED, VideoModalTrigger.PARCEL_HANDED_OVER,
+                VideoModalTrigger.PARCEL_IN_TRANSIT, VideoModalTrigger.PARCEL_ARRIVED, VideoModalTrigger.PARCEL_DELIVERED);
+        List<InfoScreen> screens = List.of(InfoScreen.PARCEL_DETAIL, InfoScreen.PARCEL_QR, InfoScreen.PARCEL_SEND_CODE,
+                InfoScreen.PARCEL_TRACKING);
+        for (InfoScreen screen : screens) {
+            VideoModalCampaignEntity c = new VideoModalCampaignEntity();
+            c.setType(VideoModalType.INFO);
+            c.setName("Étape " + screen.name());
+            c.setTitleFr("Colis arrivé à {ville_arrivee}");
+            c.setBodyFr("{voyageur} a le colis de {expéditeur} pour {destinataire}.");
+            c.setPrimaryAction(new VideoModalAction(VideoModalActionKind.SCREEN, screen, null));
+            c.setSecondaryAction(new VideoModalAction(VideoModalActionKind.SCREEN, screen, null));
+            c.setTriggers(steps);
+            c.setFrequency(VideoModalFrequency.ONCE_PER_PARCEL);
+            c.setParcelRoles(java.util.Set.of(VideoModalParcelRole.SENDER, VideoModalParcelRole.TRAVELER,
+                    VideoModalParcelRole.RECIPIENT));
+            c.setActive(true);
+            c.setVersionPublishedAt(Instant.now());
+            VideoModalCampaignEntity saved = campaignRepository.saveAndFlush(c);
+
+            VideoModalCampaignEntity reread = campaignRepository.findById(saved.getId()).orElseThrow();
+            assertThat(reread.getTriggers()).as(screen.name()).containsExactlyElementsOf(steps);
+            assertThat(reread.getFrequency()).isEqualTo(VideoModalFrequency.ONCE_PER_PARCEL);
+            assertThat(reread.getPrimaryAction().screen()).isEqualTo(screen);
+            assertThat(reread.getSecondaryAction().screen()).isEqualTo(screen);
+            assertThat(reread.getParcelRoles()).containsExactly(VideoModalParcelRole.SENDER,
+                    VideoModalParcelRole.TRAVELER, VideoModalParcelRole.RECIPIENT);
+            assertThat(reread.needsParcelCapability()).isTrue();
+            assertThat(jdbc.queryForObject("SELECT parcel_roles FROM video_modal_campaigns WHERE id = ?::uuid",
+                    String.class, saved.getId().toString())).isEqualTo("[\"SENDER\",\"TRAVELER\",\"RECIPIENT\"]");
+            assertThat(jdbc.queryForObject("SELECT frequency FROM video_modal_campaigns WHERE id = ?::uuid",
+                    String.class, saved.getId().toString())).isEqualTo("ONCE_PER_PARCEL");
+        }
+
+        // Campagne sans rôle : colonne laissée nulle, relue comme un ensemble vide.
+        VideoModalCampaignEntity plain = persistCampaign();
+        assertThat(jdbc.queryForObject("SELECT parcel_roles FROM video_modal_campaigns WHERE id = ?::uuid",
+                String.class, plain.getId().toString())).isNull();
+        assertThat(campaignRepository.findById(plain.getId()).orElseThrow().getParcelRoles()).isEmpty();
+
+        // La contrainte de fréquence refuse toujours une valeur inconnue.
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_modal_campaigns SET frequency = 'ONCE_PER_TRIP' WHERE id = ?::uuid",
+                plain.getId().toString())).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("V401 : une ligne écrite comme avant (sans parcel_roles) se charge inchangée, sans capacité parcel")
+    void existingCampaignsUnchangedOnPostgres() {
+        String legacyId = jdbc.queryForObject("""
+                INSERT INTO video_modal_campaigns (name, youtube_url, youtube_video_id, title_fr, triggers, frequency)
+                VALUES ('Vidéo d''accueil', 'https://youtu.be/XLgkHom38_Y', 'XLgkHom38_Y', 'Bienvenue', '["APP_OPEN"]', 'EVERY_OPEN')
+                RETURNING id::text""", String.class);
+        VideoModalCampaignEntity legacy = campaignRepository.findById(UUID.fromString(legacyId)).orElseThrow();
+        assertThat(legacy.getParcelRoles()).isEmpty();
+        assertThat(legacy.getFrequency()).isEqualTo(VideoModalFrequency.EVERY_OPEN);
+        assertThat(legacy.getTriggers()).containsExactly(VideoModalTrigger.APP_OPEN);
+        assertThat(legacy.needsParcelCapability()).isFalse();
+    }
+
+    @Test
     @DisplayName("CHECK : identifiant YouTube, plafond d'affichages, période, public")
     void checks() {
         VideoModalCampaignEntity c = persistCampaign();

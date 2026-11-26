@@ -24,6 +24,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.util.AopTestUtils;
+import org.springframework.test.util.ReflectionTestUtils;
+import com.yadony.api.matching.AnnouncementService;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -77,6 +80,8 @@ class PickupCodeRequestIntegrationTest {
     @MockitoSpyBean BidRepository bidRepository;
     @Autowired JdbcTemplate jdbcTemplate;
     @MockitoBean NotificationDispatcher notificationDispatcher;
+    @Autowired TrackingService trackingService;
+    @Autowired AnnouncementService announcementService;
 
     private UserEntity sender;
     private UserEntity traveler;
@@ -92,6 +97,13 @@ class PickupCodeRequestIntegrationTest {
         traveler = persistUser("Moussa", Role.TRAVELER);
         stranger = persistUser("Ibrahima", Role.TRAVELER);
         announcement = persistAnnouncement();
+    }
+
+    /** Les setters optionnels de FirebaseContactService sont bien câblés en contexte réel (pas seulement en test unitaire). */
+    @Test
+    void firebaseContactService_estInjecteDansTrackingEtAnnouncementService() {
+        assertThat(ReflectionTestUtils.getField((Object) AopTestUtils.getUltimateTargetObject(trackingService), "firebaseContact")).isNotNull();
+        assertThat(ReflectionTestUtils.getField((Object) AopTestUtils.getUltimateTargetObject(announcementService), "firebaseContact")).isNotNull();
     }
 
     @Test
