@@ -117,6 +117,7 @@ class AdminHelpLoaderTest {
     void pages() {
         assertThat(AdminHelpPages.known("/colis?view=ACTIVE")).isTrue();
         assertThat(AdminHelpPages.known("/aide")).isTrue();
+        assertThat(AdminHelpPages.known("/m")).isTrue();
         assertThat(AdminHelpPages.known("/nope")).isFalse();
         assertThat(AdminHelpPages.allowed("/colis", java.util.Set.of("BID_VIEW"))).isTrue();
         assertThat(AdminHelpPages.allowed("/colis", java.util.Set.of())).isFalse();

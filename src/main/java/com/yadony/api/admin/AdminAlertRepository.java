@@ -3,6 +3,7 @@ package com.yadony.api.admin;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -64,4 +65,22 @@ public interface AdminAlertRepository extends JpaRepository<AdminAlertEntity, UU
             @Param("now") java.time.OffsetDateTime now,
             Pageable pageable
     );
+
+    /**
+     * Prise en charge atomique : une seule ligne est modifiée, et seulement si l'alerte est libre.
+     * Rend 1 si l'alerte était libre (prise maintenant), 0 si elle est déjà prise (par n'importe qui,
+     * y compris le même admin) ou inconnue. Pas de lecture-puis-écriture : deux admins simultanés
+     * ne peuvent pas gagner tous les deux.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AdminAlertEntity a SET a.claimedBy = :adminId, a.claimedAt = :now "
+            + "WHERE a.id = :id AND a.claimedBy IS NULL")
+    int claimIfFree(@Param("id") UUID id, @Param("adminId") UUID adminId,
+                    @Param("now") java.time.OffsetDateTime now);
+
+    /** Libération atomique : rend 1 si {@code claimer} détenait la prise, 0 sinon. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AdminAlertEntity a SET a.claimedBy = NULL, a.claimedAt = NULL "
+            + "WHERE a.id = :id AND a.claimedBy = :claimer")
+    int releaseIfClaimedBy(@Param("id") UUID id, @Param("claimer") UUID claimer);
 }

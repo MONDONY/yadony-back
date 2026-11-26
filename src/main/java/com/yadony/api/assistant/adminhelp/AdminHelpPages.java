@@ -15,7 +15,7 @@ import java.util.Set;
 final class AdminHelpPages {
 
     /** Pages sans permission : la console entière y a accès. */
-    static final Set<String> OPEN = Set.of("/aide", "/change-password", "/mfa-setup");
+    static final Set<String> OPEN = Set.of("/aide", "/change-password", "/mfa-setup", "/m");
 
     private static final Map<String, AdminPermission> PAGES = new LinkedHashMap<>();
 

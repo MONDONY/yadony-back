@@ -308,6 +308,12 @@ yadony:
       secret: ${SENTRY_WEBHOOK_SECRET:}
       # Slugs des projets Sentry relayés, séparés par des virgules (vide = tous).
       projects: ${SENTRY_WEBHOOK_PROJECTS:}
+  # Push des nouveautés de la cloche vers la PWA admin mobile (AdminPushDispatcher).
+  # Interrupteur d'urgence : ADMIN_PUSH_ENABLED=false dans l'env du conteneur puis redémarrage
+  # coupe tout envoi, sans nouvelle image. interval-ms : délai entre deux passages (30 s).
+  admin-push:
+    enabled: ${ADMIN_PUSH_ENABLED:true}
+    interval-ms: ${ADMIN_PUSH_INTERVAL_MS:30000}
   notifications:
     # Heures calmes (22 h - 8 h, heure locale) et plafond de 10 push non critiques par jour.
     # Les retenus de la nuit partent en un récapitulatif dès 8 h (NightDigestScheduler).

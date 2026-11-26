@@ -3,6 +3,7 @@ package com.yadony.api.admin.metrics;
 import com.yadony.api.admin.dto.AdminWalletResponse;
 import com.yadony.api.payments.PaymentStatus;
 import com.yadony.api.payments.dto.PaymentVolumeRow;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -12,8 +13,28 @@ public record AdminOverviewResponse(
         Bids bids,
         Gmv gmv,
         List<GmvByCurrency> gmvByCurrency,
-        Queues queues
+        Queues queues,
+        @JsonInclude(JsonInclude.Include.NON_NULL) PeriodStats period
 ) {
+
+    /**
+     * Activite d'une periode ({@code ?period=TODAY|D7|D30}).
+     *
+     * @param name TODAY, D7 ou D30
+     * @param signups comptes crees dans la periode, y compris ceux supprimes depuis
+     * @param deletedAccounts comptes dont {@code deleted_at} tombe dans la periode
+     * @param parcelsCancelled bids {@code CANCELLED} dont {@code cancelled_at} (date de l'annulation,
+     *                         V316) tombe dans la periode ; une modification ulterieure n'y change rien
+     * @param kycInProgress instantane (non borne par la periode) : meme definition que
+     *                      {@code users.kycPending} / {@code queues.pendingKyc}, kyc_status PENDING
+     */
+    public record PeriodStats(
+            String name,
+            long signups,
+            long deletedAccounts,
+            long parcelsCancelled,
+            long kycInProgress
+    ) {}
 
     public record Users(
             long total,
