@@ -11,7 +11,7 @@ routes:
 Il y a deux façons d'envoyer un colis.
 Soit vous cherchez un trajet dans l'onglet Rechercher, ouvrez-le puis faites une demande ou proposez un prix au voyageur.
 Soit vous publiez votre demande avec le bouton Publier de l'onglet Rechercher, puis « Envoyer un colis » (ou depuis la tuile « J'envoie » d'Activités) : les voyageurs compatibles vous font des offres.
-Votre identité doit être vérifiée pour envoyer un colis.
+Identité vérifiée à l'envoi, si le voyageur l'exige.
 Poids et budget dépendent du mode. Par la route et par bateau (quand ils sont proposés), pas de plafond de 32 kg (jusqu'à 999 999 kg) et pas de plafond de budget fixé par Yadony ; un garde-fou technique refuse seulement un budget au-delà de 1 000 000 dans la devise de la demande (environ 1 500 € en F CFA). En avion et « Peu importe » : 32 kg et 560 € au plus.
 La taille du colis (S à XL) est facultative : elle écarte les voyageurs dont la taille max est plus petite.
 Quand le bateau est proposé, indiquez les dimensions du colis (longueur, largeur, hauteur en cm, 400 au plus chacune) : Yadony en calcule le volume en m³, obligatoire pour publier la demande (un brouillon peut s'en passer). Pour « Peu importe », les dimensions sont facultatives, mais toutes les trois si vous en donnez.
