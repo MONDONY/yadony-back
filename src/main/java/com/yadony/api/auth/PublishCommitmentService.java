@@ -25,8 +25,13 @@ import java.util.UUID;
 @Service
 public class PublishCommitmentService {
 
-    /** Version en vigueur du texte des engagements (voyageur et expéditeur). */
-    public static final String CURRENT_VERSION = "2026-10";
+    /**
+     * Version en vigueur du texte des engagements (voyageur et expéditeur).
+     *
+     * <p>« 2026-11 » : 15 engagements par rôle, tirés des CGU (art. 2 à 12bis et 16), répartis
+     * en trois blocs ; la case n'est cochable qu'une fois la liste lue jusqu'en bas.
+     */
+    public static final String CURRENT_VERSION = "2026-11";
 
     private final UserRepository userRepository;
     private final AuditService auditService;

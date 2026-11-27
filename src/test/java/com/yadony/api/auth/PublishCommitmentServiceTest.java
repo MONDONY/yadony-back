@@ -72,6 +72,31 @@ class PublishCommitmentServiceTest {
     }
 
     @Test
+    void get_versionDOctobre2026Acceptee_requisDeNouveau() {
+        // Le texte passe de 5 à 15 engagements (version 2026-11) : tous les comptes qui
+        // avaient accepté la version précédente doivent revoir l'écran.
+        user.setTravelerCommitmentVersion("2026-10");
+        user.setTravelerCommitmentAt(NOW);
+        user.setSenderCommitmentVersion("2026-10");
+        user.setSenderCommitmentAt(NOW);
+
+        PublishCommitmentsResponse r = service.get(userId);
+
+        assertThat(CURRENT).isNotEqualTo("2026-10");
+        assertThat(r.traveler().required()).isTrue();
+        assertThat(r.sender().required()).isTrue();
+    }
+
+    @Test
+    void accept_versionDOctobre2026_409SansEcriture() {
+        assertThatThrownBy(() -> service.accept(userId, PublishCommitmentRole.SENDER, "2026-10"))
+                .isInstanceOf(YadonyBusinessException.class);
+
+        assertThat(user.getSenderCommitmentVersion()).isNull();
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
     void get_ancienneVersionAcceptee_requisDeNouveau() {
         user.setSenderCommitmentVersion("2020-01");
         user.setSenderCommitmentAt(NOW);
