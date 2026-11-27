@@ -162,6 +162,13 @@ class KycAdminQueueIT {
     }
 
     @Test
+    void findAbandonedUserIds_neRetientQueLesParcoursQuittes() {
+        assertThat(kycRepository.findAbandonedUserIds(
+                List.of(oldestReview, inProgress, abandoned, notStarted, rejected, verifiedOld)))
+                .containsExactly(abandoned);
+    }
+
+    @Test
     void verifies_duPlusRecentAuPlusAncien_avecLAuteurDeLaDecision() {
         Page<KycQueueItemResponse> page = queue("VERIFIED", null, tag, null, null);
 

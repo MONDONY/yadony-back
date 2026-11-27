@@ -27,10 +27,21 @@ public record AdminUserListItemResponse(
         /** Finalisation prevue de cette demande (demande + delai de grace) ; {@code null} sinon. */
         LocalDateTime deletionScheduledFor,
         /** Compte testeur du mode recette (colonne {@code users.recette_tester}, V303). */
-        boolean recetteTester
+        boolean recetteTester,
+        /**
+         * Parcours d'identite quitte : session ouverte, jamais soumise, compte repasse a
+         * {@code NOT_STARTED}. {@code kycStatus} seul ne le distingue pas d'un compte qui n'a rien
+         * commence.
+         */
+        boolean kycAbandoned
 ) {
     /** Le téléphone et l'email proviennent de Firebase : ils ne sont plus stockés en base. */
     public static AdminUserListItemResponse from(UserEntity u, FirebaseContactService.Contact contact) {
+        return from(u, contact, false);
+    }
+
+    public static AdminUserListItemResponse from(UserEntity u, FirebaseContactService.Contact contact,
+                                                 boolean kycAbandoned) {
         return new AdminUserListItemResponse(
                 u.getId(),
                 u.getFirstName(),
@@ -48,7 +59,8 @@ public record AdminUserListItemResponse(
                 u.getCreatedAt(),
                 toUtc(u.getDeletionRequestedAt()),
                 toUtc(com.yadony.api.auth.AccountDeletionScheduler.scheduledFinalization(u.getDeletionRequestedAt())),
-                u.isRecetteTester()
+                u.isRecetteTester(),
+                kycAbandoned
         );
     }
 

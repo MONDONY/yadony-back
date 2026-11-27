@@ -235,6 +235,36 @@ class AdminUserControllerTest {
     }
 
     @Test
+    void listUsers_marksAbandonedKycOnlyForNotStartedAccountsWithAnOpenSession() {
+        AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
+        com.yadony.api.kyc.KycRepository kycRepository = org.mockito.Mockito.mock(com.yadony.api.kyc.KycRepository.class);
+        controller.setKycRepository(kycRepository);
+        com.yadony.api.auth.UserEntity left = new com.yadony.api.auth.UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(left, "id", java.util.UUID.randomUUID());
+        left.setFirebaseUid("uid-left");
+        left.setKycStatus(com.yadony.api.auth.KycStatus.NOT_STARTED);
+        com.yadony.api.auth.UserEntity fresh = new com.yadony.api.auth.UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(fresh, "id", java.util.UUID.randomUUID());
+        fresh.setFirebaseUid("uid-fresh");
+        fresh.setKycStatus(com.yadony.api.auth.KycStatus.NOT_STARTED);
+        com.yadony.api.auth.UserEntity pending = new com.yadony.api.auth.UserEntity();
+        org.springframework.test.util.ReflectionTestUtils.setField(pending, "id", java.util.UUID.randomUUID());
+        pending.setFirebaseUid("uid-pending");
+        pending.setKycStatus(com.yadony.api.auth.KycStatus.PENDING);
+
+        when(userRepository.findAdminFiltered(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(left, fresh, pending)));
+        when(firebaseContact.getContacts(any())).thenReturn(java.util.Map.of());
+        when(kycRepository.findAbandonedUserIds(java.util.List.of(left.getId(), fresh.getId())))
+                .thenReturn(java.util.List.of(left.getId()));
+
+        var page = controller.listUsers(null, null, null, null, null, null, null, 0, 20);
+
+        assertThat(page.getContent()).extracting(com.yadony.api.admin.dto.AdminUserListItemResponse::kycAbandoned)
+                .containsExactly(true, false, false);
+    }
+
+    @Test
     void listUsers_queryOnPhone_usesPhoneLookupOnly() {
         AdminUserController controller = new AdminUserController(userService, userRepository, firebaseContact, deletionImpactService, deletionService, proSubscriptionService, proSubscriptionRepository, payoutHoldService, phoneLookup);
         when(phoneLookup.findAllByPhone("+221701234567")).thenReturn(java.util.List.of(userWithUid("uid-awa")));
