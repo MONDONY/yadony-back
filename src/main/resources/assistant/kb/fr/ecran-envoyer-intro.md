@@ -12,4 +12,4 @@ routes:
   - path: /package-requests/me
     label: Mes demandes
 ---
-Vous êtes sur l'écran qui précède la publication d'une demande d'envoi. « Comment ça marche » rappelle le principe et « Vos engagements d'expéditeur » ce que vous certifiez : contenus licites, aucun objet interdit, colis bien emballé et décrit honnêtement, présence à la remise. Si votre identité n'est pas vérifiée, touchez « Vérifier mon identité ». Sinon, cochez la case en bas de la page puis « Continuer » : vous pourrez reprendre un brouillon ou commencer une nouvelle demande.
+Vous êtes sur l'écran qui précède la publication d'une demande d'envoi. Il liste vos 15 engagements d'expéditeur, tirés des CGU, en trois blocs : votre colis, remise et livraison, responsabilité et litiges (objets interdits, valeur déclarée, délais de signalement, garantie limitée). Rien à payer pour publier. Faites défiler jusqu'en bas : la case « J'ai lu… » se débloque alors, cochez-la puis touchez « Continuer ». L'identité se vérifie au moment de publier.

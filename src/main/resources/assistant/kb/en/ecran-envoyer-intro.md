@@ -12,4 +12,4 @@ routes:
   - path: /package-requests/me
     label: My requests
 ---
-You are on the screen shown before you post a shipping request. "How it works" explains the principle and "Your commitments as a sender" lists what you certify: lawful contents, no forbidden item, a parcel packed carefully and described honestly, being present at drop-off. If your identity is not verified, tap "Verify my identity". Otherwise, tick the box at the bottom of the page, then tap "Continue": you can resume a draft or start a new request.
+You are on the screen shown before you post a shipping request. It lists your 15 commitments as a sender, taken from the terms of use, in three blocks: your parcel, drop-off and delivery, liability and disputes (forbidden items, declared value, reporting deadlines, limited guarantee). Nothing to pay to post. Scroll to the bottom: the "I have read…" box then unlocks, tick it and tap "Continue". Your identity is checked when you post.
