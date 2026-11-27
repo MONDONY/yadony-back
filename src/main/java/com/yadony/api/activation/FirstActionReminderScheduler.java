@@ -1,6 +1,7 @@
 package com.yadony.api.activation;
 
 import com.yadony.api.activation.dto.ActivationResponse.Opportunities;
+import com.yadony.api.auth.KycStatus;
 import com.yadony.api.auth.UserEntity;
 import com.yadony.api.auth.UserRepository;
 import com.yadony.api.common.AuditService;
@@ -16,12 +17,17 @@ import org.springframework.transaction.support.TransactionOperations;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Relance J+1 / J+3 des comptes au KYC vérifié sans première action (2 envois max, 10h-20h locales).
+ * Relance J+1 / J+3 des comptes sans première action (2 envois max, 10h-20h locales). Par défaut, comptes au
+ * KYC vérifié (ancre = date de vérification). Avec {@code include-unverified}, aussi les comptes non vérifiés
+ * récents (ancre = date de création, âge borné par {@code unverified-max-age}), hors ceux déjà relancés sur
+ * leur vérification d'identité.
  *
  * <p>Chaque relance est réservée dans sa propre transaction (incrément du compteur + horodatage,
  * commit) AVANT l'envoi, qui part hors transaction : un échec sur un compte n'annule ni les
@@ -43,6 +49,8 @@ public class FirstActionReminderScheduler {
     @Value("${yadony.activation.first-action-reminders.enabled:false}") private boolean enabled;
     @Value("${yadony.activation.first-action-reminders.first-delay:PT24H}") private Duration firstDelay;
     @Value("${yadony.activation.first-action-reminders.second-delay:PT72H}") private Duration secondDelay;
+    @Value("${yadony.activation.first-action-reminders.include-unverified:false}") private boolean includeUnverified;
+    @Value("${yadony.activation.first-action-reminders.unverified-max-age:P7D}") private Duration unverifiedMaxAge;
     @Value("${yadony.activation.first-action-reminders.window-start-hour:10}") private int windowStartHour;
     @Value("${yadony.activation.first-action-reminders.window-end-hour:20}") private int windowEndHour;
 
@@ -64,8 +72,16 @@ public class FirstActionReminderScheduler {
             return;
         }
         Instant now = Instant.now();
-        List<UUID> candidates = activationRepository.findFirstActionReminderCandidates(
-                now.minus(firstDelay), now.minus(secondDelay), now.minus(secondDelay.minus(firstDelay)));
+        Instant firstDue = now.minus(firstDelay);
+        Instant secondDue = now.minus(secondDelay);
+        Instant secondGap = now.minus(secondDelay.minus(firstDelay));
+        LinkedHashSet<UUID> unique = new LinkedHashSet<>(
+                activationRepository.findFirstActionReminderCandidates(firstDue, secondDue, secondGap));
+        if (includeUnverified) {
+            unique.addAll(activationRepository.findUnverifiedFirstActionReminderCandidates(
+                    firstDue, secondDue, secondGap, now.minus(unverifiedMaxAge)));
+        }
+        List<UUID> candidates = new ArrayList<>(unique);
         int sent = 0;
         for (UUID id : candidates) {
             Reservation reservation;
@@ -109,7 +125,7 @@ public class FirstActionReminderScheduler {
         UUID id = user.getId();
         try {
             Opportunities opportunities = activationService.opportunitiesFor(user);
-            String variant = variantOf(user.getIntent(), opportunities);
+            String variant = variantOf(user.getIntent(), opportunities, user.getKycStatus() == KycStatus.VERIFIED);
             var text = NotificationTexts.firstActionReminder(
                     notificationDispatcher.messagesFor(id), variant, opportunities.total());
             notificationDispatcher.notifyUser(id, text.title(), text.body(),
@@ -124,8 +140,13 @@ public class FirstActionReminderScheduler {
     }
 
     static String variantOf(String intent, Opportunities opportunities) {
+        return variantOf(intent, opportunities, true);
+    }
+
+    /** Sans intention déclarée : « unknown » parle d'identité vérifiée, « welcome » reste neutre. */
+    static String variantOf(String intent, Opportunities opportunities, boolean verified) {
         if (intent == null) {
-            return "unknown";
+            return verified ? "unknown" : "welcome";
         }
         boolean any = opportunities.total() > 0;
         if (UserIntent.TRAVELER.name().equals(intent)) {

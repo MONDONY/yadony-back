@@ -64,6 +64,7 @@ yadony:
   activation:
     first-action-reminders:
       enabled: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_ENABLED:true}
+      include-unverified: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_INCLUDE_UNVERIFIED:true}
   kyc:
     verification-reminders:
       enabled: ${YADONY_KYC_VERIFICATION_REMINDERS_ENABLED:false}

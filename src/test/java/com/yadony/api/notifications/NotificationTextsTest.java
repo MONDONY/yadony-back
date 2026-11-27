@@ -70,7 +70,7 @@ class NotificationTextsTest {
             map.put("firstActionReminder 99 " + variant, NotificationTexts.firstActionReminder(m, variant, 99));
             map.put("firstActionReminder 1 " + variant, NotificationTexts.firstActionReminder(m, variant, 1));
         }
-        for (String variant : new String[] {"sender-none", "traveler-none", "unknown"}) {
+        for (String variant : new String[] {"sender-none", "traveler-none", "unknown", "welcome"}) {
             map.put("firstActionReminder " + variant, NotificationTexts.firstActionReminder(m, variant, 0));
         }
         map.put("bidAcceptedPayNow", NotificationTexts.bidAcceptedPayNow(m));
