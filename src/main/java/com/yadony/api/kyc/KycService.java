@@ -154,6 +154,31 @@ public class KycService {
                 user.getId(), Map.of("reason", "user_closed_webview"));
     }
 
+    /** Raisons proposees a l'utilisateur ; toute autre valeur est refusee. */
+    static final java.util.Set<String> ABANDON_REASONS = java.util.Set.of(
+            "NO_DOCUMENT", "PRIVACY", "TOO_LONG", "TECHNICAL", "LATER", "OTHER");
+
+    /**
+     * Enregistre pourquoi l'utilisateur a quitte sa verification (audit seulement : aucune donnee
+     * d'identite). Sans session ouverte, rien a rattacher : 422.
+     */
+    @Transactional
+    public void recordAbandonReason(String firebaseUid, String reason) {
+        UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
+                .orElseThrow(() -> YadonyNotFoundException.localized("problem.kyc.user-not-found"));
+        if (reason == null || !ABANDON_REASONS.contains(reason)) {
+            throw new LocalizedResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "problem.kyc.abandon-reason-invalid");
+        }
+        KycVerificationEntity kyc = kycRepository.findByUserId(user.getId())
+                .filter(k -> k.getVerificationSessionId() != null)
+                .orElseThrow(() -> new LocalizedResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "problem.kyc.abandon-reason-no-session"));
+        auditService.log("kyc_verification", kyc.getId(), "KYC_ABANDON_REASON", user.getId(),
+                Map.of("reason", reason, "sessionId", kyc.getVerificationSessionId(),
+                        "provider", kyc.getProvider().name()));
+    }
+
     @Transactional(readOnly = true)
     public KycStatusResponse getStatus(String firebaseUid) {
         UserEntity user = userRepository.findByFirebaseUid(firebaseUid)
