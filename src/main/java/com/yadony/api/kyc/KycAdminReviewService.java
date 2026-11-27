@@ -68,7 +68,7 @@ public class KycAdminReviewService {
     private static final Set<String> USER_ACTIONS = Set.of("KYC_SESSION_CREATED", "KYC_SESSION_ABANDONED");
 
     /** Etat metier d'une ligne dans la file. */
-    enum QueueStatus { IN_REVIEW, IN_PROGRESS, NOT_STARTED, REJECTED, VERIFIED }
+    enum QueueStatus { IN_REVIEW, IN_PROGRESS, ABANDONED, NOT_STARTED, REJECTED, VERIFIED }
 
     private final KycRepository kycRepository;
     private final UserRepository userRepository;
@@ -125,18 +125,21 @@ public class KycAdminReviewService {
             case IN_REVIEW -> where.append(" AND k.status = :pending AND k.submittedAt IS NOT NULL");
             case IN_PROGRESS -> where.append(
                     " AND k.status = :pending AND k.submittedAt IS NULL AND u.kycStatus <> :notStarted");
-            case NOT_STARTED -> where.append(
-                    " AND k.status = :pending AND k.submittedAt IS NULL AND u.kycStatus = :notStarted");
+            case ABANDONED -> where.append(" AND k.status = :pending AND k.submittedAt IS NULL"
+                    + " AND u.kycStatus = :notStarted AND k.verificationSessionId IS NOT NULL");
+            case NOT_STARTED -> where.append(" AND k.status = :pending AND k.submittedAt IS NULL"
+                    + " AND u.kycStatus = :notStarted AND k.verificationSessionId IS NULL");
             case REJECTED, VERIFIED -> {
                 where.append(" AND k.status = :rowStatus");
                 params.put("rowStatus", KycVerificationStatus.valueOf(bucket.name()));
             }
         }
         if (bucket == QueueStatus.IN_REVIEW || bucket == QueueStatus.IN_PROGRESS
-                || bucket == QueueStatus.NOT_STARTED) {
+                || bucket == QueueStatus.ABANDONED || bucket == QueueStatus.NOT_STARTED) {
             params.put("pending", KycVerificationStatus.PENDING);
         }
-        if (bucket == QueueStatus.IN_PROGRESS || bucket == QueueStatus.NOT_STARTED) {
+        if (bucket == QueueStatus.IN_PROGRESS || bucket == QueueStatus.ABANDONED
+                || bucket == QueueStatus.NOT_STARTED) {
             params.put("notStarted", KycStatus.NOT_STARTED);
         }
         if (provider != null) {
@@ -276,8 +279,9 @@ public class KycAdminReviewService {
             case VERIFIED -> QueueStatus.VERIFIED;
             case REJECTED -> QueueStatus.REJECTED;
             case PENDING -> kyc.getSubmittedAt() != null ? QueueStatus.IN_REVIEW
-                    : user.getKycStatus() == KycStatus.NOT_STARTED ? QueueStatus.NOT_STARTED
-                    : QueueStatus.IN_PROGRESS;
+                    : user.getKycStatus() != KycStatus.NOT_STARTED ? QueueStatus.IN_PROGRESS
+                    : kyc.getVerificationSessionId() != null ? QueueStatus.ABANDONED
+                    : QueueStatus.NOT_STARTED;
         };
     }
 

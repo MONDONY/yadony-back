@@ -55,4 +55,22 @@ public interface KycRepository extends JpaRepository<KycVerificationEntity, UUID
     List<KycVerificationEntity> findInReviewSince(@Param("provider") VerificationProviderKind provider,
                                                   @Param("before") LocalDateTime before,
                                                   Pageable page);
+
+    /**
+     * Parcours quittes : session ouverte chez le fournisseur, jamais soumise, utilisateur revenu
+     * a NOT_STARTED (webview fermee ou webhook « abandoned »), sans decision d'administrateur,
+     * inactifs depuis avant {@code before}. Les plus anciens d'abord.
+     */
+    @Query("""
+            select k from KycVerificationEntity k
+            where k.status = com.yadony.api.kyc.KycVerificationStatus.PENDING
+              and k.verificationSessionId is not null
+              and k.submittedAt is null
+              and k.decisionKind is null
+              and k.updatedAt < :before
+              and exists (select 1 from UserEntity u where u.id = k.userId
+                          and u.kycStatus = com.yadony.api.auth.KycStatus.NOT_STARTED)
+            order by k.updatedAt
+            """)
+    List<KycVerificationEntity> findAbandonedBefore(@Param("before") LocalDateTime before, Pageable page);
 }
