@@ -60,6 +60,7 @@ class KycAdminQueueIT {
     private UUID oldestReview;
     private UUID recentReview;
     private UUID inProgress;
+    private UUID abandoned;
     private UUID notStarted;
     private UUID rejected;
     private UUID verifiedOld;
@@ -73,8 +74,14 @@ class KycAdminQueueIT {
                 NOW.minusHours(2), NOW.minusHours(2), null);
         inProgress = row("Coumba", KycStatus.PENDING, KycVerificationStatus.PENDING, VerificationProviderKind.DIDIT,
                 NOW.minusHours(1), null, null);
-        notStarted = row("Dieynaba", KycStatus.NOT_STARTED, KycVerificationStatus.PENDING,
+        // Session ouverte chez le fournisseur puis webview fermee : parcours abandonne.
+        abandoned = row("Dieynaba", KycStatus.NOT_STARTED, KycVerificationStatus.PENDING,
                 VerificationProviderKind.DIDIT, NOW.minusHours(5), null, null);
+        // Reset administrateur : plus aucune session, vraiment pas commence.
+        notStarted = row("Eve", KycStatus.NOT_STARTED, KycVerificationStatus.PENDING,
+                VerificationProviderKind.DIDIT, NOW.minusHours(6), null, null);
+        jdbc.update("UPDATE kyc_schema.kyc_verifications SET verification_session_id = NULL WHERE user_id = ?",
+                notStarted);
         rejected = row("Fatou", KycStatus.REJECTED, KycVerificationStatus.REJECTED, VerificationProviderKind.DIDIT,
                 NOW.minusDays(1), NOW.minusDays(2), KycDecisionKind.REJECTED);
         verifiedOld = row("Gnima", KycStatus.VERIFIED, KycVerificationStatus.VERIFIED, VerificationProviderKind.DIDIT,
@@ -120,8 +127,8 @@ class KycAdminQueueIT {
     }
 
     private List<UUID> ours(Page<KycQueueItemResponse> page) {
-        Set<UUID> mine = Set.of(oldestReview, recentReview, inProgress, notStarted, rejected, verifiedOld,
-                verifiedRecent);
+        Set<UUID> mine = Set.of(oldestReview, recentReview, inProgress, abandoned, notStarted, rejected,
+                verifiedOld, verifiedRecent);
         return page.getContent().stream().map(KycQueueItemResponse::userId).filter(mine::contains).toList();
     }
 
@@ -146,9 +153,12 @@ class KycAdminQueueIT {
     }
 
     @Test
-    void enCours_etNonDemarre_sontDistingues() {
+    void enCours_abandonne_etNonDemarre_sontDistingues() {
         assertThat(ours(queue("IN_PROGRESS", null, tag, null, null))).containsExactly(inProgress);
+        assertThat(ours(queue("ABANDONED", null, tag, null, null))).containsExactly(abandoned);
         assertThat(ours(queue("NOT_STARTED", null, tag, null, null))).containsExactly(notStarted);
+        assertThat(queue("ABANDONED", null, tag, null, null).getContent().get(0).queueStatus())
+                .isEqualTo("ABANDONED");
     }
 
     @Test
