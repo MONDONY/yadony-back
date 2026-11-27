@@ -65,7 +65,8 @@ public class KycAdminReviewService {
     private static final Set<String> PROVIDER_ACTIONS = Set.of(
             "KYC_VERIFIED", "KYC_REJECTED", "KYC_IN_REVIEW", "KYC_ABANDONED", "KYC_EXPIRED", "KYC_CANCELED");
     /** Actions ecrites par l'utilisateur lui-meme ({@link KycService}). */
-    private static final Set<String> USER_ACTIONS = Set.of("KYC_SESSION_CREATED", "KYC_SESSION_ABANDONED");
+    private static final Set<String> USER_ACTIONS = Set.of("KYC_SESSION_CREATED", "KYC_SESSION_ABANDONED",
+            "KYC_ABANDON_REASON");
 
     /** Etat metier d'une ligne dans la file. */
     enum QueueStatus { IN_REVIEW, IN_PROGRESS, ABANDONED, NOT_STARTED, REJECTED, VERIFIED }

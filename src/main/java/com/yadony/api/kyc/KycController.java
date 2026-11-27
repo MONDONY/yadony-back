@@ -3,6 +3,7 @@ package com.yadony.api.kyc;
 import com.yadony.api.common.YadonyBusinessException;
 import com.yadony.api.common.stripe.StripeWebhookIngestService;
 import com.yadony.api.common.stripe.StripeWebhookSource;
+import com.yadony.api.kyc.dto.KycAbandonReasonRequest;
 import com.yadony.api.kyc.dto.KycSessionResponse;
 import com.yadony.api.kyc.dto.KycStatusResponse;
 import org.springframework.http.HttpStatus;
@@ -39,6 +40,12 @@ public class KycController {
     public ResponseEntity<Void> abandonSession() {
         String firebaseUid = requireFirebaseUid();
         kycService.abandonSession(firebaseUid);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/abandon-reason")
+    public ResponseEntity<Void> abandonReason(@jakarta.validation.Valid @RequestBody KycAbandonReasonRequest body) {
+        kycService.recordAbandonReason(requireFirebaseUid(), body.reason());
         return ResponseEntity.noContent().build();
     }
 

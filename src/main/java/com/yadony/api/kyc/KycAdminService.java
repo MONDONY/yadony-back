@@ -80,7 +80,7 @@ public class KycAdminService {
                 view.createdAt(),
                 view.unavailable(),
                 kyc.map(k -> k.getProvider().name()).orElse(null)
-        );
+        ).withStep(view.lastStep(), view.lastStepFinished());
     }
 
     /**

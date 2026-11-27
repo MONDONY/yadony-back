@@ -51,8 +51,35 @@ public record KycAdminStatusResponse(
         String decidedByAdminEmail,
         String decisionReason,
         String providerSessionUrl,
-        List<KycHistoryEntry> history
+        List<KycHistoryEntry> history,
+        String providerStep,
+        Boolean providerStepFinished,
+        String abandonReason
 ) {
+
+    /** Forme sans etape ni raison d'abandon : conservee pour les appelants existants. */
+    public KycAdminStatusResponse(UUID userId, String kycStatus, String verificationStatus,
+                                  String rejectionReason, String rejectionCode, String stripeSessionId,
+                                  String stripeStatus, String stripeLastErrorCode,
+                                  String stripeLastErrorReason, LocalDateTime stripeCreatedAt,
+                                  boolean stripeUnavailable, String provider, String decisionKind,
+                                  LocalDateTime decidedAt, String decidedByAdminEmail,
+                                  String decisionReason, String providerSessionUrl,
+                                  List<KycHistoryEntry> history) {
+        this(userId, kycStatus, verificationStatus, rejectionReason, rejectionCode, stripeSessionId,
+                stripeStatus, stripeLastErrorCode, stripeLastErrorReason, stripeCreatedAt,
+                stripeUnavailable, provider, decisionKind, decidedAt, decidedByAdminEmail,
+                decisionReason, providerSessionUrl, history, null, null, null);
+    }
+
+    /** Derniere etape atteinte chez le fournisseur (vue live). */
+    public KycAdminStatusResponse withStep(String step, Boolean stepFinished) {
+        return new KycAdminStatusResponse(userId, kycStatus, verificationStatus, rejectionReason,
+                rejectionCode, stripeSessionId, stripeStatus, stripeLastErrorCode,
+                stripeLastErrorReason, stripeCreatedAt, stripeUnavailable, provider, decisionKind,
+                decidedAt, decidedByAdminEmail, decisionReason, providerSessionUrl, history,
+                step, stepFinished, abandonReason);
+    }
 
     /** Forme historique, sans decision ni historique : conservee pour le reset et ses appelants. */
     public KycAdminStatusResponse(UUID userId, String kycStatus, String verificationStatus,
@@ -72,6 +99,14 @@ public record KycAdminStatusResponse(
         return new KycAdminStatusResponse(userId, kycStatus, verificationStatus, rejectionReason,
                 rejectionCode, stripeSessionId, stripeStatus, stripeLastErrorCode,
                 stripeLastErrorReason, stripeCreatedAt, stripeUnavailable, provider, decisionKind,
-                decidedAt, decidedByAdminEmail, decisionReason, providerSessionUrl, history);
+                decidedAt, decidedByAdminEmail, decisionReason, providerSessionUrl, history,
+                providerStep, providerStepFinished, latestAbandonReason(history));
+    }
+
+    /** Raison donnee par l'utilisateur en quittant, la plus recente de l'historique. */
+    private static String latestAbandonReason(List<KycHistoryEntry> history) {
+        return history == null ? null : history.stream()
+                .filter(e -> "KYC_ABANDON_REASON".equals(e.action()))
+                .map(KycHistoryEntry::detail).findFirst().orElse(null);
     }
 }

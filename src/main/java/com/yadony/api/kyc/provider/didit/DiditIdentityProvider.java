@@ -265,7 +265,40 @@ public class DiditIdentityProvider implements IdentityVerificationProvider {
                 firstWarning != null ? text(firstWarning, "risk") : null,
                 firstWarning != null ? text(firstWarning, "short_description") : null,
                 parseCreatedAt(node),
-                false);
+                false,
+                lastStep(node),
+                lastStepFinished(node));
+    }
+
+    /** Etapes du parcours dans l'ordre ou l'utilisateur les rencontre, avec leur tableau Didit. */
+    private static final String[][] STEPS = {
+            {"id_verifications", "ID_DOCUMENT"}, {"liveness_checks", "LIVENESS"}, {"face_matches", "FACE_MATCH"}};
+
+    /**
+     * Derniere etape ouverte : Didit laisse le tableau d'une etape a {@code null} tant qu'elle n'a
+     * pas commence, il est donc non vide des qu'elle a ete atteinte.
+     */
+    static String lastStep(JsonNode decision) {
+        String last = null;
+        for (String[] step : STEPS) {
+            JsonNode checks = decision.path(step[0]);
+            if (checks.isArray() && !checks.isEmpty()) {
+                last = step[1];
+            }
+        }
+        return last;
+    }
+
+    /** {@code null} sans etape atteinte ; {@code false} si l'etape atteinte est « Not Finished ». */
+    static Boolean lastStepFinished(JsonNode decision) {
+        Boolean finished = null;
+        for (String[] step : STEPS) {
+            JsonNode checks = decision.path(step[0]);
+            if (checks.isArray() && !checks.isEmpty()) {
+                finished = !"Not Finished".equalsIgnoreCase(checks.get(checks.size() - 1).path("status").asText(""));
+            }
+        }
+        return finished;
     }
 
     /** Didit horodate en ISO 8601 ; un format inattendu ne doit pas couter la vue entiere. */
