@@ -14,6 +14,7 @@ import com.yadony.api.requests.repository.PackageRequestRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +40,7 @@ class ActivationRepositoryIT {
     @Autowired NegotiationThreadRepository negotiationThreadRepository;
     @Autowired CityRepository cityRepository;
     @Autowired UserBlockJpaRepository userBlockRepository;
+    @Autowired JdbcTemplate jdbc;
     ActivationTestData data;
 
     @BeforeEach
@@ -175,6 +177,50 @@ class ActivationRepositoryIT {
                 now.minus(72, ChronoUnit.HOURS), now.minus(48, ChronoUnit.HOURS));
 
         assertThat(ids).contains(due1, due2).doesNotContain(notYet, secondTooEarly, done, notVerified, noDate);
+    }
+
+    /** Compte non vérifié créé il y a {@code age}, avec ce compteur de relances. */
+    private UUID unverifiedUser(java.time.Duration age, int reminderCount) {
+        UUID id = data.user(KycStatus.NOT_STARTED, null, reminderCount);
+        jdbc.update("UPDATE users SET created_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(Instant.now().minus(age)), id);
+        return id;
+    }
+
+    private java.util.List<UUID> unverifiedCandidates(Instant now) {
+        return repository.findUnverifiedFirstActionReminderCandidates(now.minus(24, ChronoUnit.HOURS),
+                now.minus(72, ChronoUnit.HOURS), now.minus(48, ChronoUnit.HOURS), now.minus(7, ChronoUnit.DAYS));
+    }
+
+    @Test
+    void unverifiedCandidates_firstAndSecondReminders_withinAgeBound() {
+        Instant now = Instant.now();
+        UUID due1 = unverifiedUser(java.time.Duration.ofHours(30), 0);
+        UUID notYet = unverifiedUser(java.time.Duration.ofHours(10), 0);
+        UUID tooOld = unverifiedUser(java.time.Duration.ofDays(20), 0);
+        UUID due2 = unverifiedUser(java.time.Duration.ofHours(80), 1);
+        data.reminded(due2, 1, now.minus(56, ChronoUnit.HOURS));
+        UUID secondTooEarly = unverifiedUser(java.time.Duration.ofHours(80), 1);
+        data.reminded(secondTooEarly, 1, now.minus(26, ChronoUnit.HOURS));
+        UUID finished = unverifiedUser(java.time.Duration.ofHours(100), 2);
+
+        assertThat(unverifiedCandidates(now)).contains(due1, due2)
+                .doesNotContain(notYet, tooOld, secondTooEarly, finished);
+    }
+
+    @Test
+    void unverifiedCandidates_excludeVerifiedActedAndKycReminderFlow() {
+        Instant now = Instant.now();
+        UUID verified = verifiedUser();
+        jdbc.update("UPDATE users SET created_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(now.minus(30, ChronoUnit.HOURS)), verified);
+        UUID acted = unverifiedUser(java.time.Duration.ofHours(30), 0);
+        data.corridorAlert(acted);
+        UUID inKycFlow = unverifiedUser(java.time.Duration.ofHours(30), 0);
+        jdbc.update("UPDATE users SET kyc_reminder_anchor_at = ? WHERE id = ?",
+                java.sql.Timestamp.from(now.minus(30, ChronoUnit.HOURS)), inKycFlow);
+
+        assertThat(unverifiedCandidates(now)).doesNotContain(verified, acted, inKycFlow);
     }
 
     @Test

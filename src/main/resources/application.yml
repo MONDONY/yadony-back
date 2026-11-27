@@ -284,6 +284,9 @@ yadony:
   activation:
     first-action-reminders:
       enabled: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_ENABLED:false}
+      # Relance aussi les comptes NON vérifiés récents sans première action (ancre = création du compte).
+      include-unverified: ${YADONY_ACTIVATION_FIRST_ACTION_REMINDERS_INCLUDE_UNVERIFIED:false}
+      unverified-max-age: P7D
   # Secret partagé avec les Cloud Functions (dony-functions) pour
   # POST /internal/messaging/notify. Déclaré ici et non dans application-dev.yml
   # seul : sans cette clé, `yadony.internal.secret` reste vide en staging et en

@@ -94,6 +94,33 @@ public interface ActivationRepository extends Repository<UserEntity, UUID> {
                 .toList();
     }
 
+    /**
+     * Comptes NON vérifiés sans première action, ancrés sur la date de création du compte (pas de date KYC).
+     * Exclut ceux déjà suivis par la relance d'identité ({@code kyc_reminder_anchor_at} posée : ils reçoivent
+     * déjà J+1/J+3/J+7 sur ce sujet, un second flux ferait doublon) et borne l'âge du compte pour qu'un
+     * interrupteur allumé tard ne relance pas le stock ancien. Mêmes échéances que le flux vérifié, sur le
+     * même compteur : un compte vérifié entre-temps ne dépasse jamais 2 relances au total.
+     */
+    @Query(value = "SELECT CAST(u.id AS VARCHAR) AS id FROM users u"
+            + " WHERE u.deleted_at IS NULL AND u.status = 'ACTIVE' AND u.deletion_requested_at IS NULL"
+            + " AND u.kyc_status <> 'VERIFIED' AND u.kyc_reminder_anchor_at IS NULL"
+            + " AND u.created_at >= :oldestCreatedAt"
+            + " AND ((u.first_action_reminder_count = 0 AND u.created_at <= :firstDueBefore)"
+            + "   OR (u.first_action_reminder_count = 1 AND u.created_at <= :secondDueBefore"
+            + "       AND u.first_action_reminder_last_at <= :secondGapBefore))"
+            + " AND NOT " + HAS_FIRST_ACTION
+            + " ORDER BY u.created_at ASC LIMIT 500",
+           nativeQuery = true)
+    List<CandidateRow> findUnverifiedFirstActionReminderCandidateRows(
+            @Param("firstDueBefore") Instant firstDueBefore, @Param("secondDueBefore") Instant secondDueBefore,
+            @Param("secondGapBefore") Instant secondGapBefore, @Param("oldestCreatedAt") Instant oldestCreatedAt);
+
+    default List<UUID> findUnverifiedFirstActionReminderCandidates(Instant firstDueBefore, Instant secondDueBefore,
+                                                                   Instant secondGapBefore, Instant oldestCreatedAt) {
+        return findUnverifiedFirstActionReminderCandidateRows(firstDueBefore, secondDueBefore, secondGapBefore,
+                oldestCreatedAt).stream().map(row -> UUID.fromString(row.getId())).toList();
+    }
+
     interface CandidateRow {
         String getId();
     }

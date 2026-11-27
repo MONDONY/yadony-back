@@ -192,6 +192,36 @@ class FirstActionReminderSchedulerTest {
     }
 
     @Test
+    void unverifiedAccounts_areIgnoredUnlessSwitchedOn() {
+        when(activationRepository.findFirstActionReminderCandidates(any(), any(), any())).thenReturn(List.of());
+        scheduler.remind();
+        verify(activationRepository, never()).findUnverifiedFirstActionReminderCandidates(any(), any(), any(), any());
+    }
+
+    @Test
+    void unverifiedAccounts_areRemindedWithWelcomeVariant_andNeverTwiceInOneRun() {
+        ReflectionTestUtils.setField(scheduler, "includeUnverified", true);
+        ReflectionTestUtils.setField(scheduler, "unverifiedMaxAge", Duration.ofDays(7));
+        UserEntity u = user(null, 0);
+        u.setKycStatus(com.yadony.api.auth.KycStatus.NOT_STARTED);
+        when(activationRepository.findFirstActionReminderCandidates(any(), any(), any())).thenReturn(List.of());
+        when(activationRepository.findUnverifiedFirstActionReminderCandidates(any(), any(), any(), any()))
+                .thenReturn(List.of(u.getId(), u.getId()));
+        when(activationService.opportunitiesFor(u)).thenReturn(Opportunities.none());
+
+        Instant before = Instant.now();
+        scheduler.remind();
+
+        ArgumentCaptor<Instant> oldest = ArgumentCaptor.forClass(Instant.class);
+        verify(activationRepository).findUnverifiedFirstActionReminderCandidates(any(), any(), any(), oldest.capture());
+        assertThat(oldest.getValue()).isBetween(before.minus(Duration.ofDays(7)).minusSeconds(1),
+                Instant.now().minus(Duration.ofDays(7)));
+        verify(notificationDispatcher, times(1)).notifyUser(eq(u.getId()), anyString(), anyString(),
+                eq(Map.of("type", "FIRST_ACTION_REMINDER", "variant", "welcome")));
+        assertThat(u.getFirstActionReminderCount()).isEqualTo(1);
+    }
+
+    @Test
     void doesNotQueryWhenDisabled() {
         ReflectionTestUtils.setField(scheduler, "enabled", false);
         scheduler.remind();
@@ -207,5 +237,8 @@ class FirstActionReminderSchedulerTest {
         assertThat(FirstActionReminderScheduler.variantOf("BOTH", none)).isEqualTo("sender-none");
         assertThat(FirstActionReminderScheduler.variantOf("TRAVELER", some)).isEqualTo("traveler-packages");
         assertThat(FirstActionReminderScheduler.variantOf("TRAVELER", none)).isEqualTo("traveler-none");
+        assertThat(FirstActionReminderScheduler.variantOf(null, some, false)).isEqualTo("welcome");
+        assertThat(FirstActionReminderScheduler.variantOf(null, some, true)).isEqualTo("unknown");
+        assertThat(FirstActionReminderScheduler.variantOf("SENDER", some, false)).isEqualTo("sender-trips");
     }
 }
