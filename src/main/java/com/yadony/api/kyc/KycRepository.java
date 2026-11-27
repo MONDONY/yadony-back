@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -73,4 +74,21 @@ public interface KycRepository extends JpaRepository<KycVerificationEntity, UUID
             order by k.updatedAt
             """)
     List<KycVerificationEntity> findAbandonedBefore(@Param("before") LocalDateTime before, Pageable page);
+
+    /**
+     * Parmi {@code userIds}, ceux dont le parcours est abandonne : session ouverte chez le
+     * fournisseur, jamais soumise, sans decision d'administrateur, compte repasse a NOT_STARTED.
+     * Meme definition que {@link #findAbandonedBefore}, sans condition de delai.
+     */
+    @Query("""
+            select k.userId from KycVerificationEntity k
+            where k.userId in :userIds
+              and k.status = com.yadony.api.kyc.KycVerificationStatus.PENDING
+              and k.verificationSessionId is not null
+              and k.submittedAt is null
+              and k.decisionKind is null
+              and exists (select 1 from UserEntity u where u.id = k.userId
+                          and u.kycStatus = com.yadony.api.auth.KycStatus.NOT_STARTED)
+            """)
+    List<UUID> findAbandonedUserIds(@Param("userIds") Collection<UUID> userIds);
 }

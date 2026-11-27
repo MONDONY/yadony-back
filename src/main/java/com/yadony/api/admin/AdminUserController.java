@@ -66,6 +66,14 @@ public class AdminUserController {
         this.publishingEligibilityService = publishingEligibilityService;
     }
 
+    /** Parcours KYC abandonnés de la liste ; injecté par setter (constructeur inchangé). */
+    private com.yadony.api.kyc.KycRepository kycRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setKycRepository(com.yadony.api.kyc.KycRepository kycRepository) {
+        this.kycRepository = kycRepository;
+    }
+
     /** Bandeau « particulier à confirmer » de la fiche (lot 4) ; injecté par setter (constructeur inchangé). */
     private com.yadony.api.travelerstatus.IndividualFrequencyAdminService individualFrequencyAdminService;
 
@@ -139,8 +147,22 @@ public class AdminUserController {
 
         Map<String, FirebaseContactService.Contact> contacts = firebaseContact.getContacts(
                 users.getContent().stream().map(UserEntity::getFirebaseUid).toList());
+        java.util.Set<UUID> abandoned = abandonedKyc(users.getContent());
         return users.map(u -> AdminUserListItemResponse.from(
-                u, contacts.getOrDefault(u.getFirebaseUid(), FirebaseContactService.Contact.EMPTY)));
+                u, contacts.getOrDefault(u.getFirebaseUid(), FirebaseContactService.Contact.EMPTY),
+                abandoned.contains(u.getId())));
+    }
+
+    /** Une seule requête pour la page : seuls les comptes à NOT_STARTED peuvent être « abandonnés ». */
+    private java.util.Set<UUID> abandonedKyc(List<UserEntity> page) {
+        if (kycRepository == null) {
+            return java.util.Collections.emptySet();
+        }
+        List<UUID> candidates = page.stream()
+                .filter(u -> u.getKycStatus() == KycStatus.NOT_STARTED)
+                .map(UserEntity::getId).toList();
+        return candidates.isEmpty() ? java.util.Collections.emptySet()
+                : new java.util.HashSet<>(kycRepository.findAbandonedUserIds(candidates));
     }
 
     /**

@@ -32,4 +32,15 @@ class AdminUserListItemResponseTest {
 
         assertThat(dto.email()).isNull();
     }
+
+    @Test
+    @DisplayName("le drapeau d'abandon KYC est repris, faux par défaut")
+    void from_carriesKycAbandoned() {
+        UserEntity user = new UserEntity();
+
+        assertThat(AdminUserListItemResponse.from(user, FirebaseContactService.Contact.EMPTY).kycAbandoned())
+                .isFalse();
+        assertThat(AdminUserListItemResponse.from(user, FirebaseContactService.Contact.EMPTY, true).kycAbandoned())
+                .isTrue();
+    }
 }
